@@ -20,6 +20,7 @@ from app_state import (
 )
 from picklist_core import (
     ReplacementSelection,
+    replacement_fractions,
     calculate_mixing_volumes,
     combine_picklists,
     generate_picklist,
@@ -179,6 +180,37 @@ class PicklistCoreTests(unittest.TestCase):
             return generate_picklist(base, selections, destinations, transfer_volume_nl=25,
                                      max_destination_volume_ul=capacity, transfers_per_source=repeats)
 
+    def test_percentage_options_follow_droplets_and_excess(self):
+        self.assertEqual(replacement_fractions(50), [0, 0.5, 1])
+        self.assertEqual(replacement_fractions(100), [0, 0.25, 0.5, 0.75, 1])
+        self.assertEqual(replacement_fractions(50, 2), replacement_fractions(100))
+        self.assertEqual(replacement_fractions(50, 1.5), [0, 1/3, 2/3, 1])
+        for volume in (0, 33, float("nan")):
+            with self.assertRaises(ValueError):
+                replacement_fractions(volume)
+
+    def test_partial_replacements_preserve_volume_and_original_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / "base.csv"
+            base.write_text("Well Position,Sequence Name,Sequence,Original Well Position\nF19,one,AAA,A01\nA02,two,CCC,A02\n")
+            replacement = Path(folder) / "replacement.csv"
+            replacement.write_text("Well,Name,Sequence,Replace Well\nB01,R1,TTT,A01\n")
+            for fraction in (0, 0.25, 0.5, 0.75, 1):
+                with self.subTest(fraction=fraction):
+                    rows = generate_picklist(base, [ReplacementSelection(replacement, ["R1"], "Replacement", 2, fraction)],
+                                             ["A01"], transfer_volume_nl=50, transfers_per_source=2)
+                    volumes = {}
+                    for row in rows:
+                        volumes[row["Source Well"]] = volumes.get(row["Source Well"], 0) + row["Transfer Volume"]
+                        self.assertEqual(row["Transfer Volume"] % 25, 0)
+                        self.assertGreater(row["Transfer Volume"], 0)
+                    self.assertEqual(volumes.get("F19", 0), 200 * (1 - fraction))
+                    self.assertEqual(volumes.get("B01", 0), 200 * fraction)
+                    self.assertEqual(sum(volumes.values()), 300)
+            with self.assertRaisesRegex(ValueError, "25 nL"):
+                generate_picklist(base, [ReplacementSelection(replacement, ["R1"], "Replacement", 1, 0.33)],
+                                 ["A01"], transfer_volume_nl=100)
+
     def test_excess_multipliers_are_independent_and_respect_capacity(self):
         rows = self._excess_picklist()
         self.assertEqual([row["Transfer Volume"] for row in rows], [25, 125, 50])
@@ -188,9 +220,9 @@ class PicklistCoreTests(unittest.TestCase):
         rows = self._excess_picklist(multipliers=(None, None))
         self.assertEqual([row["Transfer Volume"] for row in rows], [25, 25, 25])
 
-    def test_fractional_excess_applies_to_every_repeat(self):
-        rows = self._excess_picklist(multipliers=(1.5, 2), capacity=1, repeats=2)
-        self.assertEqual([row["Transfer Volume"] for row in rows], [25, 25, 37.5, 37.5, 50, 50])
+    def test_fractional_excess_rejects_partial_droplets(self):
+        with self.assertRaisesRegex(ValueError, "25 nL"):
+            self._excess_picklist(multipliers=(1.5, 2), capacity=1, repeats=2)
 
     def test_invalid_excess_is_rejected(self):
         for multiplier in (0, -1, float("nan"), float("inf")):
@@ -204,13 +236,13 @@ class PicklistCoreTests(unittest.TestCase):
             self._excess_picklist(multipliers=(7, 1))
 
     def test_mixing_uses_weighted_staple_count_for_excess(self):
-        rows = self._excess_picklist(multipliers=(1.5, 2), capacity=1)
+        rows = self._excess_picklist(multipliers=(3, 2), capacity=1)
         effective_staples = sum(row["Transfer Volume"] for row in rows) / 25
         recipe = calculate_mixing_volumes(
             [200000, 1, 0, 0], effective_staples, [400, 0.1, 0, 0], [0, 0, 100, 0],
             [0, 0, 0, 100], [0, 10, 0, 0], [500, 10, 1, 1, 12, 5],
         )
-        self.assertAlmostEqual(recipe[0]["Volume_uL"], 0.1125)
+        self.assertAlmostEqual(recipe[0]["Volume_uL"], 0.15)
         self.assertAlmostEqual(sum(row["Volume_uL"] for row in recipe), 500)
 
     def test_soyeon_panels_expose_all_supplied_extensions(self):

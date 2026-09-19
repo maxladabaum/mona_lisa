@@ -41,10 +41,13 @@ from picklist_core import (
     parse_vector,
     parse_source2,
     replacement_names,
+    replacement_fractions,
     separate_mixing_recipes,
     valid_well_list,
     write_csv,
 )
+from image_encoding import BIT_SITES, COLOR_BITS, SHIFT_STATES
+from rgb_image_view import RGBImageView
 from selection_report import write_replacement_selection_pdf, write_stored_runs_selection_pdf
 from template_generator import (
     EXTENSION_COLUMN_SPACING_NM,
@@ -90,6 +93,8 @@ DEFAULT_STORAGE_STATE = {"version": 2, "items": []}
 
 ROWS = ["H01", "H03", "H05", "H07", "H09", "H11", "H13", "H15"]
 COLS = ["{:02d}".format(i) for i in range(1, 13)]
+R1_SELECTION_COLORS = {"R1 R": "#ff0000", "R1 B": "#0000ff", "R1 G": "#00ff00"}
+ACTIVE_REPLACEMENT_TABS = {"PAINT P1", "PAINT R1", *R1_SELECTION_COLORS}
 
 
 class ScrollFrame(ttk.Frame):
@@ -122,10 +127,26 @@ class SetView:
         panels: Sequence[Dict[str, object]],
         selection_changed=None,
         template_requested=None,
+        base_transfer_volume=None,
     ) -> None:
         self.title = title
+        self.selection_color = R1_SELECTION_COLORS.get(title, "#00ffff")
+        self.encoding_enabled = tk.BooleanVar(value=False)
+        self.x_shift = tk.StringVar(value=next(iter(SHIFT_STATES)))
+        self.y_shift = tk.StringVar(value=next(iter(SHIFT_STATES)))
+        self.encoded_sites = {}
+        if title in COLOR_BITS:
+            for bit, sites in enumerate(BIT_SITES):
+                for row, column in sites:
+                    self.encoded_sites[panel_sequence_name(panels[0], row, column)] = bit
         self.path_var = tk.StringVar(value=str(csv_path))
-        self.excess_multiplier = tk.StringVar(value="5" if title in {"PAINT P1", "PAINT R1"} else "1")
+        self.excess_multiplier = tk.StringVar(value="5" if title in ACTIVE_REPLACEMENT_TABS else "1")
+        self.replacement_percentage = tk.StringVar(value="100%")
+        self.replacement_error = tk.StringVar()
+        self.base_transfer_volume = base_transfer_volume if base_transfer_volume is not None else tk.StringVar(value="50")
+        self.transfer_volume_nl = self.base_transfer_volume.get()
+        self.volume_summary = tk.StringVar()
+        self._fraction_options = {}
         self.plate_name = plate_name
         self.variables: Dict[str, tk.BooleanVar] = {}
         self.buttons: Dict[str, tk.Checkbutton] = {}
@@ -152,8 +173,30 @@ class SetView:
         ttk.Button(toolbar, text="Clear set", command=self.clear).pack(side="left", padx=(8, 0))
         excess_bar = ttk.Frame(scroll.inner)
         excess_bar.pack(fill="x", padx=12, pady=4)
+        ttk.Label(excess_bar, text="Base transfer volume (nL, all tabs)").pack(side="left")
+        ttk.Spinbox(excess_bar, from_=25, to=100000, increment=25,
+                    textvariable=self.base_transfer_volume, width=8).pack(side="left", padx=8)
         ttk.Label(excess_bar, text="Excess Multiplier").pack(side="left")
         ttk.Entry(excess_bar, textvariable=self.excess_multiplier, width=8).pack(side="left", padx=8)
+        ttk.Label(excess_bar, text="Replacement percentage").pack(side="left", padx=(12, 0))
+        self.percentage_picker = ttk.Combobox(excess_bar, textvariable=self.replacement_percentage,
+                                             state="readonly", width=14)
+        self.percentage_picker.pack(side="left", padx=8)
+        ttk.Label(excess_bar, textvariable=self.replacement_error, foreground="#a40000").pack(side="left")
+        ttk.Label(scroll.inner, textvariable=self.volume_summary, foreground="#555555").pack(anchor="w", padx=12)
+        if self.title in COLOR_BITS:
+            encoding_bar = ttk.Frame(scroll.inner)
+            encoding_bar.pack(fill="x", padx=12, pady=4)
+            ttk.Checkbutton(encoding_bar, text="Include this color in run", variable=self.encoding_enabled,
+                            command=self._encoding_changed).pack(side="left", padx=(0, 12))
+            for label, variable in (("X-shift (bits 3, 4)", self.x_shift), ("Y-shift (bits 5, 6)", self.y_shift)):
+                ttk.Label(encoding_bar, text=label).pack(side="left")
+                picker = ttk.Combobox(encoding_bar, textvariable=variable, values=list(SHIFT_STATES),
+                                      state="readonly", width=19)
+                picker.pack(side="left", padx=8)
+                picker.bind("<<ComboboxSelected>>", self._shift_changed)
+            ttk.Label(scroll.inner, text="Bits 1–2 identify the color; bits 3–6 follow the shift dropdowns. "
+                      "Color bits stay displayed when excluded from the run; encoded sites are locked.").pack(anchor="w", padx=12)
         panel_bar = ttk.Frame(scroll.inner)
         panel_bar.pack(fill="x", padx=12, pady=(5, 2))
         ttk.Label(panel_bar, text="Panel:").pack(side="left")
@@ -179,12 +222,12 @@ class SetView:
         ttk.Label(panel_bar, textvariable=self.orientation_summary, foreground="#3d626f").pack(
             side="left", padx=(12, 0)
         )
-        if self.title in {"Aptamers", "MB", "PAINT P1", "PAINT R1"}:
+        if self.title in {"Aptamers", "MB"} | ACTIVE_REPLACEMENT_TABS:
             legend = tk.Frame(scroll.inner, background="#f0f0f0")
             legend.pack(fill="x", padx=12, pady=(4, 2))
             self._legend_square(legend, self.SELECTABLE_BG, "").pack(side="left")
             tk.Label(legend, text=" Selectable", background="#f0f0f0").pack(side="left", padx=(0, 14))
-            self._legend_square(legend, "#00ffff" if any(panel.get("spacing_x_nm") is not None for panel in self.panels) else self.SELECTED_BG, "✓", foreground="#222222").pack(side="left")
+            self._legend_square(legend, self.selection_color if any(panel.get("spacing_x_nm") is not None for panel in self.panels) else self.SELECTED_BG, "✓", foreground="#222222").pack(side="left")
             tk.Label(legend, text=" Selected", background="#f0f0f0").pack(side="left", padx=(0, 14))
             self._legend_square(legend, self.UNAVAILABLE_BG, "×", foreground="#62676b").pack(side="left")
             tk.Label(legend, text=" Not selectable", background="#f0f0f0").pack(side="left")
@@ -200,6 +243,78 @@ class SetView:
         self.panel_host.pack(fill="both", expand=True, padx=10, pady=6)
         self.refresh()
         self.circle_radius_var.trace_add("write", self._circle_radius_changed)
+        self.replacement_percentage.trace_add("write", self._percentage_changed)
+        self.excess_multiplier.trace_add("write", lambda *_args: self.update_percentage_options(self.transfer_volume_nl))
+        self.base_transfer_volume.trace_add("write", lambda *_args: self.update_percentage_options(self.base_transfer_volume.get()))
+        self.update_percentage_options(self.base_transfer_volume.get())
+
+    def _apply_encoding(self) -> None:
+        if self.title not in COLOR_BITS:
+            return
+        states = COLOR_BITS[self.title] + SHIFT_STATES[self.x_shift.get()] + SHIFT_STATES[self.y_shift.get()]
+        for name, bit in self.encoded_sites.items():
+            if name in self.variables:
+                self.variables[name].set((bit < 2 or self.encoding_enabled.get())
+                                         and states[bit] and self.selectable.get(name, False))
+                self._paint_square(name)
+
+    def _encoding_changed(self) -> None:
+        self._apply_encoding()
+        self.mark_conflicts(set())
+        self._update_selection_summary()
+        if self.selection_changed is not None:
+            self.selection_changed()
+
+    def _shift_changed(self, _event=None) -> None:
+        self.encoding_enabled.set(True)
+        self._encoding_changed()
+
+    def update_percentage_options(self, volume) -> None:
+        self.transfer_volume_nl = volume
+        try:
+            fractions = replacement_fractions(float(volume), float(self.excess_multiplier.get()))
+            self._fraction_options = {"{:.10g}%".format(fraction * 100): fraction for fraction in fractions}
+            self.percentage_picker.configure(values=list(self._fraction_options), state="readonly")
+            self._validate_percentage()
+        except ValueError as exc:
+            self._fraction_options = {}
+            self.percentage_picker.configure(values=(), state="disabled")
+            self.replacement_error.set(str(exc))
+            self.volume_summary.set("")
+
+    def _validate_percentage(self) -> None:
+        fraction = self._fraction_options.get(self.replacement_percentage.get())
+        if fraction is None:
+            self.volume_summary.set("")
+        else:
+            total = float(self.transfer_volume_nl) * float(self.excess_multiplier.get())
+            self.volume_summary.set(
+                "Base {} nL × excess {} = {:g} nL per selected site: {:g} nL replacement + {:g} nL original.".format(
+                    self.transfer_volume_nl, self.excess_multiplier.get(), total,
+                    round(total * fraction / 25) * 25, round(total * (1 - fraction) / 25) * 25))
+        self.replacement_error.set("" if self.replacement_percentage.get() in self._fraction_options
+                                   else "Choose a valid percentage for the current volume.")
+
+    def selected_fraction(self) -> float:
+        value = self._fraction_options.get(self.replacement_percentage.get())
+        if value is None:
+            raise ValueError("{}: choose a valid replacement percentage for the current volume.".format(self.title))
+        return value
+
+    def _percentage_changed(self, *_args) -> None:
+        self._validate_percentage()
+        for name in self.buttons.keys() | self.circle_sites.keys():
+            self._paint_square(name)
+        if self.selection_changed:
+            self.selection_changed()
+
+    def _selected_highlight(self, background: str) -> str:
+        # Tk canvases have no alpha channel; composite the selection color over their background.
+        alpha = float(self.replacement_percentage.get().rstrip("%")) / 100
+        rgb = [int(background[index:index + 2], 16) for index in (1, 3, 5)]
+        highlight = [int(self.selection_color[index:index + 2], 16) for index in (1, 3, 5)]
+        return "#{:02x}{:02x}{:02x}".format(*(round(base * (1 - alpha) + color * alpha)
+                                              for base, color in zip(rgb, highlight)))
 
     def _circle_radius_changed(self, *_args):
         try:
@@ -248,6 +363,7 @@ class SetView:
                     name = panel_sequence_name(panel, row, column)
                     self.variables[name] = tk.BooleanVar(value=False)
                     self.selectable[name] = name in self.available
+        self._apply_encoding()
         self._show_panel()
 
     def _clear_panel_cache(self) -> None:
@@ -440,11 +556,11 @@ class SetView:
             targets.append((name, x_nm, y_nm, selectable))
         def toggle(event):
             name = nearest_panel_site(targets, (event.x-left)/scale, (event.y-top)/scale, radius_nm=radius)
-            if name is not None:
+            if name is not None and name not in self.encoded_sites:
                 self.variables[name].set(not self.variables[name].get())
                 self._on_square_toggled(name)
         canvas.bind("<Button-1>", toggle)
-        ttk.Label(frame, text="Click near a site center to select it. Cyan-filled circles are selected; "
+        ttk.Label(frame, text="Click near a site center to select it. Filled circles are selected; "
                   "gray × sites are unavailable. Circles overlap at their physical spacing.").pack(anchor="w", padx=5)
 
     @staticmethod
@@ -465,8 +581,9 @@ class SetView:
         if circle is not None:
             canvas, ring, dot, color = circle
             selected = self.variables[name].get()
-            color = self.CONFLICT_BG if selected and name in self.conflicts else ("#00ffff" if selected else color)
-            canvas.itemconfigure(ring, outline=color, fill="#00ffff" if selected else "",
+            highlight = self._selected_highlight(str(canvas.cget("background")))
+            color = self.CONFLICT_BG if selected and name in self.conflicts else (highlight if selected else color)
+            canvas.itemconfigure(ring, outline=color, fill=highlight if selected else "",
                                  width=3 if selected else 1.5)
             canvas.itemconfigure(dot, fill=color)
             return
@@ -485,6 +602,9 @@ class SetView:
         )
 
     def _on_square_toggled(self, name: str) -> None:
+        if self.title in COLOR_BITS:
+            self.encoding_enabled.set(True)
+            self._apply_encoding()
         self.mark_conflicts(set())
         self._paint_square(name)
         self._update_selection_summary()
@@ -499,10 +619,12 @@ class SetView:
         button.configure(background=self.SELECTABLE_HOVER_BG if entering else self.SELECTABLE_BG)
 
     def selected(self) -> List[str]:
+        if self.title in COLOR_BITS and not self.encoding_enabled.get():
+            return []
         return [name for name, variable in self.variables.items() if variable.get()]
 
     def _update_selection_summary(self) -> None:
-        count = sum(variable.get() for variable in self.variables.values())
+        count = len(self.selected())
         self.selection_summary.set("{} selected in this set".format(count))
 
     def mark_conflicts(self, names: Set[str]) -> None:
@@ -512,10 +634,14 @@ class SetView:
             self._paint_square(name)
 
     def clear(self) -> None:
+        self.encoding_enabled.set(False)
+        self.x_shift.set(next(iter(SHIFT_STATES)))
+        self.y_shift.set(next(iter(SHIFT_STATES)))
         self.conflicts.clear()
         for name, variable in self.variables.items():
             variable.set(False)
             self._paint_square(name)
+        self._apply_encoding()
         self._update_selection_summary()
         if self.selection_changed is not None:
             self.selection_changed()
@@ -662,7 +788,7 @@ def panel_definitions() -> List[Tuple[str, str, str, List[Dict[str, object]]]]:
         c_panels.append({"label": label, "rows": ["Top", "Mid", "Bot"], "columns": ["L3", "L2", "L1", "R1", "R2", "R3"], "active": left})
     for label in ("PDGF-14", "PDGF-18", "PDGF-22", "PDGF-26", "PDGF-30", "PDGF-34", "PDGF-38", "Kana-14", "Kana-18", "Kana-22"):
         c_panels.append({"label": label, "rows": ["Top", "Mid", "Bot"], "columns": ["L3", "L2", "L1", "R1", "R2", "R3"], "active": right})
-    return [
+    definitions = [
         (
             "Yaritza Extensions",
             "yaritza_replace.csv",
@@ -698,6 +824,10 @@ def panel_definitions() -> List[Tuple[str, str, str, List[Dict[str, object]]]]:
             ],
         ),
     ]
+
+    _, filename, plate_name, panels = next(item for item in definitions if item[0] == "PAINT R1")
+    definitions.extend((title, filename, plate_name, deepcopy(panels)) for title in R1_SELECTION_COLORS)
+    return definitions
 
 
 class DestinationPlateView(ttk.Frame):
@@ -1763,9 +1893,12 @@ class PicklistApp(tk.Tk):
             hinge_controls, textvariable=self.hinge_type,
             values=list(HINGE_TYPES.values()), state="readonly", width=38,
         ).pack(side="left")
+        self.transfer_volume = tk.StringVar(value=str(self.config.get("transfer_volume_nL", 50)))
         set_tabs = ttk.Notebook(replacement_page)
         set_tabs.pack(side="top", fill="both", expand=True)
         for title, filename, plate_name, panels in panel_definitions():
+            if title not in ACTIVE_REPLACEMENT_TABS:
+                continue
             page = ttk.Frame(set_tabs)
             set_tabs.add(page, text=title)
             self.set_views.append(
@@ -1777,6 +1910,7 @@ class PicklistApp(tk.Tk):
                     panels,
                     selection_changed=self._selections_changed,
                     template_requested=self._make_template_from_panel,
+                    base_transfer_volume=self.transfer_volume,
                 )
             )
 
@@ -1794,6 +1928,12 @@ class PicklistApp(tk.Tk):
         self.plate_view.pack(fill="both", expand=True)
         self._build_storage(storage_page)
         self._build_preview(preview_page)
+        image_page = ttk.Frame(main_tabs)
+        main_tabs.add(image_page, text="7. RGB Image")
+        image_scroll = ScrollFrame(image_page)
+        image_scroll.pack(fill="both", expand=True)
+        self.rgb_image_view = RGBImageView(image_scroll.inner, self, APP_DIR, STORAGE_STATE_PATH, PLATE_STATE_PATH)
+        self.rgb_image_view.pack(fill="both", expand=True)
         self._bind_config_updates()
         self._refresh_plate_view()
         self.protocol("WM_DELETE_WINDOW", self._close_app)
@@ -1876,6 +2016,8 @@ class PicklistApp(tk.Tk):
                     panels.append(
                         {
                             "group": view.title,
+                            "x_shift": list(SHIFT_STATES).index(view.x_shift.get()) if view.title in COLOR_BITS else None,
+                            "y_shift": list(SHIFT_STATES).index(view.y_shift.get()) if view.title in COLOR_BITS else None,
                             "label": str(panel["label"]),
                             "rows": rows,
                             "columns": columns,
@@ -2171,7 +2313,9 @@ class PicklistApp(tk.Tk):
         self.base_path = self._field(pick, 0, "Base Source1", str(SHEET_DIR / "book_base.csv"))
         self.destination_wells = self._field(pick, 1, "Destination wells", ",".join(default_wells))
         self.transfers_per_source = self._field(pick, 2, "Transfers/source", str(self.config.get("transfers_per_source", 1)))
-        self.transfer_volume = self._field(pick, 3, "Transfer volume (nL)", str(self.config.get("transfer_volume_nL", 50)))
+        ttk.Label(pick, text="Base transfer volume (nL)").grid(row=3, column=0, sticky="e", padx=6, pady=4)
+        ttk.Spinbox(pick, from_=25, to=100000, increment=25, textvariable=self.transfer_volume, width=58).grid(
+            row=3, column=1, sticky="ew", padx=6, pady=4)
         self.max_volume = self._field(pick, 4, "Max destination volume (µL)", str(self.config.get("max_destination_volume_uL", 12.5)))
         self.destination_plate = self._field(pick, 5, "Destination plate", configured_plate)
         self.source_plate_type = self._field(pick, 6, "Source plate type", str(self.config.get("source_plate_type", "384PP_AQ_BP")))
@@ -2654,7 +2798,7 @@ class PicklistApp(tk.Tk):
                         multiplier = float(view.excess_multiplier.get())
                     except ValueError:
                         raise ValueError("{} Excess Multiplier must be a positive number.".format(view.title))
-                    selections.append(ReplacementSelection(Path(view.path_var.get()), names, view.plate_name, multiplier))
+                    selections.append(ReplacementSelection(Path(view.path_var.get()), names, view.plate_name, multiplier, view.selected_fraction()))
                     design_names.extend(names)
             if not selections:
                 raise ValueError("Select at least one replacement.")
