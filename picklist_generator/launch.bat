@@ -37,7 +37,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-".venv\Scripts\python.exe" -c "from PIL import Image; import numpy" >nul 2>nul
+".venv\Scripts\python.exe" -c "from PIL import Image; import numpy; import matplotlib" >nul 2>nul
 if errorlevel 1 (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt
   if errorlevel 1 exit /b 1

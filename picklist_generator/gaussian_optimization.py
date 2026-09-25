@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image, ImageOps
 from color_light import fit_linear_source, abundance_scale, canvas_area_gain
 from image_encoding import FIT_MODES, geometry
+from optimization_regularization import regularization_weight
 from gaussian_reconstruction import render_gaussian_overlay, REFERENCE_AREA_NM2
 
 
@@ -28,7 +29,7 @@ def fitted_target(path, mode, size, linear_light=False):
     return np.asarray(image, dtype=float) / 255
 
 
-def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=False, normalize_designs=False, compensate_area=False):
+def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=False, normalize_designs=False, compensate_area=False, regularization_strength=0.0):
     """Minimize unclipped RGB squared error; retain baseline if refinement is worse.
 
     Continuous projected gradient followed by quantized coordinate descent from
@@ -44,6 +45,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
     local_target = np.rot90(target, rotation // 90)
     height, width = local_target.shape[:2]
     nx, ny = info['columns'], info['rows']
+    alpha = regularization_weight(regularization_strength, height*width, nx*ny)
     sigma = fwhm_nm / math.sqrt(8 * math.log(2))
     xs = -info['pixel_pitch_x_nm']/2 + (np.arange(width)+.5)*info['field_width_nm']/width
     ys = -info['pixel_pitch_y_nm']/2 + (np.arange(height)+.5)*info['field_height_nm']/height
@@ -55,8 +57,8 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
     signal_gain = REFERENCE_AREA_NM2 * exposure * abundance_scale(designs[0]["encoding_scheme"], normalize_designs) * canvas_area_gain(designs[0]["encoding_scheme"], compensate_area)
     gain = signal_gain / (2*math.pi*sigma**2)
     gx, gy = kx.T @ kx, ky.T @ ky
-    lipschitz = gain**2 * np.linalg.eigvalsh(gx)[-1] * np.linalg.eigvalsh(gy)[-1]
-    diagonal = gain**2 * np.outer(np.diag(gy), np.diag(gx))
+    lipschitz = gain**2 * np.linalg.eigvalsh(gx)[-1] * np.linalg.eigvalsh(gy)[-1] + alpha
+    diagonal = gain**2 * np.outer(np.diag(gy), np.diag(gx)) + alpha
     result = deepcopy(designs)
     for channel in range(3):
         weights = np.zeros((ny,nx))
@@ -74,9 +76,9 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
                 steps[y,x] = (site['replacement_nl']+site['original_nl'])/25
         if len(seen) != nx*ny or np.any(steps < 1) or np.any(steps != np.rint(steps)):
             raise ValueError('Optimization requires a complete grid and 25 nL transfer increments.')
-        b = gain * ky.T @ local_target[:,:,channel] @ kx
+        b = gain * ky.T @ local_target[:,:,channel] @ kx + alpha*weights
         def hessian(w):
-            return gain**2 * gy @ w @ gx
+            return gain**2 * gy @ w @ gx + alpha*w
         def score(w):
             return float(np.sum(w*hessian(w))-2*np.sum(w*b))
         w = weights.copy()
@@ -98,6 +100,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
                     if delta and 2*delta*gradient[y,x]+delta*delta*diagonal[y,x] < -1e-12:
                         candidate[y,x] = value
                         gradient += delta*gain**2*np.outer(gy[:,y],gx[x,:])
+                        gradient[y,x] += alpha*delta
                         changed = True
                 if not changed:
                     break
@@ -115,10 +118,17 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
     optimized = render_gaussian_overlay(result,fwhm_nm,exposure,linear_light,normalize_designs,compensate_area)
     before = float(np.mean((baseline.density*signal_gain-target)**2))
     after = float(np.mean((optimized.density*signal_gain-target)**2))
-    if after > before:
+    deviation = float(np.mean([(s['replacement_fraction']-base['replacement_fraction'])**2
+        for d,original in zip(result,designs) for s,base in zip(d['image_sites'],original['image_sites'])]))
+    penalty = regularization_strength * deviation
+    if after + penalty > before:
         result,after = deepcopy(designs),before
+        penalty = deviation = 0.0
     metrics = dict(method='bounded least squares with quantized coordinate refinement',
-                   objective='mean squared unclipped signal error against fitted upright source',
+                   objective='mean squared unclipped signal error against fitted upright source + regularization * mean squared departure from direct assignments',
+                   regularization_strength=regularization_strength, regularization_penalty=penalty,
+                   mean_squared_assignment_change=deviation, baseline_regularized_objective=before,
+                   optimized_regularized_objective=after+penalty,
                    linear_light=linear_light, normalize_designs=normalize_designs, compensate_area=compensate_area,
                    baseline_rmse=math.sqrt(before), optimized_rmse=math.sqrt(after),
                    mse_reduction_fraction=(before-after)/before if before else 0.,

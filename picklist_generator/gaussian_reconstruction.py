@@ -46,11 +46,14 @@ def render_gaussian_overlay(designs, fwhm_nm=DEFAULT_FWHM_NM, exposure=DEFAULT_E
     info = geometry(scheme_id, rotation)
     sigma = fwhm_nm / math.sqrt(8 * math.log(2))
     # Resolve narrow Gaussians while bounding memory for accidental tiny inputs.
-    requested_pixel_nm = min(0.15, fwhm_nm / 4)
+    min_pixel_nm = math.sqrt(info['field_width_nm'] * info['field_height_nm'] / 1_900_000)
+    requested_pixel_nm = max(min(0.15, fwhm_nm / 4), min_pixel_nm)
+    if requested_pixel_nm > fwhm_nm / 4:
+        raise ValueError('Gaussian width is too small for this field. Choose FWHM of at least {:.3g} nm.'.format(4*min_pixel_nm))
     width = math.ceil(info["field_width_nm"] / requested_pixel_nm - 1e-9)
     height = math.ceil(info["field_height_nm"] / requested_pixel_nm - 1e-9)
     if width * height > 2_000_000:
-        raise ValueError("Gaussian width is too small to resolve. Choose FWHM of at least 0.2 nm.")
+        raise ValueError("Gaussian raster exceeds the preview size limit for this field.")
     dx, dy = info["field_width_nm"] / width, info["field_height_nm"] / height
     xmin, ymin = -info["pixel_pitch_x_nm"] / 2, -info["pixel_pitch_y_nm"] / 2
     xs = xmin + (np.arange(width) + .5) * dx

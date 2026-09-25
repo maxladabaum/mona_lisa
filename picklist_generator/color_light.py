@@ -52,7 +52,7 @@ def abundance_scale(scheme_id, normalize_designs):
 def canvas_area_gain(scheme_id, compensate_area):
     """Exposure compensation for a larger virtual canvas; does not add photons."""
     from image_encoding import encoding_scheme
-    return 4.0 if compensate_area and encoding_scheme(scheme_id).tiled else 1.0
+    return float(encoding_scheme(scheme_id).tile_count) if compensate_area else 1.0
 
 
 def quadrant_weight(design, normalize_designs):

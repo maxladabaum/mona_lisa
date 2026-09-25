@@ -3,3 +3,6 @@ Pillow>=10
 
 # Additive Gaussian reconstruction in physical coordinates.
 numpy>=1.24
+
+# Ranked image-similarity graph exports.
+matplotlib>=3.7

@@ -317,7 +317,7 @@ scheme is remembered across application launches. The manual color tabs retain
 their original encoding; this selector applies to the RGB image workflow.
 Exports and stored designs include the scheme ID and complete decoding table.
 
-Choose **Upload RGB image** and a fitting mode. Click **Compare all schemes**
+Choose **Upload RGB image** and a fitting mode. Click **Compare original schemes**
 to see all four options side by side, with each binned image above its predicted
 Gaussian RGB reconstruction. Every preview uses the same physical field and display scale;
 the cards list image resolution, design count, and pixel spacing. The comparison
@@ -461,7 +461,7 @@ assignment if no improvement is found. This is a local optimization and cannot
 recover detail beyond the available sampling and Gaussian width. Its prediction
 retains the equal-abundance, equal-channel-brightness assumptions of the preview.
 
-With optimization enabled, **Compare all schemes** compares the optimized
+With optimization enabled, **Compare original schemes** compares the optimized
 reconstructions and reports each scheme's before/after error. Optimization runs
 independently for every scheme, including the nine-bit and four-quadrant options.
 The popup follows the RGB tab's image, fit, rotation, base transfer volume,
@@ -534,7 +534,7 @@ preview remain consistent.
 
 ### Comparing nine-bit image schemes
 
-The RGB Image scheme selector and **Compare all schemes** include the original four
+The RGB Image scheme selector and **Compare original schemes** include the original four
 single-field six-bit options, their four quadrant variants, and three nine-bit options. Scroll the comparison horizontally:
 
 | Nine-bit scheme | Bits | Image sampling grid | Designs |
@@ -599,7 +599,7 @@ equal-per-design convention.
 ### Four-quadrant composite with 48 types
 
 Choose **4 quadrants — 24×32 pixels, 48 designs, 118.8×81.6 nm** in the RGB Image
-scheme selector or **Compare all schemes**. This uses the existing six-bit,
+scheme selector or **Compare original schemes**. This uses the existing six-bit,
 three-staple-per-bit barcode layout: bits 1–2 specify color, bit 3 quadrant Y,
 bit 4 quadrant X, bit 5 local X shift, and bit 6 local Y shift. There are
 3 colors × 4 quadrants × 2 × 2 local shifts = 48 types; the unused color code
@@ -636,7 +636,7 @@ their uncompensated rendering.
 
 ### Quadrant variants under every six-bit family
 
-**Compare all schemes** places each four-quadrant card directly below its
+**Compare original schemes** places each four-quadrant card directly below its
 single-field six-bit parent. Scroll down to see the second row. These are
 alternative codebooks, not four independent copies of the parent batch:
 
@@ -676,3 +676,223 @@ quadrant balancing as well as the global design-count normalization.
 For these unequal-quadrant variants, exported density arrays include the selected
 per-quadrant weights; multiply by `linear_rgb_gain` for displayed linear signal.
 The weights are recorded in the design and geometry metadata and assignment CSV.
+
+
+### Compare XY shifts, tiles, and Gaussian widths
+
+In **RGB Image**, choose **Compare tiling & FWHM…**. Rows are position-bit
+allocations and columns are Gaussian FWHM values, initially **5, 7.5, 10 nm**.
+Enter one to six comma-separated widths and click **Render comparison**.
+
+The original fixed-color family reserves two bits for color and distributes the remaining four
+bits among tile X, tile Y, local X shift, and local Y shift. There are **35**
+allocations, each using **48 RGB origami types** and **768 RGB sample positions**.
+The default filter shows the 16 allocations with a 24×32 sample grid;
+**All allocations (427 layouts)** includes other grid aspect ratios. Filters for
+each tile count and for each joint-code family isolate the tradeoffs. At one extreme all four bits
+specify local shifts; at the other all four specify tile coordinates.
+Each physical origami retains its original 6×8 image-site layout.
+
+The fitted target shows tile boundaries. Previews preserve physical aspect
+ratio in equally sized display boxes and include a 20 nm scale bar. Each row
+lists field dimensions, sample spacing, sample counts, and the four bit budgets.
+Each reconstruction reports Gaussian width relative to sample spacing,
+clipping, area exposure compensation, and optimization error when enabled.
+Larger mosaics spread the same signal over more area: brightness matching
+applies exposure compensation equal to tile count (up to 21×), without adding
+photons or modifying physical mixing volumes.
+
+The matrix inherits the RGB tab's source image, fit, origami rotation, base
+transfer volume, color excess multipliers, exposure, linear-light processing,
+signal normalization, brightness compensation, optimization, and alignment
+settings. Only Gaussian width is overridden by each column. Optimization fits
+each layout and width independently; alignment-enabled previews show the
+expected aligned result. Large alignment mosaics use a coarser raster while
+keeping at least four raster samples per FWHM; numerical limits are reported
+in individual cells. Progress is shown while rendering. To avoid repeatedly
+starting a large calculation while editing, changed settings clear the matrix;
+click **Render comparison** to update it.
+
+All 427 sweep layouts also appear in the RGB Image **Encoding scheme** dropdown.
+Choose one there, or click **Use this layout** beside a comparison row, to use it
+for design inspection, run preparation, picklist export, and storage. Selecting a
+layout uses the main tab's FWHM. Rendering the comparison alone does not change
+the active assignments or Gaussian width. **Compare original schemes** retains
+the original six-/nine-bit comparison; **Compare tiling & FWHM** shows the new
+allocation matrix.
+
+### Exhaustive PDF report
+
+Click **Export exhaustive PDF…** in the RGB Image tab and choose a PDF filename.
+All six panels carry the same white, black-bordered pixel outlines as the binned
+RGB preview. Each page identifies the representative first design whose 48 nominal
+pixels are outlined; the overlay follows the physical spacing, rotation, and crop.
+These guides are display annotations and do not affect predictions or scores.
+The report includes every encoding-scheme dropdown entry once, automatically
+choosing **0° or 90° origami rotation** to best match the upright uploaded image's
+aspect ratio. This minimizes aspect-ratio padding (or center-crop loss); ties use
+0°. Image EXIF orientation is respected. Each layout gets a landscape page with **Binned RGB**,
+**Before optimization — Gaussian overlay**, **Predicted RGB**, **Ideal alignment**,
+**Expected alignment**, and **Finite count**. With the current 438 entries, this
+is **438 view pages plus a settings cover page**. Equivalent layouts under different
+names are retained so every dropdown entry is represented.
+
+The report snapshots the current image and RGB settings, including the main
+FWHM, fitting mode, base volume, color excess multipliers, exposure, color/brightness
+options, optimization toggle, alignment settings, and finite-count seed. Each
+chosen orientation is independently binned and optimized when optimization is enabled.
+The source image remains upright. The multi-FWHM comparison's column widths do
+not override the report's FWHM. With optimization off, before/after assignments
+are identical and the report labels this explicitly.
+
+Expected-alignment and finite-count panels always use the configured alignment
+errors, even when alignment is disabled for the main prediction. Predicted RGB
+uses the alignment toggle exactly as the main preview does. Ideal alignment uses
+the final assignments without residual errors. Finite count simulates alignment
+uncertainty only, not occupancy or photon noise. Pages include physical field
+size, a 20 nm scale bar, clipping, exposure compensation, and optimization error.
+
+Export runs in the background with a progress window and a Cancel button.
+The progress bar shows percentage and completed view count, and advances through
+each view's calculation and PDF-writing stages; the current stage is shown below it.
+Cancellation takes effect between calculations. The report streams pages to a
+temporary file and replaces the chosen destination only when complete; failure
+or cancellation preserves any existing PDF. No runs are prepared, and the active
+scheme, rotation, assignments, and main FWHM are unchanged.
+
+### Regularizing Gaussian optimization
+
+**Regularization strength** in the RGB Image tab controls how strongly optimized
+replacement fractions stay near the direct, quantized image assignments. The
+initial strength is **0.01**; **0** restores unregularized optimization. Increase
+it to make corrections more conservative. This starting value is adjustable,
+not a measured optimum for your experiment.
+
+The objective adds `strength × mean((fraction − direct_fraction)²)` to the
+image MSE (and the existing alignment-variance term when enabled). This is an
+L2 penalty around the direct assignment, rather than a smoothing filter over
+image edges. It discourages large compensating changes and extreme alternating
+patterns while preserving the baseline image's edges. The penalty is normalized
+by site count and the image loss by raster count. Barcode bits remain binary;
+replacement and original volumes still use 25 nL increments and preserve their
+sum. Reported RGB/held-out RMSE excludes the regularization penalty; optimization
+metadata records the strength, assignment deviation, penalty, and total objective.
+
+The optimization target remains the **uploaded image**, fitted/cropped/padded
+according to the selected mode and resampled to the reconstruction raster in
+linear light when enabled. The binned RGB sets the direct-assignment baseline
+and regularization reference; it is not the optimization target.
+
+The setting is saved and applies to ordinary and alignment-aware optimizers,
+all comparison schemes/FWHM columns, prepared assignments, stored/exported
+optimization metadata, and exhaustive PDF exports. Changing it recalculates the
+active optimized image and invalidates prepared runs. The tiling/FWHM matrix
+clears until **Render comparison** is clicked. Regularization constrains the
+inverse problem; it does not change the alignment sample count or eliminate
+uncertainty in the alignment-error model.
+
+
+PDF panels preserve the complete fitted image at its natural physical aspect
+ratio. They are not cropped to a fixed landscape rectangle. With **Fit with black
+padding**, only the geometrically known fitting margins are trimmed; real black
+image content is retained. Unused page area stays white, with no black frame.
+All six panels share the same displayed physical region and magnification, and
+scale bars sit outside the images. Headers list both the full field and the
+shown region. Source-fitting settings are respected: **Center crop** still crops
+at the encoding stage, so use **Fit with black padding** to retain the entire
+uploaded image. Display trimming does not change optimization or reconstruction.
+
+
+The main RGB Image tab uses the same best-fit orientation rule as the PDF:
+uploading an image or selecting a different encoding layout chooses **0° or 90°**
+to minimize aspect-ratio padding/cropping. A portrait image typically selects 90°
+for the original layout. The source image stays upright. Manual rotation remains
+available and is preserved when changing exposure, Gaussian width, optimization,
+or color-processing settings. Click **Best fit** to restore the automatic choice.
+
+
+While a PDF export is running, its button reads **Show PDF export progress…**;
+click it to bring a hidden or minimized progress window back without starting
+a second export. Startup and save-dialog errors are displayed in the app and
+leave the button usable for retry. If files were updated while the application
+was open, restart it so all modules use the same version.
+
+
+### Ranked image-similarity graph
+
+Choose **Export similarity graph…** to rank all 438 dropdown layouts in one plot,
+using each layout's best-fitting 0°/90° orientation. The export saves a vector
+PDF, PNG, ranked CSV, and JSON settings/scores together. It has a background
+progress window and cancellation, and uses the current RGB/optimization settings.
+Click the same button during a calculation to reopen its progress window.
+
+The horizontal axis is **RGB RMSE: lower is closer**. Hollow markers show direct
+assignments before optimization; filled markers show final assignments. Colors
+separate layouts using at most 64 origami types from those needing more, and each
+label gives its count and orientation. Duplicate dropdown layouts remain visible.
+This is numerical image error, not an arbitrary percentage or a perceptual metric.
+
+With alignment enabled, scoring uses the **held-out expected alignment image**
+(seed 2718), not the training-model prediction or a single finite-count example.
+The score excludes finite-count variance and the regularization penalty; those
+terms still affect the optimizer. Without alignment it scores the ideal prediction.
+Signals are unclipped, so overbrightness is penalized. The color space follows
+the linear-light checkbox. Known fitting padding is excluded, and predictions
+are resampled to a common source-content raster (256 pixels on its longest side).
+With **Fit with black padding**, the entire uploaded image is compared; **Center
+crop** instead evaluates its fitted/cropped region, which can vary by layout.
+The chart notes these conventions so blank margins cannot artificially improve
+the ranking.
+
+
+Joint six-bit tiling sweeps
+--------------------------
+The 18-, 21-, and 20-position joint-code budgets include every ordered X:Y
+factorization, then every tile count from 1 to the available states on each axis.
+This gives 108, 84, and 120 layouts, respectively, while retaining 54, 63, and
+60 origami types. For example, the 18-position family includes 1×18, 2×9,
+3×6, 6×3, 9×2, and 18×1 state grids, with all tile/shift allocations within each.
+Local shifts are distributed as evenly as possible among equal-sized tiles
+(for example, 7 X states across 3 tile columns gives 3, 2, and 2 local X shifts).
+The sweep covers these balanced rectangular layouts; it does not enumerate
+arbitrary unequal partitions or permutations of which tile gets extra shifts.
+These 392 position-budget sweep entries appear in the encoding dropdown, tiling/FWHM comparison,
+exhaustive PDF, and similarity graph. Family filters identify the total position
+and origami budgets, independently of the chosen X:Y factorization.
+Existing layout identifiers and original/four-quadrant aliases are preserved.
+
+The original 16-position budget also has a complete sweep: **80 layouts**
+across 1×16, 2×8, 4×4, 8×2, and 16×1 state grids. Each uses 48 types.
+Two original color bits are preserved; the remaining four bits jointly index
+the tile and local shift, allowing uneven tile partitions. The original 35
+bit-allocation entries retain their existing identifiers and barcode mappings.
+Choose **16 positions / 48 types (80 layouts)** in the tiling comparison.
+
+### Run similarity optimization
+
+**Run similarity optimization** first optimizes and ranks every dropdown scheme
+at the current starting values, choosing its best-fitting 0°/90° orientation.
+This analysis enables replacement optimization and alignment simulation, without
+changing the active RGB tab. Other light, volume, fit, alignment-center, count,
+and regularization settings are copied from the tab.
+
+The best 20 entries retain their optimized assignments and orientation throughout
+a full Cartesian sweep of X translation SD, Y translation SD, rotation SD, and
+Gaussian FWHM. Each axis uses 50%, 100%, 150%, and 200% of its starting value
+(up to 256 conditions per finalist). An initial error of zero remains zero;
+duplicate zero-valued conditions are evaluated once. Assignments are **not**
+reoptimized under each condition. Equivalent dropdown entries remain candidates.
+
+The winner has the lowest **worst-case source-image RGB RMSE** over the grid;
+mean RMSE breaks ties. Scores use the same unclipped, source-content comparison
+as the similarity graph and independent stress-test alignment samples (seed 31415).
+They measure the expected image, not finite-count variability or the regularization
+penalty. The conclusion is conditional on this sampled uncertainty range and model.
+
+The progress window covers both stages and supports cancellation. A completed run
+saves a three-page PDF (ranking, sensitivity curves, starting settings), a ranking
+PNG, nominal/robustness/sweep CSV files, and JSON with settings, rankings, and the
+winning assignments. Sensitivity curves show the worst score across the other
+three axes, exposing coupled errors. Unsupported simulation settings stop the run
+with an error rather than silently dropping difficult conditions. The current
+selected design and prepared runs are not modified.

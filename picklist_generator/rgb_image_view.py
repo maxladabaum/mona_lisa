@@ -10,11 +10,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from app_state import all_384_wells, create_run_output_directory, plate_wells, record_transfers, save_json, next_unused_wells
 from image_encoding import (
-    CHANNELS, FIT_MODES, ROWS, DEFAULT_SCHEME, ENCODING_SCHEMES, physical_raster_size,
-    bin_image, compile_designs, geometry, prepare_runs, reconstruct, site_name, rotate_point, physical_reference_raster,
+    CHANNELS, FIT_MODES, ROWS, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, physical_raster_size,
+    bin_image, compile_designs, geometry, prepare_runs, reconstruct, site_name, rotate_point, physical_reference_raster, best_image_rotation,
 )
 from gaussian_reconstruction import DEFAULT_FWHM_NM, DEFAULT_EXPOSURE, render_gaussian_overlay
 from gaussian_optimization import fitted_target, optimize_designs
+from optimization_regularization import DEFAULT_REGULARIZATION, validate_regularization
 from alignment_reconstruction import AlignmentModel, AlignmentSettings, VALIDATION_SEED
 from picklist_core import PICKLIST_COLUMNS, combine_picklists, parse_vector, valid_well_list, write_csv
 
@@ -27,6 +28,7 @@ class RGBImageView(ttk.Frame):
         self.color_views = {view.title: view for view in app.set_views if view.title in CHANNELS}
         self.pixels = None
         self.comparison_window = None
+        self.tiling_window = None
         self.designs, self.runs = [], []
         self.saved = self.stored = self.committed = False
         self.image_path = tk.StringVar()
@@ -40,6 +42,7 @@ class RGBImageView(ttk.Frame):
         self.reconstruction = None
         self.reconstruction_summary = tk.StringVar()
         self.optimize_enabled = tk.BooleanVar(value=False)
+        self.regularization = tk.StringVar(value=str(app.config.get("image_optimization_regularization", DEFAULT_REGULARIZATION)))
         self.optimization_metrics = None
         self.optimization_summary = tk.StringVar()
         self.alignment_enabled = tk.BooleanVar(value=False)
@@ -50,9 +53,9 @@ class RGBImageView(ttk.Frame):
         self.ideal_reconstruction = None
         self.alignment_summary = tk.StringVar()
         saved_scheme = app.config.get("image_encoding_scheme", DEFAULT_SCHEME)
-        if saved_scheme not in ENCODING_SCHEMES:
+        if saved_scheme not in SELECTABLE_SCHEMES:
             saved_scheme = DEFAULT_SCHEME
-        self.scheme = tk.StringVar(value=ENCODING_SCHEMES[saved_scheme].label)
+        self.scheme = tk.StringVar(value=SELECTABLE_SCHEMES[saved_scheme].label)
         self.image_geometry = geometry(saved_scheme)
         self.geometry_summary = tk.StringVar()
         self.explanation = tk.StringVar()
@@ -70,10 +73,18 @@ class RGBImageView(ttk.Frame):
         scheme_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(scheme_bar, text="Encoding scheme").pack(side="left")
         self.scheme_picker = ttk.Combobox(scheme_bar, textvariable=self.scheme,
-                                          values=[scheme.label for scheme in ENCODING_SCHEMES.values()],
+                                          values=[scheme.label for scheme in SELECTABLE_SCHEMES.values()],
                                           state="readonly", width=65)
         self.scheme_picker.pack(side="left", padx=8)
-        ttk.Button(scheme_bar, text="Compare all schemes…", command=self._compare_schemes).pack(side="left", padx=4)
+        ttk.Button(scheme_bar, text="Compare original schemes…", command=self._compare_schemes).pack(side="left", padx=4)
+        ttk.Button(scheme_bar, text="Compare tiling & FWHM…", command=self._compare_tiling).pack(side="left", padx=4)
+        self.exhaustive_pdf_button = ttk.Button(self, text="Export exhaustive PDF…", command=self._export_exhaustive_pdf)
+        self.exhaustive_pdf_button.pack(anchor="w", pady=(6, 0))
+        self.similarity_graph_button = ttk.Button(self, text="Export similarity graph…", command=self._export_similarity_graph)
+        self.similarity_graph_button.pack(anchor="w", pady=(4, 0))
+        self.similarity_optimization_button = ttk.Button(self, text="Run similarity optimization",
+            command=lambda: self._export_exhaustive_pdf(similarity=True, robustness=True))
+        self.similarity_optimization_button.pack(anchor="w", pady=(4, 0))
         rotation_bar = ttk.Frame(self)
         rotation_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(rotation_bar, text="Origami rotation (degrees clockwise)").pack(side="left")
@@ -83,7 +94,8 @@ class RGBImageView(ttk.Frame):
         rotation_picker.bind("<<ComboboxSelected>>", lambda _event: self._load())
         ttk.Button(rotation_bar, text="Origami left 90°", command=lambda: self._rotate(-90)).pack(side="left", padx=4)
         ttk.Button(rotation_bar, text="Origami right 90°", command=lambda: self._rotate(90)).pack(side="left", padx=4)
-        ttk.Label(rotation_bar, text="The image stays upright; the origami grid rotates.").pack(side="left", padx=10)
+        ttk.Button(rotation_bar, text="Best fit", command=lambda: self._load(auto_rotate=True)).pack(side="left", padx=4)
+        ttk.Label(rotation_bar, text="Image stays upright; uploads and layout changes choose the best fit.").pack(side="left", padx=10)
         ttk.Label(self, textvariable=self.geometry_summary).pack(anchor="w", pady=6)
         settings = ttk.Frame(self)
         settings.pack(fill="x")
@@ -108,7 +120,7 @@ class RGBImageView(ttk.Frame):
                         variable=self.linear_light, command=self._light_changed).pack(side="left")
         ttk.Checkbutton(light_bar, text="Equal total signal across encoding schemes",
                         variable=self.normalize_designs, command=self._light_changed).pack(side="left", padx=12)
-        ttk.Checkbutton(self, text="Match brightness for larger canvases (4× exposure compensation for quadrants)",
+        ttk.Checkbutton(self, text="Match brightness for larger canvases (exposure compensation by tile count)",
                         variable=self.compensate_area, command=self._light_changed).pack(anchor="w")
         alignment_bar = ttk.LabelFrame(self, text="Residual alignment error (after fiducial alignment, before decoded XY shift)", padding=5)
         alignment_bar.pack(fill="x", pady=(6, 0))
@@ -128,6 +140,13 @@ class RGBImageView(ttk.Frame):
         ttk.Checkbutton(optimization_bar, text="Optimize replacement percentages for Gaussian overlap",
                         variable=self.optimize_enabled, command=self._volumes_changed).pack(side="left")
         ttk.Label(optimization_bar, textvariable=self.optimization_summary).pack(side="left", padx=8)
+        regularization_bar = ttk.Frame(self)
+        regularization_bar.pack(fill="x", pady=(4, 0))
+        ttk.Label(regularization_bar, text="Regularization strength").pack(side="left")
+        ttk.Spinbox(regularization_bar, from_=0, to=10, increment=0.01,
+                    textvariable=self.regularization, width=7).pack(side="left", padx=8)
+        ttk.Label(regularization_bar, text="0 = off; higher values keep replacements closer to direct image assignments.").pack(side="left")
+        ttk.Label(self, text="Optimization target: fitted uploaded image (linear light when enabled), not the binned preview.").pack(anchor="w", pady=(2, 0))
         previews = ttk.Frame(self)
         previews.pack(fill="x", pady=8)
         self.pixel_canvases = []
@@ -188,6 +207,7 @@ class RGBImageView(ttk.Frame):
         self.store_button.pack(side="left", padx=6)
         ttk.Label(self, textvariable=self.status, wraplength=1150).pack(anchor="w", pady=4)
         self._update_scheme_controls()
+        self.regularization.trace_add("write", self._regularization_changed)
         self.scheme.trace_add("write", self._scheme_changed)
         self.gaussian_fwhm.trace_add("write", self._render_settings_changed)
         self.gaussian_exposure.trace_add("write", self._render_settings_changed)
@@ -199,6 +219,17 @@ class RGBImageView(ttk.Frame):
                          app.transfers_per_source, app.hinge_type, app.staple, app.scaffold, app.magnesium,
                          app.sodium, app.te_10x, app.desired, *(view.path_var for view in self.color_views.values())):
             variable.trace_add("write", self._invalidate)
+
+    def _regularization_value(self):
+        return validate_regularization(self.regularization.get())
+
+    def _regularization_changed(self, *_args):
+        try:
+            self.app.config["image_optimization_regularization"] = self._regularization_value()
+            self.app._schedule_config_save()
+        except ValueError:
+            pass
+        self._volumes_changed()
 
     def _render_settings_changed(self, *_args):
         self._volumes_changed()
@@ -230,10 +261,10 @@ class RGBImageView(ttk.Frame):
         if self.alignment_enabled.get():
             self._volumes_changed()
 
-    def _alignment_model(self, designs):
+    def _alignment_model(self, designs, fwhm_nm=None):
         settings = self._alignment_settings()
         key = (designs[0]["encoding_scheme"], designs[0]["origami_rotation_degrees_clockwise"],
-               settings, float(self.gaussian_fwhm.get()), float(self.gaussian_exposure.get()),
+               settings, float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm), float(self.gaussian_exposure.get()),
                self.linear_light.get(), self.normalize_designs.get(), self.compensate_area.get())
         if key not in self.alignment_models:
             if len(self.alignment_models) >= 2:
@@ -250,10 +281,11 @@ class RGBImageView(ttk.Frame):
         # The exported realization and its seed must match a newly prepared snapshot.
         self._invalidate()
 
-    def _render_overlay(self, designs):
+    def _render_overlay(self, designs, fwhm_nm=None):
+        fwhm_nm = float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm)
         if self.alignment_enabled.get():
-            return self._alignment_model(designs).expected(designs)
-        return render_gaussian_overlay(designs, float(self.gaussian_fwhm.get()), float(self.gaussian_exposure.get()), **self._light_options())
+            return self._alignment_model(designs, fwhm_nm).expected(designs)
+        return render_gaussian_overlay(designs, fwhm_nm, float(self.gaussian_exposure.get()), **self._light_options())
 
     def _compile_scheme(self, pixels, scheme_id):
         """Use identical concentration settings for the main view and comparison."""
@@ -262,24 +294,25 @@ class RGBImageView(ttk.Frame):
             {color: float(view.excess_multiplier.get()) for color, view in self.color_views.items()},
             scheme_id, int(self.rotation.get()), linear_light=self.linear_light.get())
 
-    def _optimize(self, designs):
-        overlay = self._render_overlay(designs)
+    def _optimize(self, designs, fwhm_nm=None):
+        fwhm_nm = float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm)
+        overlay = self._render_overlay(designs, fwhm_nm)
         target = fitted_target(self.image_path.get(), self.fit_mode.get(), overlay.rgb.size, linear_light=self.linear_light.get())
         if self.alignment_enabled.get():
-            model = self._alignment_model(designs)
-            result, metrics = model.optimize(designs, target)
+            model = self._alignment_model(designs, fwhm_nm)
+            result, metrics = model.optimize(designs, target, regularization_strength=self._regularization_value())
             validation = AlignmentModel(designs, model.settings, model.fwhm, model.exposure, seed=VALIDATION_SEED, **self._light_options())
             metrics["validation_seed"] = VALIDATION_SEED
             metrics["validation_baseline"] = validation.evaluate(designs, target)
             metrics["validation_optimized"] = validation.evaluate(result, target)
             metrics["validation_used_for_selection"] = False
             return result, metrics
-        return optimize_designs(designs, target, float(self.gaussian_fwhm.get()), float(self.gaussian_exposure.get()), **self._light_options())
+        return optimize_designs(designs, target, fwhm_nm, float(self.gaussian_exposure.get()), **self._light_options(), regularization_strength=self._regularization_value())
 
     def _draw_overlay(self, canvas, result, info=None, draw_width=288):
         from PIL import Image, ImageTk
         info = self.image_geometry if info is None else info
-        scale = draw_width / info["field_width_nm"]
+        scale = draw_width / max(info["display_field_width_nm"], info["display_field_height_nm"])
         width = round(scale * info["display_field_width_nm"])
         height = round(scale * info["display_field_height_nm"])
         canvas.delete("all")
@@ -297,12 +330,27 @@ class RGBImageView(ttk.Frame):
             self.comparison_window.lift()
         self.comparison_window.refresh()
 
+    def _compare_tiling(self):
+        if self.pixels is None:
+            messagebox.showinfo("Image required", "Upload an image to compare tiling and FWHM.", parent=self)
+            return
+        if self.tiling_window is None or not self.tiling_window.winfo_exists():
+            from tiling_comparison import TilingComparison
+            self.tiling_window = TilingComparison(self)
+            self.tiling_window.refresh()
+        else:
+            self.tiling_window.lift()
+            if self.tiling_window.stale:
+                self.tiling_window.refresh()
+
     def _refresh_comparison(self):
+        if self.tiling_window is not None and self.tiling_window.winfo_exists():
+            self.tiling_window.mark_stale()
         if self.comparison_window is not None and self.comparison_window.winfo_exists():
             self.comparison_window.refresh()
 
     def _scheme_id(self):
-        return next(key for key, scheme in ENCODING_SCHEMES.items() if scheme.label == self.scheme.get())
+        return next(key for key, scheme in SELECTABLE_SCHEMES.items() if scheme.label == self.scheme.get())
 
     def _update_scheme_controls(self):
         self.image_geometry = geometry(self._scheme_id(), int(self.rotation.get()))
@@ -314,7 +362,7 @@ class RGBImageView(ttk.Frame):
             self.geometry_summary.set(self.geometry_summary.get() + " · nonuniform spacing (listed by quadrant below)")
         self.prepare_button.configure(text="Prepare {} runs".format(info["design_count"]))
         self.store_button.configure(text="Send {} runs to storage".format(info["design_count"]))
-        scheme = ENCODING_SCHEMES[self._scheme_id()]
+        scheme = SELECTABLE_SCHEMES[self._scheme_id()]
         meaning = ("All {} bits jointly identify color and XY shift.".format(scheme.bit_count) if scheme.joint
                    else "2 color bits + {} X bits + {} Y bits{}.".format(
                        (scheme.x_states-1).bit_length(), (scheme.y_states-1).bit_length(),
@@ -324,12 +372,18 @@ class RGBImageView(ttk.Frame):
                 for name,q in zip(info["quadrant_order"],info["quadrant_sampling"]))
             meaning = "Joint six-bit color/quadrant/shift codebook. " + allocations + ". Equal physical quadrant areas; sampling density varies."
         elif scheme.tiled:
-            meaning = "2 color bits + 2 quadrant bits + 1 local X + 1 local Y. Four 12×16 quadrants; the physical origami is unchanged. The brightness-matching option compensates for the 4× canvas area; it does not increase photon counts."
+            meaning = "2 color bits + {} tile X bits + {} tile Y bits + {} local X bits + {} local Y bits. {}×{} tiles; {}×{} local shifts per tile. Brightness matching compensates for the {}× canvas area; it does not increase photon counts.".format(
+                (scheme.tile_columns-1).bit_length(), (scheme.tile_rows-1).bit_length(),
+                (scheme.x_counts[0]-1).bit_length(), (scheme.y_counts[0]-1).bit_length(),
+                scheme.tile_columns, scheme.tile_rows, scheme.x_counts[0], scheme.y_counts[0], scheme.tile_count)
+        if scheme.position_codebook:
+            meaning = "2 fixed color bits + 4 bits jointly encoding tile/local shift. {}×{} tiles; local X {}, local Y {}.".format(
+                scheme.tile_columns, scheme.tile_rows, scheme.x_counts, scheme.y_counts)
         meaning += " {} sites per bit.".format(len(scheme.bit_sites[0]))
         if scheme.parity:
             meaning += " Parity detects single-bit errors; it does not correct them."
         self.explanation.set(
-            ("{} designs: 3 colors distributed across 4 quadrants.\n\n".format(scheme.design_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
+            ("{} designs: 3 colors distributed across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
             + meaning + " Barcode bits stay at 100% or 0%.\n\n"
             "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode sites are excluded.")
 
@@ -339,7 +393,7 @@ class RGBImageView(ttk.Frame):
         self.app._schedule_config_save()
         self._invalidate()
         if self.image_path.get():
-            self._load()
+            self._load(auto_rotate=True)
         else:
             self.status.set("Upload an image to preview {} color/shift designs.".format(self.image_geometry["design_count"]))
 
@@ -360,14 +414,13 @@ class RGBImageView(ttk.Frame):
             ("Images", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp"), ("All files", "*")])
         if path:
             self.image_path.set(path)
-            self.rotation.set("0")
-            self._load()
+            self._load(auto_rotate=True)
 
     def _rotate(self, degrees):
         self.rotation.set(str((int(self.rotation.get()) + degrees) % 360))
         self._load()
 
-    def _load(self):
+    def _load(self, auto_rotate=False):
         if not self.image_path.get():
             return
         self._update_scheme_controls()
@@ -379,6 +432,9 @@ class RGBImageView(ttk.Frame):
         self.alignment_example = self.ideal_reconstruction = None
         self._invalidate()
         try:
+            if auto_rotate:
+                self.rotation.set(str(best_image_rotation(self.image_path.get(), self._scheme_id())))
+                self._update_scheme_controls()
             self.pixels = bin_image(self.image_path.get(), self.fit_mode.get(), int(self.rotation.get()), self._scheme_id(), linear_light=self.linear_light.get())
             self._volumes_changed()
         except Exception as exc:
@@ -458,7 +514,7 @@ class RGBImageView(ttk.Frame):
         angle = info["origami_rotation_degrees_clockwise"]
         a = rotate_point(x1,y1,info["field_width_nm"],info["field_height_nm"],angle)
         b = rotate_point(x2,y2,info["field_width_nm"],info["field_height_nm"],angle)
-        scale = draw_width / info["field_width_nm"]
+        scale = draw_width / max(info["display_field_width_nm"], info["display_field_height_nm"])
         left = 6 + (draw_width - scale * info["display_field_width_nm"]) / 2
         return (left+min(a[0],b[0])*scale,7+min(a[1],b[1])*scale,
                 left+max(a[0],b[0])*scale,7+max(a[1],b[1])*scale)
@@ -467,7 +523,7 @@ class RGBImageView(ttk.Frame):
     def _draw_pixels(self, canvas, pixels, info=None, draw_width=288):
         info = self.image_geometry if info is None else info
         canvas.delete("all")
-        canvas.configure(height=round(draw_width * info["display_field_height_nm"] / info["field_width_nm"] + 14))
+        canvas.configure(height=round(draw_width * info["display_field_height_nm"] / max(info["display_field_width_nm"], info["display_field_height_nm"]) + 14))
         for y, row in enumerate(pixels):
             for x, rgb in enumerate(row):
                 canvas.create_rectangle(*self._pixel_bounds(x, y, info, draw_width),
@@ -488,7 +544,7 @@ class RGBImageView(ttk.Frame):
             "".join(map(str, design["bits"])), design["x_shift_nm"], design["y_shift_nm"]))
         if "quadrant" in design:
             self.design_summary.set(self.design_summary.get() + " · origami-frame {} · local shift ({}, {})".format(
-                ("top-left", "top-right", "bottom-left", "bottom-right")[design["quadrant"]],
+                self.image_geometry["quadrant_order"][design["quadrant"]],
                 design["local_x_shift"], design["local_y_shift"]))
         canvas = self.design_canvas
         canvas.delete("all")
@@ -601,6 +657,69 @@ class RGBImageView(ttk.Frame):
         self.app.destination_wells.set(",".join(next_unused_wells(state, plate, 3)))
         self.app._refresh_plate_view()
 
+    def _export_similarity_graph(self):
+        self._export_exhaustive_pdf(similarity=True)
+
+    def _export_exhaustive_pdf(self, similarity=False, robustness=False):
+        parent = self.winfo_toplevel()
+        window_name = "similarity_export_window" if similarity else "pdf_export_window"
+        button = self.similarity_graph_button if similarity else self.exhaustive_pdf_button
+        label = "similarity graph" if similarity else "exhaustive PDF"
+        idle_text = "Export similarity graph…" if similarity else "Export exhaustive PDF…"
+        if robustness:
+            window_name = "robustness_export_window"
+            button = self.similarity_optimization_button
+            label = "similarity optimization"
+            idle_text = "Run similarity optimization"
+        try:
+            window = getattr(self, window_name, None)
+            if window is not None and window.winfo_exists():
+                window.deiconify()
+                window.lift()
+                window.focus_set()
+                return
+            if self.pixels is None:
+                messagebox.showinfo("Image required", "Upload an image before exporting the {}.".format(label), parent=parent)
+                return
+            # Lazy imports can fail when source files change while the app is open.
+            # Report startup errors in the UI instead of losing them in Tk stderr.
+            from exhaustive_pdf import ReportSettings, start_export_dialog
+            settings = ReportSettings(
+                image_path=self.image_path.get(), fit_mode=self.fit_mode.get(),
+                base_volume=int(self.app.transfer_volume.get()),
+                multipliers={color: float(view.excess_multiplier.get()) for color, view in self.color_views.items()},
+                fwhm_nm=float(self.gaussian_fwhm.get()), exposure=float(self.gaussian_exposure.get()),
+                **self._light_options(), optimize=self.optimize_enabled.get(),
+                alignment_enabled=self.alignment_enabled.get(), alignment=self._alignment_settings(),
+                example_seed=self.example_seed, regularization_strength=self._regularization_value())
+            settings.validate()
+            self.status.set("Choose a filename for the {}.".format(label))
+            destination = filedialog.asksaveasfilename(parent=parent, title="Run similarity optimization" if robustness else "Export similarity graph" if similarity else "Export exhaustive RGB report",
+                defaultextension=".pdf", filetypes=[("PDF report", "*.pdf")],
+                initialfile="rgb_similarity_optimization.pdf" if robustness else "rgb_similarity_comparison.pdf" if similarity else "exhaustive_rgb_report.pdf")
+            if destination:
+                if robustness:
+                    from similarity_optimization import export_optimization
+                    window = start_export_dialog(self, destination, settings, exporter=export_optimization,
+                                                 button=button, graph=True, robustness=True)
+                elif similarity:
+                    from similarity_graph import export_similarity
+                    window = start_export_dialog(self, destination, settings, exporter=export_similarity,
+                                                 button=button, graph=True)
+                else:
+                    window = start_export_dialog(self, destination, settings)
+                setattr(self, window_name, window)
+                self.status.set("Generating {}. Use the progress button to view or cancel it.".format(label))
+            else:
+                self.status.set("Export cancelled before choosing a file.")
+        except Exception as exc:
+            button.configure(state="normal", text=idle_text)
+            detail = str(exc) or type(exc).__name__
+            if isinstance(exc, ImportError):
+                detail += "\nRestart the app to load matching versions of the updated files."
+            self.status.set(("Cannot start graph export: " if similarity else "Cannot start PDF export: ") + detail)
+            messagebox.showerror("Cannot export " + label, detail, parent=parent)
+
     def _export(self):
         if not self.runs or self.saved:
             return
@@ -711,7 +830,7 @@ class EncodingComparison(tk.Toplevel):
     def __init__(self, owner):
         super().__init__(owner.winfo_toplevel())
         self.owner = owner
-        self.title("Compare RGB encoding schemes")
+        self.title("Compare original RGB encoding schemes")
         self.geometry("1200x700")
         self.minsize(620, 400)
         self.summary = tk.StringVar()
@@ -720,6 +839,7 @@ class EncodingComparison(tk.Toplevel):
                   wraplength=1100).pack(anchor="w", padx=12, pady=(0, 8))
         loading = ttk.Frame(self)
         loading.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Button(loading, text="Compare tiling / local-shift sweeps…", command=owner._compare_tiling).pack(anchor="w")
         self.progress_text = tk.StringVar(value="Ready to compare")
         ttk.Label(loading, textvariable=self.progress_text).pack(anchor="w")
         self.progress = ttk.Progressbar(loading, mode="determinate", maximum=len(ENCODING_SCHEMES))
@@ -848,6 +968,7 @@ class EncodingComparison(tk.Toplevel):
                 self.buttons[scheme_id].configure(text="Selected" if active else "Use this scheme", state="disabled" if active else "normal")
             settings_summary = ("Replacement optimization ON — applied independently to every scheme. "
                                 if owner.optimize_enabled.get() else "Replacement optimization OFF for every scheme. ")
+            settings_summary += "Regularization {} (0 = off). ".format(owner.regularization.get())
             settings_summary += "Base transfer {} nL; excess multipliers {}. ".format(
                 owner.app.transfer_volume.get(), ", ".join(
                     "{} {}×".format(color, view.excess_multiplier.get()) for color, view in owner.color_views.items()))

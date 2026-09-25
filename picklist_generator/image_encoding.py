@@ -40,14 +40,33 @@ class EncodingScheme:
     parity: bool = False
     tiled: bool = False
     parent_scheme: str = ""
+    tiles_x: int = 0
+    tiles_y: int = 0
+    position_codebook: bool = False
+
+    @property
+    def tile_columns(self):
+        return self.tiles_x or (2 if self.tiled else 1)
+
+    @property
+    def tile_rows(self):
+        return self.tiles_y or (2 if self.tiled else 1)
+
+    @property
+    def tile_count(self):
+        return self.tile_columns * self.tile_rows
+
+    @staticmethod
+    def _counts(states, tiles):
+        return tuple(states // tiles + (i < states % tiles) for i in range(tiles))
 
     @property
     def x_counts(self):
-        return ((self.x_states+1)//2, self.x_states//2) if self.tiled else (self.x_states,)
+        return self._counts(self.x_states, self.tile_columns)
 
     @property
     def y_counts(self):
-        return ((self.y_states+1)//2, self.y_states//2) if self.tiled else (self.y_states,)
+        return self._counts(self.y_states, self.tile_rows)
 
     @property
     def bit_sites(self):
@@ -74,9 +93,53 @@ ENCODING_SCHEMES = {
 }
 
 
+# Every allocation of four position bits, available for comparison and production.
+TILING_SCHEMES = {}
+for _tx in range(5):
+    for _ty in range(5 - _tx):
+        for _sx in range(5 - _tx - _ty):
+            _sy = 4 - _tx - _ty - _sx
+            _key = "tiling_{}_{}_{}_{}".format(_tx, _ty, _sx, _sy)
+            TILING_SCHEMES[_key] = EncodingScheme(
+                "{}×{} tiles · {}×{} local shifts".format(2**_tx, 2**_ty, 2**_sx, 2**_sy),
+                2**(_tx + _sx), 2**(_ty + _sy), False,
+                tiled=bool(_tx + _ty), tiles_x=2**_tx, tiles_y=2**_ty)
+
+
+# Enumerate every ordered factorization of each joint position budget, then
+# every nonempty tile count. Local shifts are balanced across equal-sized tiles.
+def _shift_label(counts):
+    return str(counts[0]) if min(counts) == max(counts) else '{}–{}'.format(min(counts), max(counts))
+
+
+JOINT_TILING_SCHEMES = {}
+for _parent in (DEFAULT_SCHEME, 'joint_6x3', 'joint_7x3', 'joint_5x4'):
+    _base = ENCODING_SCHEMES[_parent]
+    _budget = _base.x_states * _base.y_states
+    for _xs in range(1, _budget + 1):
+        if _budget % _xs:
+            continue
+        _ys = _budget // _xs
+        for _nx in range(1, _xs + 1):
+            for _ny in range(1, _ys + 1):
+                _xc = EncodingScheme._counts(_xs, _nx)
+                _yc = EncodingScheme._counts(_ys, _ny)
+                # Preserve identifiers already stored in user runs/configurations.
+                _stem = _parent if (_xs, _ys) == (_base.x_states, _base.y_states) else '{}_states_{}x{}'.format(_parent, _xs, _ys)
+                _key = 'sweep_{}_tiles_{}x{}'.format(_stem, _nx, _ny)
+                JOINT_TILING_SCHEMES[_key] = EncodingScheme(
+                    '{}×{} budget · {}×{} tiles · {}×{} local shifts'.format(
+                        _xs, _ys, _nx, _ny, _shift_label(_xc), _shift_label(_yc)),
+                    _xs, _ys, joint=(_parent != DEFAULT_SCHEME), tiled=(_nx * _ny > 1),
+                    position_codebook=(_parent == DEFAULT_SCHEME),
+                    parent_scheme=_parent, tiles_x=_nx, tiles_y=_ny)
+
+SWEEP_SCHEMES = {**TILING_SCHEMES, **JOINT_TILING_SCHEMES}
+SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES}
+
 def encoding_scheme(scheme_id=DEFAULT_SCHEME):
     try:
-        return ENCODING_SCHEMES[scheme_id]
+        return SELECTABLE_SCHEMES[scheme_id]
     except KeyError as exc:
         raise ValueError("Unknown image encoding scheme: {}".format(scheme_id)) from exc
 
@@ -85,8 +148,18 @@ def barcode_bits(color, x_shift, y_shift, scheme_id=DEFAULT_SCHEME):
     scheme = encoding_scheme(scheme_id)
     if color not in CHANNELS or not 0 <= x_shift < scheme.x_states or not 0 <= y_shift < scheme.y_states:
         raise ValueError("Color or shift is outside the selected encoding scheme.")
+    if scheme.position_codebook:
+        code = y_shift * scheme.x_states + x_shift
+        return list(map(int, COLOR_BITS[color])) + [(code >> bit) & 1 for bit in range(3, -1, -1)]
     if scheme.tiled and not scheme.joint:
-        return list(map(int, COLOR_BITS[color])) + [y_shift//2, x_shift//2, x_shift%2, y_shift%2]
+        position = placement(scheme, x_shift, y_shift)
+        bits = list(map(int, COLOR_BITS[color]))
+        for value, states in ((position["quadrant_y"], scheme.tile_rows),
+                              (position["quadrant_x"], scheme.tile_columns),
+                              (position["local_x_shift"], position["local_x_states"]),
+                              (position["local_y_shift"], position["local_y_states"])):
+            bits.extend((value >> shift) & 1 for shift in range((states-1).bit_length()-1, -1, -1))
+        return bits
     if not scheme.joint:
         x_bits, y_bits = (scheme.x_states-1).bit_length(), (scheme.y_states-1).bit_length()
         bits = list(map(int, COLOR_BITS[color]))
@@ -121,11 +194,21 @@ def rotate_pixels(pixels, rotation_degrees):
 
 
 def physical_raster_size(scheme_id=DEFAULT_SCHEME):
-    """Square-pixel raster with exact physical aspect and whole cells for every bin."""
+    """Bounded square-pixel raster with exact physical aspect and resolved bins."""
     scheme = encoding_scheme(scheme_id)
-    width, height = 6 * scheme.x_states, 8 * scheme.y_states
-    aspect = Fraction(str(EXTENSION_COLUMN_SPACING_NM)) * 6 / (Fraction(str(EXTENSION_ROW_SPACING_NM)) * 8)
+    # Each equal-sized tile must have whole raster cells for all of its
+    # local shifts. Using the global state count here needlessly explodes
+    # raster sizes for uneven joint-code partitions.
+    width = 6 * scheme.tile_columns * math.lcm(*scheme.x_counts)
+    height = 8 * scheme.tile_rows * math.lcm(*scheme.y_counts)
+    aspect = Fraction(str(EXTENSION_COLUMN_SPACING_NM)) * 6 * scheme.tile_columns / (Fraction(str(EXTENSION_ROW_SPACING_NM)) * 8 * scheme.tile_rows)
     factor = math.lcm(width // math.gcd(width, aspect.numerator), height // math.gcd(height, aspect.denominator))
+    if aspect.numerator * aspect.denominator * factor**2 > 12_000_000:
+        # Coprime local counts (e.g. 10 and 11) make a common whole-cell
+        # raster enormous. Preserve exact field aspect and resolve the smallest
+        # bin with >= 8 pixels instead; physical bin edges remain authoritative.
+        factor = math.ceil(max(8*6*scheme.tile_columns*max(scheme.x_counts)/aspect.numerator,
+                               8*8*scheme.tile_rows*max(scheme.y_counts)/aspect.denominator))
     return aspect.numerator * factor, aspect.denominator * factor
 
 
@@ -138,10 +221,10 @@ def physical_reference_raster(raster, scheme_id=DEFAULT_SCHEME, rotation_degrees
         result = Image.new("RGB",size)
         for qy,ny in enumerate(scheme.y_counts):
             for qx,nx in enumerate(scheme.x_counts):
-                x0,y0 = qx*6*scheme.x_counts[0],qy*8*scheme.y_counts[0]
+                x0,y0 = 6*sum(scheme.x_counts[:qx]),8*sum(scheme.y_counts[:qy])
                 patch = raster.crop((x0,y0,x0+6*nx,y0+8*ny))
-                left,top = qx*size[0]//2,qy*size[1]//2
-                right,bottom = (qx+1)*size[0]//2,(qy+1)*size[1]//2
+                left,top = qx*size[0]//scheme.tile_columns,qy*size[1]//scheme.tile_rows
+                right,bottom = (qx+1)*size[0]//scheme.tile_columns,(qy+1)*size[1]//scheme.tile_rows
                 result.paste(patch.resize((right-left,bottom-top),Image.Resampling.NEAREST),(left,top))
     else:
         result = raster.resize(size,Image.Resampling.NEAREST)
@@ -153,8 +236,10 @@ def site_name(row, column):
 
 
 def axis_placement(counts, shift, site_count, site_pitch):
-    quadrant = int(len(counts) > 1 and shift >= counts[0])
-    local = shift - (counts[0] if quadrant else 0)
+    quadrant, local = 0, shift
+    while local >= counts[quadrant]:
+        local -= counts[quadrant]
+        quadrant += 1
     pitch = site_pitch/counts[quadrant]
     # Half-cell correction keeps equal-size quadrant boundaries when pitches differ.
     offset = quadrant*site_count*site_pitch + (pitch-site_pitch/counts[0])/2
@@ -179,13 +264,13 @@ def placement(scheme, x, y):
     if scheme.tiled:
         qx,lx,nx,px,ox = axis_placement(scheme.x_counts,x,6,EXTENSION_COLUMN_SPACING_NM)
         qy,ly,ny,py,oy = axis_placement(scheme.y_counts,y,8,EXTENSION_ROW_SPACING_NM)
-        return {"quadrant": 2*qy+qx, "quadrant_x": qx, "quadrant_y": qy,
+        return {"quadrant": scheme.tile_columns*qy+qx, "quadrant_x": qx, "quadrant_y": qy,
                 "local_x_shift": lx, "local_y_shift": ly,
                 "local_x_states": nx, "local_y_states": ny,
                 "quadrant_offset_x_nm": ox, "quadrant_offset_y_nm": oy,
                 "local_x_shift_nm": lx*px, "local_y_shift_nm": ly*py,
                 "x_shift_nm": ox+lx*px, "y_shift_nm": oy+ly*py,
-                "quadrant_normalization_weight": scheme.x_states*scheme.y_states/(4*nx*ny)}
+                "quadrant_normalization_weight": scheme.x_states*scheme.y_states/(scheme.tile_count*nx*ny)}
     return {"x_shift_nm": x*EXTENSION_COLUMN_SPACING_NM/scheme.x_states,
             "y_shift_nm": y*EXTENSION_ROW_SPACING_NM/scheme.y_states}
 
@@ -204,7 +289,8 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
                 codebook.append({"code": int("".join(map(str, bits)), 2), "bits": bits,
                                  "color": color, "x_shift": x, "y_shift": y,
                                  **placement(scheme,x,y)})
-    extent = 2 if scheme.tiled else 1
+    field_x = scheme.tile_columns * 6 * EXTENSION_COLUMN_SPACING_NM
+    field_y = scheme.tile_rows * 8 * EXTENSION_ROW_SPACING_NM
     centers_x, edges_x, weights_x = sampling_axis(scheme.x_counts,6,EXTENSION_COLUMN_SPACING_NM)
     centers_y, edges_y, weights_y = sampling_axis(scheme.y_counts,8,EXTENSION_ROW_SPACING_NM)
     last_x, last_y = EXTENSION_COLUMN_SPACING_NM/scheme.x_counts[-1], EXTENSION_ROW_SPACING_NM/scheme.y_counts[-1]
@@ -216,8 +302,8 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
         "display_columns": height if portrait else width, "display_rows": width if portrait else height,
         "display_pixel_pitch_x_nm": display_first_x,
         "display_pixel_pitch_y_nm": display_first_y,
-        "display_field_width_nm": extent * (8 * EXTENSION_ROW_SPACING_NM if portrait else 6 * EXTENSION_COLUMN_SPACING_NM),
-        "display_field_height_nm": extent * (6 * EXTENSION_COLUMN_SPACING_NM if portrait else 8 * EXTENSION_ROW_SPACING_NM),
+        "display_field_width_nm": (field_y if portrait else field_x),
+        "display_field_height_nm": (field_x if portrait else field_y),
         "encoding_scheme": scheme_id, "encoding_label": scheme.label,
         "encoding_mode": "joint_color_xy" if scheme.joint else "fixed_color_x_y_bits",
         "bit_count": scheme.bit_count, "sites_per_bit": len(scheme.bit_sites[0]),
@@ -233,14 +319,15 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
         "site_pitch_x_nm": EXTENSION_COLUMN_SPACING_NM,
         "site_pitch_y_nm": EXTENSION_ROW_SPACING_NM,
         "pixel_pitch_x_nm": pixel_x, "pixel_pitch_y_nm": pixel_y,
-        "field_width_nm": extent * 6 * EXTENSION_COLUMN_SPACING_NM,
-        "field_height_nm": extent * 8 * EXTENSION_ROW_SPACING_NM,
+        "field_width_nm": field_x,
+        "field_height_nm": field_y,
         "center_span_x_nm": centers_x[-1], "center_span_y_nm": centers_y[-1],
         "pixel_centers_x_nm": centers_x, "pixel_centers_y_nm": centers_y,
         "pixel_edges_x_nm": edges_x, "pixel_edges_y_nm": edges_y,
         "sampling_weights_x": weights_x, "sampling_weights_y": weights_y,
         "nonuniform_sampling": len(set(scheme.x_counts))>1 or len(set(scheme.y_counts))>1,
         "parent_scheme": scheme.parent_scheme,
+        "tile_columns": scheme.tile_columns, "tile_rows": scheme.tile_rows, "tile_count": scheme.tile_count,
         "image_columns_left_to_right": IMAGE_COLUMNS,
         "image_rows_top_to_bottom": ROWS,
         "image_origin_from_C12_H01_nm": [6 * EXTENSION_COLUMN_SPACING_NM + EXTENSION_EXTRA_COLUMN_GAP_NM, 0],
@@ -250,26 +337,35 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
     }
     if scheme.tiled:
         result.update(encoding_mode="joint_color_quadrant_local_xy" if scheme.joint else "color_quadrant_local_xy",
-            quadrant_count=4, tile_field_width_nm=59.4, tile_field_height_nm=40.8,
+            quadrant_count=scheme.tile_count, tile_field_width_nm=59.4, tile_field_height_nm=40.8,
             local_x_states=scheme.x_counts[0] if len(set(scheme.x_counts))==1 else list(scheme.x_counts),
             local_y_states=scheme.y_counts[0] if len(set(scheme.y_counts))==1 else list(scheme.y_counts),
-            quadrant_order=["top-left", "top-right", "bottom-left", "bottom-right"],
-            quadrant_sampling=[{"quadrant":2*qy+qx,"x_states":nx,"y_states":ny,"design_count":3*nx*ny,
+            quadrant_order=(["top-left", "top-right", "bottom-left", "bottom-right"] if scheme.tile_columns == scheme.tile_rows == 2 else
+                            ["tile ({}, {})".format(x,y) for y in range(scheme.tile_rows) for x in range(scheme.tile_columns)]),
+            quadrant_sampling=[{"quadrant":scheme.tile_columns*qy+qx,"x_states":nx,"y_states":ny,"design_count":3*nx*ny,
                                 "pixel_pitch_x_nm":9.9/nx,"pixel_pitch_y_nm":5.1/ny,
-                                "normalization_weight":scheme.x_states*scheme.y_states/(4*nx*ny)}
+                                "normalization_weight":scheme.x_states*scheme.y_states/(scheme.tile_count*nx*ny)}
                                for qy,ny in enumerate(scheme.y_counts) for qx,nx in enumerate(scheme.x_counts)],
             bit_meaning="Joint six-bit codebook identifies color, quadrant and local XY shift." if scheme.joint else
-                        "bits 1–2 color; bit 3 quadrant Y; bit 4 quadrant X; bit 5 local X; bit 6 local Y",
+                        "bits 1–2 color; then tile Y ({} bits), tile X ({} bits), local X ({} bits), local Y ({} bits)".format(
+                            (scheme.tile_rows-1).bit_length(), (scheme.tile_columns-1).bit_length(),
+                            (scheme.x_counts[0]-1).bit_length(), (scheme.y_counts[0]-1).bit_length()),
             pixel_mapping="Concatenate quadrant sampling grids; use pixel_centers/edges for nonuniform physical spacing.",
             quadrant_offset_convention="field offset plus half the difference between this quadrant's pitch and the first quadrant's pitch")
         if not scheme.joint:
-            result["code_formula"] = "color_code * 16 + quadrant_y * 8 + quadrant_x * 4 + local_x * 2 + local_y"
+            result["code_formula"] = "color_code * 16 + ((quadrant_y * {} + quadrant_x) * {} + local_x) * {} + local_y".format(scheme.tile_columns, scheme.x_counts[0], scheme.y_counts[0])
     if not scheme.joint:
         result["color_bits"] = COLOR_BITS
-        result["x_shift_bits"] = 1 if scheme.tiled else (scheme.x_states-1).bit_length()
-        result["y_shift_bits"] = 1 if scheme.tiled else (scheme.y_states-1).bit_length()
+        result["x_shift_bits"] = (scheme.x_counts[0]-1).bit_length()
+        result["y_shift_bits"] = (scheme.y_counts[0]-1).bit_length()
         if scheme_id == DEFAULT_SCHEME:
             result["shift_state_bits"] = {str(index): list(bits) for index, bits in enumerate(SHIFT_STATES.values())}
+    if scheme.position_codebook:
+        result.update(encoding_mode="fixed_color_position_codebook",
+                      code_formula="color_code * 16 + y_shift * x_states + x_shift",
+                      bit_meaning="Bits 1–2 retain the original color codes; bits 3–6 jointly identify tile and local XY shift.")
+        result.pop('x_shift_bits', None)
+        result.pop('y_shift_bits', None)
     return result
 
 
@@ -281,13 +377,32 @@ def bin_quadrants(fitted, scheme, rotation_degrees, linear_light):
     result = np.zeros((8*scheme.y_states,6*scheme.x_states,3),dtype=float)
     for qy,ny in enumerate(scheme.y_counts):
         for qx,nx in enumerate(scheme.x_counts):
-            patch = local[qy*local.shape[0]//2:(qy+1)*local.shape[0]//2,
-                          qx*local.shape[1]//2:(qx+1)*local.shape[1]//2]
-            x0,y0 = qx*6*scheme.x_counts[0],qy*8*scheme.y_counts[0]
+            patch = local[qy*local.shape[0]//scheme.tile_rows:(qy+1)*local.shape[0]//scheme.tile_rows,
+                          qx*local.shape[1]//scheme.tile_columns:(qx+1)*local.shape[1]//scheme.tile_columns]
+            x0,y0 = 6*sum(scheme.x_counts[:qx]),8*sum(scheme.y_counts[:qy])
             for c in range(3):
                 plane = Image.fromarray(patch[:,:,c].astype(np.float32))
                 result[y0:y0+8*ny,x0:x0+6*nx,c] = np.asarray(plane.resize((6*nx,8*ny),Image.Resampling.BOX))
     return np.asarray(display_rgb(result,True)).tolist() if linear_light else np.rint(result).astype(int).tolist()
+
+
+
+def best_rotation(image_size, scheme_id):
+    """Minimize aspect-ratio padding (equivalently, center-crop loss), ties at 0°."""
+    image_aspect = image_size[0] / image_size[1]
+    scores = []
+    for rotation in (0, 90):
+        info = geometry(scheme_id, rotation)
+        ratio = info['display_field_width_nm'] / info['display_field_height_nm'] / image_aspect
+        scores.append(min(ratio, 1/ratio))  # Fraction occupied with aspect-preserving fit.
+    return 90 if scores[1] > scores[0] and not math.isclose(scores[0], scores[1], rel_tol=1e-12) else 0
+
+
+
+def best_image_rotation(path, scheme_id=DEFAULT_SCHEME):
+    from PIL import Image, ImageOps
+    with Image.open(path) as source:
+        return best_rotation(ImageOps.exif_transpose(source).size, scheme_id)
 
 
 def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCHEME, linear_light=False):
@@ -363,8 +478,8 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
                     for column_index, column in enumerate(IMAGE_COLUMNS):
                         x, y = column_index * scheme.x_states + x_shift, row_index * scheme.y_states + y_shift
                         if scheme.tiled:
-                            x = position["quadrant_x"]*6*scheme.x_counts[0] + column_index*position["local_x_states"] + position["local_x_shift"]
-                            y = position["quadrant_y"]*8*scheme.y_counts[0] + row_index*position["local_y_states"] + position["local_y_shift"]
+                            x = 6*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
+                            y = 8*sum(scheme.y_counts[:position["quadrant_y"]]) + row_index*position["local_y_states"] + position["local_y_shift"]
                         value = pixels[y][x][channel]
                         droplets = math.floor(float(intensity_lut[value]) * steps + 0.5)
                         fraction = droplets / steps

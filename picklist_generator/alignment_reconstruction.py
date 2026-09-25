@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 import math
 import numpy as np
 from PIL import Image
+from optimization_regularization import regularization_weight
 from color_light import display_rgb, abundance_scale, canvas_area_gain, quadrant_weight
 from gaussian_reconstruction import GaussianReconstruction, REFERENCE_AREA_NM2
 from image_encoding import geometry
@@ -65,10 +66,13 @@ class AlignmentModel:
         if any(d['encoding_scheme'] != self.scheme or d.get('origami_rotation_degrees_clockwise',0) != self.rotation for d in designs):
             raise ValueError('Alignment models require a single scheme and orientation.')
         self.info = geometry(self.scheme, self.rotation)
-        step = min(.75, fwhm_nm / 4)
+        # Larger virtual mosaics need not use the single-origami 0.75 nm raster.
+        # Still resolve FWHM with at least four samples and record the true pitch.
+        area = self.info['field_width_nm'] * self.info['field_height_nm']
+        step = min(max(.75, math.sqrt(area / 18000)), fwhm_nm / 4)
         self.width = math.ceil(self.info['field_width_nm']/step-1e-9)
         self.height = math.ceil(self.info['field_height_nm']/step-1e-9)
-        if self.width*self.height > 20000:
+        if self.width*self.height > (80000 if self.info["tile_count"] > 4 else 20000):
             raise ValueError('Alignment raster is too large for this field. Increase Gaussian FWHM to reduce the required resolution.')
         self.dx = self.info['field_width_nm']/self.width
         self.dy = self.info['field_height_nm']/self.height
@@ -184,16 +188,17 @@ class AlignmentModel:
                     expected_mse=bias+variance,
                     objective_mse=bias+(1+self.settings.variability_penalty)*variance)
 
-    def optimize(self, designs, target):
+    def optimize(self, designs, target, regularization_strength=0.0):
         target = np.asarray(target,dtype=float)
         if target.shape != (self.size[1],self.size[0],3) or not np.all(np.isfinite(target)) or np.any((target<0)|(target>1)):
             raise ValueError('Target must be finite RGB in [0,1] on the alignment raster.')
         weights = self.weights(designs)
         result = deepcopy(designs)
+        alpha = regularization_weight(regularization_strength, self.width*self.height, weights.shape[0])
         # Expected squared error = error of mean + variance / number of origami.
         factor = self.gain**2*(1+self.settings.variability_penalty)/self.settings.origami_per_design
         def apply_hessian(v):
-            product = self.gain**2*(self.mean.T@(self.mean@v))
+            product = self.gain**2*(self.mean.T@(self.mean@v)) + alpha*v
             for sl,cov in zip(self.slices,self.covariances):
                 product[sl] += factor*(cov@v[sl])
             return product
@@ -201,19 +206,20 @@ class AlignmentModel:
         hessian = None
         if weights.shape[0] <= 1500:
             hessian = self.gain**2*(self.mean.T@self.mean)
+            hessian.flat[::hessian.shape[0]+1] += alpha
             for sl,cov in zip(self.slices,self.covariances):
                 hessian[sl,sl] += factor*cov
             lipschitz = float(np.max(np.sum(np.abs(hessian),axis=1)))
             diagonal = np.diag(hessian)
         else:
-            rows = self.gain**2*(self.mean.T@(self.mean@np.ones(weights.shape[0])))
-            diagonal = self.gain**2*np.einsum('ij,ij->j',self.mean,self.mean)
+            rows = self.gain**2*(self.mean.T@(self.mean@np.ones(weights.shape[0]))) + alpha
+            diagonal = self.gain**2*np.einsum('ij,ij->j',self.mean,self.mean) + alpha
             for sl,cov in zip(self.slices,self.covariances):
                 rows[sl] += factor*np.sum(np.abs(cov),axis=1)
                 diagonal[sl] += factor*np.diag(cov)
             lipschitz = float(rows.max())
         local_target = np.rot90(target,self.rotation//90).reshape(-1,3)
-        b = self.gain*self.mean.T@local_target
+        b = self.gain*self.mean.T@local_target + alpha*weights
         steps = np.array([[(s['replacement_nl']+s['original_nl'])/25 for d in group for s in d['image_sites']] for group in self.groups]).T
         if np.any(steps<1) or np.any(steps!=np.rint(steps)):
             raise ValueError('Alignment optimization requires 25 nL transfer increments.')
@@ -246,7 +252,7 @@ class AlignmentModel:
                     for i in range(len(candidate)):
                         if diagonal[i] < 1e-20:
                             continue
-                        derivative = gradient[i] if hessian is not None else self.gain*(self.mean[:,i]@residual)+var_gradient[i]
+                        derivative = gradient[i] if hessian is not None else self.gain*(self.mean[:,i]@residual)+var_gradient[i]+alpha*(candidate[i]-weights[i,channel])
                         value = np.clip(np.rint((candidate[i]-derivative/diagonal[i])*steps[i,channel])/steps[i,channel],0,1)
                         delta = value-candidate[i]
                         if delta and 2*delta*derivative+delta*delta*diagonal[i] < -1e-12:
@@ -273,10 +279,16 @@ class AlignmentModel:
                     design['site_fractions'][site['name']] = fraction
                     i += 1
         before,after = self.evaluate(designs,target),self.evaluate(result,target)
-        if after['objective_mse'] > before['objective_mse']:
+        deviation = float(np.mean((self.weights(result)-weights)**2))
+        penalty = regularization_strength * deviation
+        if after['objective_mse'] + penalty > before['objective_mse']:
             result,after = deepcopy(designs),before
+            penalty = deviation = 0.0
         metrics = dict(method='bounded expected-error optimization with within-origami covariance and droplet refinement',
-            objective='mean image squared error + (1 + variability penalty) * finite-count alignment variance',
+            objective='mean image squared error + (1 + variability penalty) * finite-count alignment variance + regularization * mean squared departure from direct assignments',
+            regularization_strength=regularization_strength, regularization_penalty=penalty,
+            mean_squared_assignment_change=deviation, baseline_regularized_objective=before['objective_mse'],
+            optimized_regularized_objective=after['objective_mse']+penalty,
             baseline_rmse=math.sqrt(before['expected_mse']),optimized_rmse=math.sqrt(after['expected_mse']),
             mse_reduction_fraction=(before['expected_mse']-after['expected_mse'])/before['expected_mse'] if before['expected_mse'] else 0.,
             training_baseline=before,training_optimized=after,alignment=asdict(self.settings),
