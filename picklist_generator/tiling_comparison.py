@@ -141,10 +141,10 @@ class TilingComparison(tk.Toplevel):
             rotation = int(owner.rotation.get())
             options = owner._light_options()
             summary = ("Optimization {} for each layout/FWHM independently. {} · origami {}° · exposure {}× · "
-                       "base {} nL · excess {}. Linear light {}; equal total signal {}; area brightness matching {}.").format(
+                       "base {} nL · plate targets {}. Linear light {}; equal total signal {}; area brightness matching {}.").format(
                 "ON" if owner.optimize_enabled.get() else "OFF", owner.fit_mode.get(), rotation,
                 owner.gaussian_exposure.get(), owner.app.transfer_volume.get(),
-                ", ".join("{} {}×".format(c,v.excess_multiplier.get()) for c,v in owner.color_views.items()),
+                ", ".join("{} {} nM".format(c,v.desired_concentration_nm.get()) for c,v in owner.color_views.items()),
                 "ON" if options["linear_light"] else "OFF", "ON" if options["normalize_designs"] else "OFF",
                 "ON" if options["compensate_area"] else "OFF")
             if owner.alignment_enabled.get():
@@ -163,8 +163,8 @@ class TilingComparison(tk.Toplevel):
                 ttk.Label(self.cards, text="FWHM {:g} nm".format(width), font=("TkDefaultFont", 12, "bold")).grid(row=0, column=column, pady=8)
             completed, failures = 0, 0
             for row, (key, scheme) in enumerate(layouts, 1):
-                info = geometry(key, rotation)
-                pixels = bin_image(owner.image_path.get(), owner.fit_mode.get(), rotation, key, linear_light=options["linear_light"])
+                info = geometry(key, rotation, owner._active_columns())
+                pixels = bin_image(owner.image_path.get(), owner.fit_mode.get(), rotation, key, linear_light=options["linear_light"], active_image_columns=owner._active_columns())
                 baseline = owner._compile_scheme(pixels, key)
                 frame = ttk.LabelFrame(self.cards, text=scheme.label, padding=5)
                 frame.grid(row=row, column=0, sticky="n", padx=5, pady=5)
@@ -178,7 +178,7 @@ class TilingComparison(tk.Toplevel):
                     "{display_columns}×{display_rows} samples · {design_count} types\n"
                     "{display_field_width_nm:g}×{display_field_height_nm:g} nm field\n"
                     "{display_pixel_pitch_x_nm:g}×{display_pixel_pitch_y_nm:g} nm spacing").format(*bit_counts, **info)).pack()
-                target = physical_reference_raster(Image.fromarray(np.asarray(pixels, dtype='uint8')), key, rotation)
+                target = physical_reference_raster(Image.fromarray(np.asarray(pixels, dtype='uint8')), key, rotation, owner._active_columns())
                 self._picture(frame, target, info, tile_grid=True)
                 ttk.Button(frame, text="Use this layout", command=lambda key=key: self.use_layout(key)).pack(pady=4)
                 for column, width in enumerate(widths, 1):

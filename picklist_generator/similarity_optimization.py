@@ -2,6 +2,7 @@
 from dataclasses import asdict, replace
 from itertools import product
 from pathlib import Path
+from copy import deepcopy
 import csv
 import json
 import os
@@ -131,9 +132,9 @@ def export_optimization(destination, settings, progress=lambda done,total,phase:
         folder = Path(folder)
         source = folder/('source'+Path(settings.image_path).suffix)
         shutil.copyfile(settings.image_path,source)
-        snapshot = replace(settings,image_path=str(source),multipliers=dict(settings.multipliers))
+        snapshot = replace(deepcopy(settings),image_path=str(source),multipliers=dict(settings.multipliers))
         nominal, finalists = [], []
-        for i,(key,rotation) in enumerate(report_jobs(source,keys)):
+        for i,(key,rotation) in enumerate(report_jobs(source,keys,snapshot.active_image_columns)):
             row,designs = generate_views(snapshot,key,rotation,
                 checkpoint=lambda phase,i=i,key=key:check(i,'Stage 1 | '+SELECTABLE_SCHEMES[key].label+' | '+phase),
                 score_only='assignments')
@@ -146,7 +147,7 @@ def export_optimization(destination, settings, progress=lambda done,total,phase:
         scenarios, summaries = [], []
         done = len(keys)
         for rank,(row,designs) in enumerate(finalists,1):
-            info = geometry(row['scheme_id'],row['rotation'])
+            info = geometry(row['scheme_id'],row['rotation'],snapshot.active_image_columns)
             region,(width,height) = display_region(snapshot,info)
             size = (row['scoring_width'],row['scoring_height'])
             mode = 'Stretch' if snapshot.fit_mode==FIT_MODES[0] else snapshot.fit_mode

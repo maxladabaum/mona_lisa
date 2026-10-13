@@ -1,0 +1,62 @@
+{
+  "ordered_staples": 252,
+  "plate_counts": {
+    "1": 86,
+    "2": 62,
+    "3": 82,
+    "4": 22
+  },
+  "moved": 225,
+  "unchanged_well": 27,
+  "changed_sequences": [
+    {
+      "logical_site": "H05",
+      "previous_physical_well": "D17",
+      "actual_interleaved_well": "G17",
+      "name": "H05_ST17[138]15[131]"
+    },
+    {
+      "logical_site": "H08",
+      "previous_physical_well": "D18",
+      "actual_interleaved_well": "G18",
+      "name": "H08_ST17[42]15[35]"
+    },
+    {
+      "logical_site": "H11",
+      "previous_physical_well": "D19",
+      "actual_interleaved_well": "G19",
+      "name": "H11_ST17[386]15[379]"
+    },
+    {
+      "logical_site": "H14",
+      "previous_physical_well": "D20",
+      "actual_interleaved_well": "G20",
+      "name": "H14_ST17[482]15[475]"
+    },
+    {
+      "logical_site": "I05",
+      "previous_physical_well": "D21",
+      "actual_interleaved_well": "G21",
+      "name": "I05_ST15[146]17[139]"
+    },
+    {
+      "logical_site": "I08",
+      "previous_physical_well": "D22",
+      "actual_interleaved_well": "G22",
+      "name": "I08_ST15[50]17[43]"
+    },
+    {
+      "logical_site": "I11",
+      "previous_physical_well": "D23",
+      "actual_interleaved_well": "G23",
+      "name": "I11_ST15[394]17[387]"
+    },
+    {
+      "logical_site": "I14",
+      "previous_physical_well": "D24",
+      "actual_interleaved_well": "G24",
+      "name": "I14_ST15[490]17[483]"
+    }
+  ],
+  "all_checks_passed": true
+}

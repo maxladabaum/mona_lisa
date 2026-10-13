@@ -30,6 +30,101 @@ NINE_BIT_SITES = [tuple((row, column) for row in rows)
 FIT_MODES = ("Fit with black padding", "Center crop", "Stretch")
 
 
+def default_barcode_schema():
+    return {"version": 1, "name": "Standard barcode sites", "always_on_sites": [],
+            **{key: [{"bit": i+1, "sites": ["{}-{}".format(*site) for site in sites]}
+                     for i, sites in enumerate(groups)]
+               for key, groups in (("six_bit", BIT_SITES), ("nine_bit", NINE_BIT_SITES))}}
+
+
+def validate_barcode_schema(schema, bit_count=None):
+    """Validate/copy the site map; check fiducial conflicts only for bit_count.
+
+    Without a selected family, validate structure and retain both mappings.
+    Geometry and compilation must pass their actual six- or nine-bit count.
+    """
+    if not isinstance(schema, dict) or type(schema.get("version")) is not int or schema["version"] != 1:
+        raise ValueError("Barcode schema must be an object with version 1.")
+    if set(schema) - {"version", "name", "six_bit", "nine_bit", "always_on_sites"}:
+        raise ValueError("Unknown barcode schema field. Use version, name, six_bit, nine_bit, or always_on_sites.")
+    if not any(key in schema for key in ("six_bit", "nine_bit")):
+        raise ValueError("Provide six_bit or nine_bit site definitions.")
+    name = schema.get("name", "Custom barcode sites")
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("Barcode schema name must be nonempty text.")
+    result = default_barcode_schema()
+    result["name"] = name.strip()
+    valid_sites = {"{}-{:02d}".format(row, column) for row in ROWS for column in range(7, 13)}
+    for key, count in (("six_bit", 6), ("nine_bit", 9)):
+        if key not in schema:
+            continue
+        groups = schema[key]
+        if not isinstance(groups, list) or len(groups) != count:
+            raise ValueError("{} must define exactly {} bits.".format(key, count))
+        by_bit, used = {}, set()
+        for group in groups:
+            if not isinstance(group, dict) or set(group) != {"bit", "sites"}:
+                raise ValueError("Each bit needs only bit and sites fields.")
+            bit, sites = group["bit"], group["sites"]
+            if type(bit) is not int or bit not in range(1, count+1) or bit in by_bit:
+                raise ValueError("{} must contain each bit from 1 through {} once.".format(key, count))
+            if not isinstance(sites, list) or not sites:
+                raise ValueError("Each barcode bit must have at least one site.")
+            for site in sites:
+                if not isinstance(site, str) or site not in valid_sites:
+                    raise ValueError("Barcode sites must use H01/H03/…/H15 and rows 12–07, for example H01-11.")
+                if site in used:
+                    raise ValueError("Barcode site {} is assigned more than once in {}.".format(site, key))
+                used.add(site)
+            by_bit[bit] = {"bit": bit, "sites": list(sites)}
+        result[key] = [by_bit[i] for i in range(1, count+1)]
+    always_on = schema.get("always_on_sites", [])
+    valid_fiducials = {"{}-{:02d}".format(row, column) for row in ROWS for column in range(1, 13)}
+    if not isinstance(always_on, list) or any(not isinstance(site, str) or site not in valid_fiducials for site in always_on):
+        raise ValueError("always_on_sites must list valid H01/H03/…/H15 sites on rows 01–12.")
+    if len(always_on) != len(set(always_on)):
+        raise ValueError("Each always-on site must appear only once.")
+    if bit_count not in (None, 6, 9):
+        raise ValueError("Barcode bit count must be 6 or 9.")
+    for key in (() if bit_count is None else ("nine_bit" if bit_count == 9 else "six_bit",)):
+        occupied = {site for bit in result[key] for site in bit["sites"]}
+        overlap = occupied.intersection(always_on)
+        if overlap:
+            raise ValueError("Always-on sites overlap {} barcode bits: {}. Remove those sites from the bit mapping first.".format(key, ", ".join(sorted(overlap))))
+    result["always_on_sites"] = list(always_on)
+    return result
+
+
+def fiducial_sites(schema=None, active_image_columns=None, bit_count=None):
+    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count)
+    sites = [tuple(site.split("-")) for site in value["always_on_sites"]]
+    overlap = ["-".join(site) for site in sites if site[1] in active_columns(active_image_columns)]
+    if overlap:
+        raise ValueError("Always-on sites overlap the active analog canvas: {}. Exclude their analog rows first.".format(", ".join(overlap)))
+    return sites
+
+
+def barcode_site_groups(bit_count, schema=None):
+    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count)
+    return [[tuple(site.split("-")) for site in bit["sites"]]
+            for bit in value["nine_bit" if bit_count == 9 else "six_bit"]]
+
+
+def active_columns(columns=None):
+    """Canonical physical order of selected analog rows (06 through 01)."""
+    if columns is None:
+        return list(IMAGE_COLUMNS)
+    values = list(columns)
+    if not values or len(values) != len(set(values)) or any(c not in IMAGE_COLUMNS for c in values):
+        raise ValueError("Select at least one analog row from 06 through 01, without duplicates.")
+    return [c for c in IMAGE_COLUMNS if c in values]
+
+
+def canvas_span(columns=None):
+    values = active_columns(columns)
+    return int(values[0]) - int(values[-1]) + 1
+
+
 @dataclass(frozen=True)
 class EncodingScheme:
     label: str
@@ -135,7 +230,21 @@ for _parent in (DEFAULT_SCHEME, 'joint_6x3', 'joint_7x3', 'joint_5x4'):
                     parent_scheme=_parent, tiles_x=_nx, tiles_y=_ny)
 
 SWEEP_SCHEMES = {**TILING_SCHEMES, **JOINT_TILING_SCHEMES}
-SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES}
+# Direct tile-count layouts use one origami per color per tile. The four
+# position bits encode up to 16 tiles while preserving the original color bits.
+TILE_COUNT_SCHEMES = {}
+for _count in range(1, 17):
+    for _columns in range(1, _count + 1):
+        if _count % _columns:
+            continue
+        _rows = _count // _columns
+        _key = "tiles_{}x{}".format(_columns, _rows)
+        TILE_COUNT_SCHEMES[_key] = EncodingScheme(
+            "{} tiles · {}×{} grid · {} RGB runs".format(_count, _columns, _rows, 3 * _count),
+            _columns, _rows, joint=False, tiled=(_count > 1),
+            tiles_x=_columns, tiles_y=_rows, position_codebook=True)
+
+SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES, **TILE_COUNT_SCHEMES}
 
 def encoding_scheme(scheme_id=DEFAULT_SCHEME):
     try:
@@ -193,30 +302,44 @@ def rotate_pixels(pixels, rotation_degrees):
     return result
 
 
-def physical_raster_size(scheme_id=DEFAULT_SCHEME):
+def physical_raster_size(scheme_id=DEFAULT_SCHEME, active_image_columns=None):
     """Bounded square-pixel raster with exact physical aspect and resolved bins."""
     scheme = encoding_scheme(scheme_id)
+    span = canvas_span(active_image_columns)
     # Each equal-sized tile must have whole raster cells for all of its
     # local shifts. Using the global state count here needlessly explodes
     # raster sizes for uneven joint-code partitions.
-    width = 6 * scheme.tile_columns * math.lcm(*scheme.x_counts)
+    width = span * scheme.tile_columns * math.lcm(*scheme.x_counts)
     height = 8 * scheme.tile_rows * math.lcm(*scheme.y_counts)
-    aspect = Fraction(str(EXTENSION_COLUMN_SPACING_NM)) * 6 * scheme.tile_columns / (Fraction(str(EXTENSION_ROW_SPACING_NM)) * 8 * scheme.tile_rows)
+    aspect = Fraction(str(EXTENSION_COLUMN_SPACING_NM)) * span * scheme.tile_columns / (Fraction(str(EXTENSION_ROW_SPACING_NM)) * 8 * scheme.tile_rows)
     factor = math.lcm(width // math.gcd(width, aspect.numerator), height // math.gcd(height, aspect.denominator))
     if aspect.numerator * aspect.denominator * factor**2 > 12_000_000:
         # Coprime local counts (e.g. 10 and 11) make a common whole-cell
         # raster enormous. Preserve exact field aspect and resolve the smallest
         # bin with >= 8 pixels instead; physical bin edges remain authoritative.
-        factor = math.ceil(max(8*6*scheme.tile_columns*max(scheme.x_counts)/aspect.numerator,
+        factor = math.ceil(max(8*span*scheme.tile_columns*max(scheme.x_counts)/aspect.numerator,
                                8*8*scheme.tile_rows*max(scheme.y_counts)/aspect.denominator))
     return aspect.numerator * factor, aspect.denominator * factor
 
 
-def physical_reference_raster(raster, scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
+def physical_reference_raster(raster, scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=None):
     """Render a sample grid using its physical cell sizes, including unequal quadrants."""
     from PIL import Image
     scheme = encoding_scheme(scheme_id)
-    size = physical_raster_size(scheme_id)
+    size = physical_raster_size(scheme_id, active_image_columns)
+    if active_columns(active_image_columns) != IMAGE_COLUMNS:
+        from PIL import ImageDraw
+        info = geometry(scheme_id, 0, active_image_columns)
+        result = Image.new("RGB", size)
+        draw = ImageDraw.Draw(result)
+        for y in range(raster.height):
+            for x in range(raster.width):
+                left, right = [round(v / info["field_width_nm"] * size[0]) for v in info["pixel_edges_x_nm"][x:x+2]]
+                top, bottom = [round(v / info["field_height_nm"] * size[1]) for v in info["pixel_edges_y_nm"][y:y+2]]
+                if right > left and bottom > top:
+                    draw.rectangle((left, top, right-1, bottom-1), fill=raster.getpixel((x,y)))
+        return result.rotate(-rotation_degrees, expand=True)
+
     if scheme.tiled:
         result = Image.new("RGB",size)
         for qy,ny in enumerate(scheme.y_counts):
@@ -246,7 +369,19 @@ def axis_placement(counts, shift, site_count, site_pitch):
     return quadrant, local, counts[quadrant], pitch, offset
 
 
-def sampling_axis(counts, site_count, site_pitch):
+def sampling_axis(counts, site_count, site_pitch, site_offsets=None):
+    if site_offsets is not None:
+        centers, edges, weights = [], [0.], []
+        first_pitch = site_pitch/counts[0]
+        for quadrant, count in enumerate(counts):
+            pitch = site_pitch/count
+            offset = quadrant*site_count*site_pitch + (pitch-first_pitch)/2
+            local = [offset + site*site_pitch + shift*pitch for site in site_offsets for shift in range(count)]
+            centers.extend(local)
+            edges.extend([(local[i]+local[i+1]+first_pitch)/2 for i in range(len(local)-1)])
+            edges.append((quadrant+1)*site_count*site_pitch)
+            weights.extend([sum(counts)/(len(counts)*count)]*len(local))
+        return centers, edges, weights
     centers, edges = [], [0.]
     weights = []
     first_pitch = site_pitch/counts[0]
@@ -260,9 +395,9 @@ def sampling_axis(counts, site_count, site_pitch):
     return centers, edges, weights
 
 
-def placement(scheme, x, y):
+def placement(scheme, x, y, active_image_columns=None):
     if scheme.tiled:
-        qx,lx,nx,px,ox = axis_placement(scheme.x_counts,x,6,EXTENSION_COLUMN_SPACING_NM)
+        qx,lx,nx,px,ox = axis_placement(scheme.x_counts,x,canvas_span(active_image_columns),EXTENSION_COLUMN_SPACING_NM)
         qy,ly,ny,py,oy = axis_placement(scheme.y_counts,y,8,EXTENSION_ROW_SPACING_NM)
         return {"quadrant": scheme.tile_columns*qy+qx, "quadrant_x": qx, "quadrant_y": qy,
                 "local_x_shift": lx, "local_y_shift": ly,
@@ -275,9 +410,13 @@ def placement(scheme, x, y):
             "y_shift_nm": y*EXTENSION_ROW_SPACING_NM/scheme.y_states}
 
 
-def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
+def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=None, barcode_schema=None):
     scheme = encoding_scheme(scheme_id)
-    width, height = 6 * scheme.x_states, 8 * scheme.y_states
+    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema)
+    columns = active_columns(active_image_columns)
+    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count)
+    span = canvas_span(columns)
+    width, height = len(columns) * scheme.x_states, 8 * scheme.y_states
     pixel_x, pixel_y = EXTENSION_COLUMN_SPACING_NM / scheme.x_counts[0], EXTENSION_ROW_SPACING_NM / scheme.y_counts[0]
     rotate_point(0, 0, 0, 0, rotation_degrees)
     portrait = rotation_degrees in (90, 270)
@@ -288,10 +427,11 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
                 bits = barcode_bits(color, x, y, scheme_id)
                 codebook.append({"code": int("".join(map(str, bits)), 2), "bits": bits,
                                  "color": color, "x_shift": x, "y_shift": y,
-                                 **placement(scheme,x,y)})
-    field_x = scheme.tile_columns * 6 * EXTENSION_COLUMN_SPACING_NM
+                                 **placement(scheme,x,y,columns)})
+    field_x = scheme.tile_columns * span * EXTENSION_COLUMN_SPACING_NM
     field_y = scheme.tile_rows * 8 * EXTENSION_ROW_SPACING_NM
-    centers_x, edges_x, weights_x = sampling_axis(scheme.x_counts,6,EXTENSION_COLUMN_SPACING_NM)
+    centers_x, edges_x, weights_x = sampling_axis(scheme.x_counts,span,EXTENSION_COLUMN_SPACING_NM,
+        [int(columns[0])-int(c) for c in columns] if len(columns) != span else None)
     centers_y, edges_y, weights_y = sampling_axis(scheme.y_counts,8,EXTENSION_ROW_SPACING_NM)
     last_x, last_y = EXTENSION_COLUMN_SPACING_NM/scheme.x_counts[-1], EXTENSION_ROW_SPACING_NM/scheme.y_counts[-1]
     display_first_x, display_first_y = {0:(pixel_x,pixel_y),90:(last_y,pixel_x),180:(last_x,last_y),270:(pixel_y,last_x)}[rotation_degrees]
@@ -306,7 +446,7 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
         "display_field_height_nm": (field_x if portrait else field_y),
         "encoding_scheme": scheme_id, "encoding_label": scheme.label,
         "encoding_mode": "joint_color_xy" if scheme.joint else "fixed_color_x_y_bits",
-        "bit_count": scheme.bit_count, "sites_per_bit": len(scheme.bit_sites[0]),
+        "bit_count": scheme.bit_count, "sites_per_bit": len(bit_sites[0]) if len({len(s) for s in bit_sites}) == 1 else [len(s) for s in bit_sites],
         "parity": "even; bit 9 checks bits 1–8" if scheme.parity else None,
         "bit_order": "bit 1 is the most significant bit; bit {} is the least significant bit".format(scheme.bit_count),
         "code_formula": ("channel_index * x_states * y_states + y_shift * x_states + x_shift"
@@ -325,19 +465,21 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0):
         "pixel_centers_x_nm": centers_x, "pixel_centers_y_nm": centers_y,
         "pixel_edges_x_nm": edges_x, "pixel_edges_y_nm": edges_y,
         "sampling_weights_x": weights_x, "sampling_weights_y": weights_y,
-        "nonuniform_sampling": len(set(scheme.x_counts))>1 or len(set(scheme.y_counts))>1,
+        "nonuniform_sampling": len(columns) != span or len(set(scheme.x_counts))>1 or len(set(scheme.y_counts))>1,
         "parent_scheme": scheme.parent_scheme,
         "tile_columns": scheme.tile_columns, "tile_rows": scheme.tile_rows, "tile_count": scheme.tile_count,
-        "image_columns_left_to_right": IMAGE_COLUMNS,
+        "image_columns_left_to_right": columns, "active_image_columns": columns,
+        "image_sites_per_origami": 8 * len(columns),
         "image_rows_top_to_bottom": ROWS,
-        "image_origin_from_C12_H01_nm": [6 * EXTENSION_COLUMN_SPACING_NM + EXTENSION_EXTRA_COLUMN_GAP_NM, 0],
+        "image_origin_from_C12_H01_nm": [(12 - int(columns[0])) * EXTENSION_COLUMN_SPACING_NM + EXTENSION_EXTRA_COLUMN_GAP_NM, 0],
         "positive_shift_direction": "right / down",
-        "barcode_bits": [{"bit": index + 1, "sites": list(sites)} for index, sites in enumerate(scheme.bit_sites)],
+        "always_on_sites": [list(site) for site in permanent_sites],
+        "barcode_bits": [{"bit": index + 1, "sites": list(sites)} for index, sites in enumerate(bit_sites)],
         "pixel_mapping": "pixel_x = site_column_index * x_states + x_shift; pixel_y = site_row_index * y_states + y_shift",
     }
     if scheme.tiled:
         result.update(encoding_mode="joint_color_quadrant_local_xy" if scheme.joint else "color_quadrant_local_xy",
-            quadrant_count=scheme.tile_count, tile_field_width_nm=59.4, tile_field_height_nm=40.8,
+            quadrant_count=scheme.tile_count, tile_field_width_nm=span * EXTENSION_COLUMN_SPACING_NM, tile_field_height_nm=40.8,
             local_x_states=scheme.x_counts[0] if len(set(scheme.x_counts))==1 else list(scheme.x_counts),
             local_y_states=scheme.y_counts[0] if len(set(scheme.y_counts))==1 else list(scheme.y_counts),
             quadrant_order=(["top-left", "top-right", "bottom-left", "bottom-right"] if scheme.tile_columns == scheme.tile_rows == 2 else
@@ -387,25 +529,25 @@ def bin_quadrants(fitted, scheme, rotation_degrees, linear_light):
 
 
 
-def best_rotation(image_size, scheme_id):
+def best_rotation(image_size, scheme_id, active_image_columns=None):
     """Minimize aspect-ratio padding (equivalently, center-crop loss), ties at 0°."""
     image_aspect = image_size[0] / image_size[1]
     scores = []
     for rotation in (0, 90):
-        info = geometry(scheme_id, rotation)
+        info = geometry(scheme_id, rotation, active_image_columns)
         ratio = info['display_field_width_nm'] / info['display_field_height_nm'] / image_aspect
         scores.append(min(ratio, 1/ratio))  # Fraction occupied with aspect-preserving fit.
     return 90 if scores[1] > scores[0] and not math.isclose(scores[0], scores[1], rel_tol=1e-12) else 0
 
 
 
-def best_image_rotation(path, scheme_id=DEFAULT_SCHEME):
+def best_image_rotation(path, scheme_id=DEFAULT_SCHEME, active_image_columns=None):
     from PIL import Image, ImageOps
     with Image.open(path) as source:
-        return best_rotation(ImageOps.exif_transpose(source).size, scheme_id)
+        return best_rotation(ImageOps.exif_transpose(source).size, scheme_id, active_image_columns)
 
 
-def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCHEME, linear_light=False):
+def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCHEME, linear_light=False, active_image_columns=None):
     """Fit the upright source to a rotated origami field; return origami-local pixels."""
     try:
         from PIL import Image, ImageOps
@@ -421,11 +563,34 @@ def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCH
         background.alpha_composite(oriented)
         rgb = background.convert("RGB")
     scheme = encoding_scheme(scheme_id)
-    width, height = 6 * scheme.x_states, 8 * scheme.y_states
-    physical_raster = physical_raster_size(scheme_id)
+    columns = active_columns(active_image_columns)
+    width, height = len(columns) * scheme.x_states, 8 * scheme.y_states
+    physical_raster = physical_raster_size(scheme_id, columns)
     if rotation_degrees in (90, 270):
         width, height = height, width
         physical_raster = physical_raster[::-1]
+    if columns != IMAGE_COLUMNS:
+        import numpy as np
+        from color_light import fit_linear_source, display_rgb
+        if linear_light:
+            fitted_array = fit_linear_source(path, mode, physical_raster)
+        else:
+            fitted = (ImageOps.pad(rgb, physical_raster, method=Image.Resampling.LANCZOS, color="black")
+                      if mode == FIT_MODES[0] else ImageOps.fit(rgb, physical_raster, method=Image.Resampling.LANCZOS)
+                      if mode == FIT_MODES[1] else rgb.resize(physical_raster, Image.Resampling.LANCZOS))
+            fitted_array = np.asarray(fitted)
+        local = np.rot90(np.asarray(fitted_array), rotation_degrees//90)
+        info = geometry(scheme_id, 0, columns)
+        result = np.zeros((info["rows"], info["columns"], 3), dtype=float)
+        for channel in range(3):
+            plane = Image.fromarray(local[:,:,channel].astype(np.float32))
+            for y in range(info["rows"]):
+                top, bottom = [v/info["field_height_nm"]*plane.height for v in info["pixel_edges_y_nm"][y:y+2]]
+                for x in range(info["columns"]):
+                    left, right = [v/info["field_width_nm"]*plane.width for v in info["pixel_edges_x_nm"][x:x+2]]
+                    result[y,x,channel] = plane.resize((1,1), Image.Resampling.BOX,
+                        box=(left, top, min(right, plane.width), min(bottom, plane.height))).getpixel((0,0))
+        return np.asarray(display_rgb(result, True)).tolist() if linear_light else np.rint(result).astype(int).tolist()
     if linear_light:
         from color_light import fit_linear_source, display_rgb
         if scheme.tiled:
@@ -446,10 +611,48 @@ def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCH
     return rotate_pixels(upright, (-rotation_degrees) % 360)
 
 
-def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, rotation_degrees=0, linear_light=False):
+def rgb_transfer_grid(base_volume, target_nm, base_target_nm=50.0, base_stock_nm=200000.0, stock_nm=200000.0):
+    """Use the same molar split and droplet limits as manual replacements."""
+    for value in (base_stock_nm, stock_nm):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("Stock concentrations must be finite positive numbers.")
+    options = replacement_fractions(base_volume, target_nm, base_target_nm, base_stock_nm / stock_nm)
+    if len(options) < 2 or not math.isclose(options[0], 0.0) or not math.isclose(options[-1], 1.0):
+        raise ValueError("RGB requires both 0% and 100% replacement for binary barcodes. "
+                         "The plate default and base transfer volume do not permit both in 25 nL increments; "
+                         "increase the base transfer volume or adjust the plate default.")
+    steps = len(options) - 1
+    if any(not math.isclose(value, index / steps, abs_tol=1e-9) for index, value in enumerate(options)):
+        raise ValueError("RGB replacement options must form a uniform droplet grid.")
+    original = base_volume * target_nm / base_target_nm
+    return dict(fraction_steps=steps, full_original_nl=original,
+                full_replacement_nl=original * base_stock_nm / stock_nm)
+
+
+def transfer_fraction_steps(design, site):
+    """Legacy snapshots used equal stocks and encoded steps in total volume."""
+    return design.get("fraction_steps", (site["replacement_nl"] + site["original_nl"]) / 25)
+
+
+def set_site_fraction(design, site, fraction):
+    total = site["replacement_nl"] + site["original_nl"]
+    original = design.get("full_original_nl", total)
+    replacement = design.get("full_replacement_nl", total)
+    site.update(replacement_fraction=float(fraction),
+                replacement_nl=round(replacement * fraction / 25) * 25,
+                original_nl=round(original * (1 - fraction) / 25) * 25)
+    design["site_fractions"][site["name"]] = float(fraction)
+
+
+def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, rotation_degrees=0, linear_light=False, *,
+                    plate_defaults_nm=None, base_desired_concentration_nm=50.0,
+                    base_concentration_nm=200000.0, source_concentrations_nm=None, plate_relative_transfers=False, active_image_columns=None, barcode_schema=None):
     """Deinterleave each RGB channel using the selected barcode codebook."""
     scheme = encoding_scheme(scheme_id)
-    width, height = 6 * scheme.x_states, 8 * scheme.y_states
+    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema)
+    columns = active_columns(active_image_columns)
+    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count)
+    width, height = len(columns) * scheme.x_states, 8 * scheme.y_states
     pixel_x, pixel_y = EXTENSION_COLUMN_SPACING_NM / scheme.x_counts[0], EXTENSION_ROW_SPACING_NM / scheme.y_counts[0]
     if len(pixels) != height or any(len(row) != width for row in pixels):
         raise ValueError("RGB image must contain exactly {} columns and {} rows.".format(width, height))
@@ -458,27 +661,37 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
             if len(pixel) != 3 or any(not isinstance(value, int) or not 0 <= value <= 255 for value in pixel):
                 raise ValueError("Each pixel must have three integer RGB values from 0 to 255.")
     rotate_point(0, 0, 0, 0, rotation_degrees)
-    info = geometry(scheme_id,rotation_degrees)
+    info = geometry(scheme_id,rotation_degrees,columns,barcode_schema)
     from color_light import srgb_to_linear
     intensity_lut = srgb_to_linear([v/255 for v in range(256)]) if linear_light else [v/255 for v in range(256)]
+    replacement_fractions(base_volume)  # Validate the shared base droplet volume independently.
     designs = []
     for color, channel in CHANNELS.items():
-        multiplier = multipliers[color]
-        steps = len(replacement_fractions(base_volume, multiplier)) - 1
+        # Explicit plate defaults are authoritative; multipliers are legacy-only.
+        multiplier = multipliers[color] if plate_defaults_nm is None else 1.0
+        target = base_desired_concentration_nm * multiplier if plate_defaults_nm is None else plate_defaults_nm[color]
+        stock = (source_concentrations_nm or {}).get(color, 200000.0)
+        reference_target = target if plate_relative_transfers else base_desired_concentration_nm
+        grid = rgb_transfer_grid(base_volume, target, reference_target, base_concentration_nm, stock)
+        steps = grid["fraction_steps"]
+        concentrations = {} if plate_defaults_nm is None else dict(
+            plate_default_nm=target, desired_concentration_nm=target,
+            base_desired_concentration_nm=reference_target, plate_relative_transfers=plate_relative_transfers,
+            base_concentration_nm=base_concentration_nm, source_concentration_nm=stock)
         for y_shift in range(scheme.y_states):
             for x_shift in range(scheme.x_states):
                 bits = barcode_bits(color, x_shift, y_shift, scheme_id)
-                position = placement(scheme,x_shift,y_shift)
-                fractions = {}
-                for state, sites in zip(bits, scheme.bit_sites):
+                position = placement(scheme,x_shift,y_shift,columns)
+                fractions = {site_name(*site): 1.0 for site in permanent_sites}
+                for state, sites in zip(bits, bit_sites):
                     for row, column in sites:
                         fractions[site_name(row, column)] = float(state)
                 sites = []
                 for row_index, row in enumerate(ROWS):
-                    for column_index, column in enumerate(IMAGE_COLUMNS):
+                    for column_index, column in enumerate(columns):
                         x, y = column_index * scheme.x_states + x_shift, row_index * scheme.y_states + y_shift
                         if scheme.tiled:
-                            x = 6*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
+                            x = len(columns)*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
                             y = 8*sum(scheme.y_counts[:position["quadrant_y"]]) + row_index*position["local_y_states"] + position["local_y_shift"]
                         value = pixels[y][x][channel]
                         droplets = math.floor(float(intensity_lut[value]) * steps + 0.5)
@@ -496,7 +709,8 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
                             "pixel_x": x, "pixel_y": y, "rgb": pixels[y][x][:],
                             "x_nm": x_nm, "y_nm": y_nm,
                             "channel_value": value, "replacement_fraction": fraction,
-                            "replacement_nl": droplets * 25, "original_nl": (steps - droplets) * 25,
+                            "replacement_nl": round(grid["full_replacement_nl"] * fraction / 25) * 25,
+                            "original_nl": round(grid["full_original_nl"] * (1 - fraction) / 25) * 25,
                         })
                 suffix = "" if scheme_id == DEFAULT_SCHEME else "_{}x{}".format(scheme.x_states,scheme.y_states)
                 design_name = ("{}{}_Q{}_X{}_Y{}".format(color.replace(" ","_"),suffix,position["quadrant"],position["local_x_shift"],position["local_y_shift"])
@@ -504,10 +718,13 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
                 designs.append({
                     "name": design_name,
                     "origami_rotation_degrees_clockwise": rotation_degrees,
-                    "linear_light": linear_light, "encoding_scheme": scheme_id, "barcode_code": int("".join(map(str, bits)), 2),
+                    "linear_light": linear_light, "encoding_scheme": scheme_id, "active_image_columns": columns[:],
+                    "active_canvas_offset_nm": [(6-int(columns[0]))*EXTENSION_COLUMN_SPACING_NM, 0], "barcode_code": int("".join(map(str, bits)), 2),
                     "color": color, "channel": channel, "x_shift": x_shift, "y_shift": y_shift,
                     **position,
-                    "bits": [int(bit) for bit in bits], "base_volume_nl": base_volume,
+                    "always_on_sites": [list(site) for site in permanent_sites],
+                    "bits": [int(bit) for bit in bits], "barcode_sites": [[list(site) for site in sites] for sites in bit_sites], "base_volume_nl": base_volume,
+                    **grid, **concentrations,
                     "excess_multiplier": multiplier, "site_fractions": fractions, "image_sites": sites,
                 })
     return designs
@@ -518,7 +735,10 @@ def reconstruct(designs):
     if any(design.get("encoding_scheme", DEFAULT_SCHEME) != scheme_id for design in designs):
         raise ValueError("Cannot reconstruct designs from different encoding schemes together.")
     scheme = encoding_scheme(scheme_id)
-    pixels = [[[0, 0, 0] for _ in range(6 * scheme.x_states)] for _ in range(8 * scheme.y_states)]
+    columns = active_columns(designs[0].get("active_image_columns") if designs else None)
+    if any(active_columns(d.get("active_image_columns")) != columns for d in designs):
+        raise ValueError("Cannot reconstruct different active canvases together.")
+    pixels = [[[0, 0, 0] for _ in range(len(columns) * scheme.x_states)] for _ in range(8 * scheme.y_states)]
     for design in designs:
         for site in design["image_sites"]:
             pixels[site["pixel_y"]][site["pixel_x"]][design["channel"]] = round(site["replacement_fraction"] * 255)
@@ -537,31 +757,58 @@ def selection_panel(design):
         "active": [(row, "{:02d}".format(c)) for row in ROWS for c in range(1, 13)],
         "selected": selected, "selected_names": [site_name(row, column) for row, column in selected],
         "site_fractions": dict(fractions), "x_shift": design["x_shift"], "y_shift": design["y_shift"],
+        "site_concentrations_nm": ({name: design["desired_concentration_nm"] for name in fractions}
+                                   if "desired_concentration_nm" in design else {}),
         "spacing_x_nm": EXTENSION_COLUMN_SPACING_NM, "spacing_y_nm": EXTENSION_ROW_SPACING_NM,
         "mirror_columns": True,
     }
 
 
-def prepare_runs(designs, base_path, sources, available_wells, settings, mixing):
+def prepare_runs(designs, base_path, sources, available_wells, settings, mixing, source_concentrations_nm=None):
     """Allocate separate wells and validate every recipe before returning any runs."""
+    source_concentrations_nm = source_concentrations_nm or {}
     remaining = list(available_wells)
     if len(set(remaining)) != len(remaining):
         raise ValueError("Destination wells must be unique.")
     if len(remaining) < len(designs):
         raise ValueError("This batch needs at least {} destination wells; only {} are available on the selected plate.".format(len(designs),len(remaining)))
     runs = []
+    settings = dict(settings)
+    settings.setdefault("base_concentration_nm", mixing["staple"][0])
+    settings.setdefault("base_desired_concentration_nm", mixing["desired"][1])
     for design in designs:
         source_path, source_plate = sources[design["color"]]
+        run_settings = dict(settings)
+        run_mixing = {key: list(value) for key, value in mixing.items()}
+        if design.get("plate_relative_transfers"):
+            run_settings.update(base_concentration_nm=design["base_concentration_nm"],
+                                base_desired_concentration_nm=design["desired_concentration_nm"])
+            run_mixing["staple"][0] = design["base_concentration_nm"]
+            run_mixing["desired"][1] = design["desired_concentration_nm"]
+            # The dilute base can support a smaller final recipe at the same
+            # transfer volume. Use only the material actually dispensed.
+            available_final_ul = (design["base_volume_nl"] * run_settings["transfers_per_source"]
+                                  * design["base_concentration_nm"] / design["desired_concentration_nm"] / 1000)
+            run_mixing["desired"][0] = min(run_mixing["desired"][0], available_final_ul)
+        if "desired_concentration_nm" in design:
+            for key in ("base_concentration_nm", "base_desired_concentration_nm"):
+                if not math.isclose(design[key], run_settings[key]):
+                    raise ValueError("Base concentration settings changed; regenerate the RGB assignments.")
+            if design["color"] in source_concentrations_nm and not math.isclose(
+                    design["source_concentration_nm"], source_concentrations_nm[design["color"]]):
+                raise ValueError("Source concentration changed; regenerate the RGB assignments.")
         selection = ReplacementSelection(Path(source_path), list(design["site_fractions"]), source_plate,
-                                         design["excess_multiplier"], site_fractions=design["site_fractions"])
+                                         desired_concentration_nm=design.get("desired_concentration_nm", settings["base_desired_concentration_nm"] * design["excess_multiplier"]),
+                                         concentration_nm=design.get("source_concentration_nm", source_concentrations_nm.get(design["color"], 200000.0)),
+                                         site_fractions=design["site_fractions"])
         try:
             picklist = generate_picklist(Path(base_path), [selection], remaining,
-                                        transfer_volume_nl=design["base_volume_nl"], **settings)
+                                        transfer_volume_nl=design["base_volume_nl"], **run_settings)
             occupied = list(dict.fromkeys(row["Destination Well"] for row in picklist))
             remaining = [well for well in remaining if well not in occupied]
             total = sum(row["Transfer Volume"] for row in picklist)
             effective_staples = total / (design["base_volume_nl"] * settings["transfers_per_source"])
-            recipe = calculate_mixing_volumes(number_of_staples=effective_staples, **mixing)
+            recipe = calculate_mixing_volumes(number_of_staples=effective_staples, **run_mixing)
             if recipe[0]["Volume_uL"] > total / 1000 + 1e-9:
                 raise ValueError("Requested staple mix exceeds the available picklist volume; adjust Run & Mixing Settings.")
         except ValueError as exc:

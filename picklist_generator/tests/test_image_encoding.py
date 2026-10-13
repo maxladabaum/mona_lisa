@@ -308,9 +308,14 @@ class EncodingSchemeTests(unittest.TestCase):
                     self.assertTrue(all(len(row) == 6 * scheme.x_states for row in pixels))
                     self.assertTrue(all(pixel == [255,128,0] for row in pixels for pixel in row))
                     raster_width, raster_height = physical_raster_size(scheme_id)
-                    self.assertEqual(raster_width % (6*scheme.x_states), 0)
-                    self.assertEqual(raster_height % (8*scheme.y_states), 0)
-                    self.assertAlmostEqual(raster_width / raster_height, 59.4 / 40.8)
+                    # Unequal tile partitions use physical cell edges, not a
+                    # uniformly spaced global sample-index grid. Large coprime
+                    # partitions also use a bounded raster rather than their LCM.
+                    info = geometry(scheme_id)
+                    self.assertAlmostEqual(raster_width / raster_height,
+                                           info["field_width_nm"] / info["field_height_nm"])
+                    self.assertGreaterEqual(raster_width, 6 * scheme.tile_columns * max(scheme.x_counts))
+                    self.assertGreaterEqual(raster_height, 8 * scheme.tile_rows * max(scheme.y_counts))
 
     def test_joint_batches_allocate_all_runs_and_reserved_codes_are_excluded(self):
         for scheme_id, scheme in ENCODING_SCHEMES.items():
@@ -660,7 +665,7 @@ class ImageWorkflowTests(unittest.TestCase):
         self.app.transfer_volume.set("75")
         multipliers = dict(zip(CHANNELS, (2, 3, 4)))
         for color, multiplier in multipliers.items():
-            view.color_views[color].excess_multiplier.set(str(multiplier))
+            view.color_views[color].desired_concentration_nm.set(str(50 * multiplier))
         view.image_path.set(str(self.image_path))
         view._load()
         view._compare_schemes()

@@ -1,47 +1,101 @@
 # Echo Picklist Generator
 
-**Currently enabled replacement tabs: PAINT P1, PAINT R1, R1 R, R1 B, and R1 G.** Other replacement definitions and sheets are retained for later use.
-The R1 R, R1 B, and R1 G tabs use the same extensions and source plate as PAINT R1,
-with independent selections and red, blue, and green percentage-scaled highlights.
+Version **1.0.1** — corrected PAINT P1 and PAINT R1 row-15 replacement targets.
 
-A standalone desktop version of the GUI and picklist workflow from
-`picklist_generator_replacement-Copy1.ipynb`. Yaritza Extensions, Aptamers,
-MB, PAINT P1, PAINT R1, and the base source sheet are loaded
-automatically with portable, relative paths. The
-original Set B CSV remains archived in `replacement_sheets/` but is not loaded
-or shown by the application.
+Mona Lisa edition of the standard Echo picklist tools. The visible replacement
+tabs are PAINT P1, PAINT R1, and LowConc PAINT R1. R1 R/G/B targets are edited
+and saved exclusively in RGB Image. The RGB Image tab
+retains image encoding, Gaussian/alignment optimization, tiling comparisons,
+PDF exports, and similarity ranking/optimization.
+
+Synced with the standard local repository at `bb38c05` (2026-10-11).
+Manual replacements now use final concentration targets and per-site percentages.
+PAINT P1 and PAINT R1 default to 250 nM. R1 R/B/G and LowConc PAINT R1
+default to 25 nM; the RGB barcode bits remain binary. RGB Image uses its editable per-color target directly, with no extra
+excess multiplier, and retains 25 nL quantization. RGB uses the selected base plate stock and each color’s plate target, independently
+of the manual Run & Mixing concentration fields, and validates both transfers.
+Existing configuration, destination usage, and stored runs are retained.
 
 ## Start the app
 
-**Soyeon MB** in the Replacements tab includes 60 D-MB extensions (rows H03,
-H05, H07, H09, and H11) and a separate panel for the six DL extensions supplied
-in `DNA Book Sub-group (Myoungseok) - Soyeon MB.csv`. The bundled normalized
-sheet is `replacement_sheets/soyeon_MB_replace.csv`; original names, sequences,
-and source wells are preserved. Its source plate is labeled `SoyeonMB[1]` in
-the picklist. Targets B21, B22, and B20 are translated to logical replacement
-keys B11, B14, and L14, respectively, to account for relocated base staples.
-These selections participate in the existing clash checks, previews, and storage.
+**LowConc PAINT R1** uses the same `PAINT_R1_replace.csv` layout, sequences,
+and replacement targets as PAINT R1, with a separate source plate label
+`SourcePlate7[7]`. Its stock is **20 µM (20,000 nM)**. **R1 R, R1 G, and R1 B** also use
+this low-concentration plate (`SourcePlate7[7]`) and stock, including RGB Image
+batches. Other replacement tabs use **200 µM (200,000 nM)**.
+The **Base plate stock** selector in **Run & Mixing Settings** and **RGB Image**
+is synchronized and remembered across launches. Choose **Base plate — 200 µM**
+(`book_base.csv`, `SourcePlate1[1]`) or **LowConc base plate — 20 µM**
+(`book_base_20uM.csv`, `SourcePlate8[8]`). The new plate definition preserves all
+base wells, sequences, replacement mappings, and hinge variants; its 20 µM value
+is nominal, not a measurement. Selection updates the source CSV and manual
+base-stock field, and rebuilds RGB previews and invalidates prepared runs.
+With the 20 µM base and 20 µM R1 stocks, full replacement uses the same transfer
+volume as the original staple (25 nL at the default base transfer).
+RGB takes final concentration targets from its own target fields, independently of
+the manual mixing fields. Its recipe volume is capped by available dispensed
+material: at a 25 nL base transfer and 25 nM target, the 20 µM base supports a
+20 µL final recipe rather than the usual 100 µL.
 
-Each replacement tab has an **Excess Multiplier**, initially **1**, also editable
-in **Run & Mixing Settings**. Values are independent per tab and stay synchronized
-between the two locations. For example, PAINT R1 at **5** with a **25 nL** transfer
-volume produces **125 nL** transfers for its selected replacements. Base staples
-at unselected sites keep the normal transfer volume. Positive decimal multipliers
-are supported when the resulting volume is a multiple of 25 nL.
-Destination capacity, available volume, and the mixing recipe account for the
-scaled transfers; the desired staple concentration refers to the nominal 1× staples.
+Final concentration targets are used directly, so the
+replacement portion requires 10× the volume of the 200 µM stock. Original-staple
+volumes stay the same; larger batches may require more destination wells. Stock concentrations are shown in each tab
+and in the run settings. Selecting the same target from both R1 tabs is a clash.
+
+Each replacement tab has a **Desired staple (nM)** field, also editable in
+**Run & Mixing Settings → Mixing recipe**. Values are independent per plate
+and synchronized between the two locations. Mona Lisa defaults are **250 nM** for PAINT P1 and PAINT R1,
+**50 nM** for auxiliary plate definitions, and **25 nM** for R1 R/B/G and LowConc PAINT R1. Every selected plate needs
+a positive target; blank entries are rejected.
+
+Transfers are calculated from each plate's desired final concentration and
+stock concentration relative to the base staple target and stock. Destination
+capacity, available pool volume, and the mixing recipe use the resulting
+physical volumes, including the extra liquid required by dilute stocks.
+
+Each replacement tab also has **Replacement % for new selections**. Choose a
+percentage, then select extension sites. Each site remembers that percentage and
+keeps its corresponding highlight opacity, so one design can contain multiple
+percentages. Changing the picker does not alter existing selections. To change a
+site, deselect it and select it again with the new percentage.
+
+Use **New selections (nM; blank = default)** beside the percentage control to
+give individual sites their own concentration. Enter a target, then click the
+sites that should use it. Those overrides stay fixed when the plate default
+changes. Leave the control blank to select sites that follow the plate default.
+To change a site's override or reset it to the default, deselect it, set this
+control, and select it again. Every selected location displays its effective
+target in nM (before the replacement percentage splits it). These per-site
+targets are used in transfers and recipes and retained in stored selection
+reports and PDFs.
+
+In **Run & Mixing Settings → Mixing recipe**, **Desired replacement staple
+concentrations (nM)** lets you set a separate final concentration per staple for
+each replacement plate. The staple nM value in the Desired vector refers to
+**base staples**; each replacement plate has its own required target.
+For example, set the base target to 50 nM, PAINT P1 to 50 nM, and LowConc PAINT R1
+to 5 nM. With a 50 nL base transfer and the default stock concentrations, both
+replacement plates transfer 50 nL per fully replaced site. The pooled aliquot
+and recipe preserve these different final concentrations.
+
+For partial replacements, the percentage splits the plate's target between
+replacement and original staples: a 40% split of a 50 nM target gives 20 nM
+replacement and 30 nM original. Transfers must fit whole 25 nL droplets; increase
+the base transfer volume or adjust the target/percentage if needed. Editing any
+target invalidates the previous preview so exports require recalculation.
+
+Changing a target or transfer volume does not overwrite stored percentages;
+incompatible splits must be resolved before generating a preview. Mixing recipes
+include both portions. Stored runs and selection PDFs preserve each percentage.
 
 Each tab has an editable **Base transfer volume (nL, all tabs)** field, shared
-with **Run & Mixing Settings**. Set the base volume independently of each tab’s
-excess multiplier; 25 nL is the transfer increment, not a fixed base volume.
-Each tab also has a **Replacement percentage** dropdown, defaulting to **100%**.
-The selected percentage splits the total volume (transfer volume × excess
-multiplier) between the replacement and original staple. For example, 100 nL
-at 25% transfers 25 nL replacement and 75 nL original. Only splits with both
-volumes in 25 nL increments are offered; zero-volume transfers are omitted.
-Changing volume or excess refreshes the choices. If a previous percentage is
-no longer valid, choose a new one before generating. Cyan highlight opacity
-matches the percentage.
+with **Run & Mixing Settings**. Base and replacement transfers must use 25 nL
+increments. Manual tabs split each site's final target according to its retained
+percentage and account for the two stock concentrations. Color highlight opacity
+shows each site's replacement percentage; barcode sites stay fully on or off.
+
+The following auxiliary sheet definitions are retained in the code and bundled
+data; Mona Lisa's visible tabs are the PAINT and RGB tabs listed above.
 
 **miRNA** loads `replacement_sheets/miRNA_replace.csv` from the supplied Source [3]
 anchor sheet, using `Well` as the source well and `Replace` as the base replacement
@@ -230,6 +284,10 @@ two replacements for the same base well is rejected. Transfers are assigned to
 destination wells in order, up to the configured volume capacity.
 
 The mixing fields retain the notebook's comma-separated vector format. The
+**Base staple** concentration applies to the base source plate; replacement
+stock concentrations are defined separately per tab. The staple buffer values
+(xTE, Mg, Na) remain shared across staple stocks; LowConc uses the same buffer
+composition as the other plates. The
 water balance fixes a notebook arithmetic omission by subtracting sodium along
 with the other reagent volumes, so the recipe sums to the requested final
 volume.
@@ -293,7 +351,104 @@ checks still apply to overlapping replacement sites across enabled tabs.
 
 ### RGB images → selectable six-bit encoding
 
-Open **7. RGB Image** and choose an **Encoding scheme**:
+Open **7. RGB Image** and set **Tiles per color** to **1–16**. Each tile
+uses one red, green, and blue design, so 4 tiles produce 12 runs and 16 tiles
+produce 48 runs. **Grid (columns × rows)** selects the rectangular arrangement.
+Changing either control rebuilds the image preview and invalidates prepared runs;
+the selected layout is remembered across launches. The original color bits are
+preserved, and the four position bits identify the tiles.
+
+To create or edit the RGB barcode **visually**, click **Edit in Origami Templates…**
+in RGB Image. This loads the current six- or nine-bit mapping into the existing
+Origami Templates editor. Select a group, change its selected lattice sites, and
+click **Update group**. Use **Digital bit** groups named **Bit 1**, **Bit 2**, etc.
+for barcode bits; use **Alignment-only** groups for permanent fiducials.
+Click **Apply to RGB Image** in the Templates tab when ready. You can also use
+**Use Origami Templates** from RGB Image to apply a schema already in the editor.
+
+Keep an **8-row × 12-column** physical grid: template **R1–R8** map to
+**H01,H03,…,H15**, and **C1–C12** map directly to physical **01–12** even though
+the display mirrors the columns. Use exactly six or nine digital groups, matching
+the selected RGB scheme. Numbered Bit labels preserve ordering after edits;
+legacy schemas with entirely unnumbered labels use their logical-bit list order.
+Template bit ON/OFF checkboxes are preview choices; the RGB encoding determines
+those bits for each design. Dark alignment groups do not create ON pixels.
+
+**Load schema…** now also accepts files from **Save bit schema JSON…** in Origami
+Templates, plus template metadata files containing a `logical_model`. You do not
+need to edit JSON manually. RGB still validates barcode/fiducial overlaps and
+requires analog fiducial rows to be excluded from the active canvas first.
+
+Use **Barcode site schema (12–07)** in RGB Image to change which physical
+sites carry each barcode bit. **Save schema…** exports the current mapping;
+edit the JSON and use **Load schema…** to apply it. **Reset to standard** restores
+the original mapping. A complete starting file is `barcode_schema.example.json`.
+The schema is stored in configuration and copied into image manifests; reports
+include the selected bit-to-site mapping. Applying a schema invalidates prepared
+runs and updates previews, comparisons, and subsequent picklists. Manual color
+tab barcodes remain separate from this RGB setting.
+
+The JSON has `version: 1`, a `name`, and `six_bit` and/or `nine_bit` arrays.
+Each array contains exactly six or nine entries of the form
+`{"bit": 1, "sites": ["H01-11", "H03-11", "H05-11"]}`.
+`H01-11` identifies the H01 position on displayed row 11. A bit can use one or
+more sites; every assigned site follows that bit's binary 0%/100% state.
+Use H01, H03, H05, H07, H09, H11, H13, or H15 with rows 07–12. Sites cannot be
+repeated within a six-bit or nine-bit mapping. Omitted families use their standard
+mapping. Unknown fields, incomplete bit lists, and analog-row sites are rejected.
+
+Permanent fiducials are specified with an optional **`always_on_sites`** list:
+
+```json
+"always_on_sites": ["H07-12", "H09-12"]
+```
+
+Add that field to a barcode schema, or load the complete
+`barcode_schema.fiducials.example.json`. These sites receive **100% replacement
+in every RGB origami design**, independently of color, position bits, image
+intensity, or optimization. They use each design's replacement plate and plate
+target; they do not select a separate fixed-color source. Gold rings identify
+them in the origami preview. They appear in picklists and export metadata but
+are excluded from the analog-image Gaussian prediction, like barcode sites.
+
+Fiducials must not overlap a barcode site in the selected encoding family.
+A six-bit layout is not checked against the unused nine-bit mapping (or vice
+versa). Switching to a family with an actual conflict is rejected while retaining
+the current layout. They may use
+unused sites on rows 12–07, or sites on excluded analog rows 06–01. For example,
+exclude analog row 01 before loading a schema containing `H01-01`. The app
+prevents re-enabling a reserved analog row until those fiducials are removed.
+The default schema has no permanent sites, and older schemas remain valid.
+
+The standard six-bit mapping is:
+
+| Bit | Displayed row | H positions |
+|---|---|---|
+| 1 | 11 | H01, H03, H05 |
+| 2 | 09 | H01, H03, H05 |
+| 3 | 07 | H01, H03, H05 |
+| 4 | 11 | H11, H13, H15 |
+| 5 | 09 | H11, H13, H15 |
+| 6 | 07 | H11, H13, H15 |
+
+The schema changes the physical sites, not the logical encoding. Fixed-color
+schemes retain R=11, B=10, G=00 for bits 1–2; the remaining bits encode position.
+Joint schemes encode color and position together. The geometry/codebook exported
+with each batch records the exact bit meanings for its selected scheme.
+
+Use **Active analog rows** in RGB Image to select any nonempty subset of
+**06, 05, 04, 03, 02, 01**. All six are enabled initially. Unchecking **01**
+changes each origami from **8×6 to 8×5 image pixels**. The top-page barcode
+rows **12–07** and the number of designs stay unchanged. Excluded sites retain
+original staples and receive no image replacements; the design preview marks
+them with a gray slash. Interior exclusions preserve physical gaps between sites.
+Selection changes rebuild sampling, tile overlays, predictions, and comparisons,
+invalidate prepared runs, and apply to optimization, reports, and exported batches.
+The active rows are saved across launches and recorded in export metadata.
+
+For layouts with multiple local shifts per tile or larger barcode budgets,
+choose an **Encoding scheme**. The tile-count control then shows **Use encoding scheme**:
+
 
 | Scheme | Image size | Pixel spacing (nm) | Designs | Default destination wells |
 |---|---|---|---|---|
@@ -321,7 +476,7 @@ Choose **Upload RGB image** and a fitting mode. Click **Compare original schemes
 to see all four options side by side, with each binned image above its predicted
 Gaussian RGB reconstruction. Every preview uses the same physical field and display scale;
 the cards list image resolution, design count, and pixel spacing. The comparison
-updates with image, rotation, fit, base volume, and excess multiplier changes.
+updates with image, rotation, fit, base volume, and plate default changes.
 Click **Use this scheme** on a card to apply it. Opening the comparison does not
 prepare runs or change an existing prepared batch.
 PNG, JPEG, TIFF, BMP, and WebP are supported. Import honors EXIF orientation
@@ -357,19 +512,30 @@ color channels. Every design still contributes 48 image sites (6×8).
 
 By default, sRGB values are decoded to linear-light intensity and rounded to the
 nearest achievable replacement fraction. A display value of 128 corresponds to
-about 21.6% intensity, not 50%. The number of levels depends on **base volume × that
-color's excess multiplier**, divided by 25 nL. For example, 100 nL at 1× offers
-0%, 25%, 50%, 75%, and 100%. Every image site uses that total volume, split
-between original and replacement staples; zero-volume transfers are omitted.
-This uses the standard sRGB transfer function, not a calibrated fluorescence
-response model. Input RGB images are assumed to be sRGB. The manual tabs' uniform percentage is not used for imported
-images.
+about 21.6% intensity, not 50%. **R1 R, R1 G, and R1 B target (nM)** fields
+in RGB Image control the RGB targets; there is no additional RGB excess control.
+Changing a color's plate default immediately rebuilds its image assignments,
+previews, and open comparisons, and invalidates prepared runs. Manual per-site
+percentage/concentration overrides do not replace the image assignments.
 
-Barcode sites use the same total volume but always encode 0% or 100%,
-independently of image intensity. Both on and off barcode sites participate in
-the split, so total volume is independent of the barcode state. All six bits
-use the previously defined three-extension groups. Other base staples remain
-at the base transfer volume. No additional alignment markers are introduced.
+RGB uses its color plate target as the concentration reference; the manual
+Run & Mixing base target is ignored. For base transfer `V` and replacement fraction `f`:
+
+- Original transfer: `V × (1 − f)`.
+- Replacement transfer: `V × f × selected base stock / replacement stock`.
+
+Both transfers must be multiples of 25 nL. With the 20 µM R1 source and a
+25 nL base transfer, 0% uses 25 nL original and 100% uses 250 nL replacement.
+Both barcode states are valid at a 25 nM plate target. Increasing the base
+transfer to 50 nL also permits 50% (25 nL original + 250 nL replacement).
+The color plate target determines the final concentration in that color's recipe.
+The total liquid volume can vary with intensity because the stocks differ.
+
+Barcode sites use the same plate target but always encode 0% or 100%, independently
+of image intensity. By default, all six bits use three-extension groups; the barcode schema can change these sites. Other base
+staples retain the base transfer volume. Image previews still model fractional
+occupancy with the existing equal-channel-brightness assumption; these are not
+absolute concentration-to-fluorescence calibrations.
 
 The **Predicted RGB — Gaussian overlay** is formed by summing image-site signals
 from every encoded design after applying its XY shift and RGB pseudocolor. Each
@@ -406,13 +572,42 @@ replacement percentages, and original/replacement transfer volumes. The image
 workflow creates independent runs rather than combining the three color tabs
 into a single origami mixture. Manual designs remain available separately.
 
+**Prepare N runs** automatically exports PAINT Analysis alignment templates when
+**Automatically export PAINT alignment templates when preparing runs** is checked
+(enabled by default). Use **Open alignment templates** beside that checkbox to
+open the resulting folder under the output root:
+`rgb_alignment_templates/<batch ID>/`.
+
+- `barcodes/`: one calibrated PNG and JSON sidecar per prepared design, containing
+  its ON barcode sites and permanent fiducials. Analog image pixels are excluded.
+- `fiducials/`: shared fiducial-only PNGs and JSON sidecars when fiducials are defined.
+- `manifest.json`: maps each template to its design name, barcode, color, shifts,
+  orientation, and allocated destination wells; records the schema and geometry.
+- `barcode_schema.json`: the barcode/fiducial schema used for this batch.
+
+Load PNGs from `barcodes/` into PAINT Analysis for barcode classification; use the
+fiducial-only references for fiducial alignment. PNGs embed the same physical
+calibration, mirrored-column convention, and logical-bit metadata as templates
+saved from Origami Templates. They remain in the full origami coordinate frame,
+not the rotated composite-image frame. All-off designs with no fiducials have
+no bright alignment sites and are explicitly listed as skipped in the manifest.
+
+**Save image batch…** also includes an `alignment_templates/` folder generated
+from the prepared snapshot, even if automatic export is unchecked. Preparing or
+exporting templates does not commit plate usage. Export errors leave prepared
+runs available; saving the image batch retries template export. The automatic
+export preference is remembered across launches.
+
 Use **Run & Mixing Settings** to configure the base plate, hinge type,
-destination plate, capacity, repeat transfers, and recipe. **Prepare N runs**
+destination plate, capacity, and repeat transfers. RGB ignores the manual mixing
+fields: its recipe uses each color plate's target with the standard 100 µL,
+10 nM scaffold, 1× TE, 12 mM Mg, and 5 mM Na formulation. **Prepare N runs**
 allocates unused wells at or after the indicated starting well, skipping wells
 already recorded or reserved by stored runs. A design can span multiple wells;
-no well is shared between designs. At the default 50 nL base, 5× excess, and
-12.5 µL capacity, the original 4×4 batch uses **144 wells** (see the table for other schemes). Preparation validates all
-picklists and recipes before making any changes to storage or plate usage.
+no well is shared between designs. Well counts depend on the 25 nL base transfer
+default, each color’s plate target, stock concentrations, image fractions, and
+capacity. Preparation validates all picklists and recipes before changing storage
+or plate usage.
 Changing image, fit, volumes, source sheets, or run settings invalidates a
 prepared batch and requires preparation again.
 
@@ -451,8 +646,8 @@ page to fit the predicted Gaussian composite to the upright source image. The
 optimizer uses physical site spacing, encoded shifts, origami rotation, the
 selected FWHM (default 7.5 nm), and the shared exposure. It first solves a bounded
 continuous intensity problem, rounds to the permitted 25 nL increments, then
-refines the discrete assignments. Original and replacement volumes still sum to
-base volume × the color's excess multiplier; barcode bits remain unchanged.
+refines the discrete assignments. Original and replacement transfers use their respective stock concentrations
+and remain on the permitted molar-fraction grid; barcode bits remain unchanged.
 
 The page shows the before and after Gaussian overlays and RGB root-mean-square
 error. The objective uses unclipped RGB values at fixed exposure, so saturation
@@ -465,7 +660,7 @@ With optimization enabled, **Compare original schemes** compares the optimized
 reconstructions and reports each scheme's before/after error. Optimization runs
 independently for every scheme, including the nine-bit and four-quadrant options.
 The popup follows the RGB tab's image, fit, rotation, base transfer volume,
-per-color excess multipliers, FWHM, exposure, linear-light processing, signal
+per-color plate defaults, FWHM, exposure, linear-light processing, signal
 normalization, canvas brightness compensation, and alignment settings. Its summary
 shows whether optimization is enabled for all schemes, the concentration settings,
 and the alignment parameters. Alignment previews show the expected result; the
@@ -703,7 +898,7 @@ applies exposure compensation equal to tile count (up to 21×), without adding
 photons or modifying physical mixing volumes.
 
 The matrix inherits the RGB tab's source image, fit, origami rotation, base
-transfer volume, color excess multipliers, exposure, linear-light processing,
+transfer volume, color plate defaults, exposure, linear-light processing,
 signal normalization, brightness compensation, optimization, and alignment
 settings. Only Gaussian width is overridden by each column. Optimization fits
 each layout and width independently; alignment-enabled previews show the
@@ -738,7 +933,7 @@ is **438 view pages plus a settings cover page**. Equivalent layouts under diffe
 names are retained so every dropdown entry is represented.
 
 The report snapshots the current image and RGB settings, including the main
-FWHM, fitting mode, base volume, color excess multipliers, exposure, color/brightness
+FWHM, fitting mode, base volume, color plate defaults, exposure, color/brightness
 options, optimization toggle, alignment settings, and finite-count seed. Each
 chosen orientation is independently binned and optimized when optimization is enabled.
 The source image remains upright. The multi-FWHM comparison's column widths do
@@ -774,8 +969,8 @@ L2 penalty around the direct assignment, rather than a smoothing filter over
 image edges. It discourages large compensating changes and extreme alternating
 patterns while preserving the baseline image's edges. The penalty is normalized
 by site count and the image loss by raster count. Barcode bits remain binary;
-replacement and original volumes still use 25 nL increments and preserve their
-sum. Reported RGB/held-out RMSE excludes the regularization penalty; optimization
+replacement and original volumes still use 25 nL increments and preserve the
+site’s total molar target. Reported RGB/held-out RMSE excludes the regularization penalty; optimization
 metadata records the strength, assignment deviation, penalty, and total objective.
 
 The optimization target remains the **uploaded image**, fitted/cropped/padded
@@ -896,3 +1091,30 @@ winning assignments. Sensitivity curves show the worst score across the other
 three axes, exposing coupled errors. Unsupported simulation settings stop the run
 with an error rather than silently dropping difficult conditions. The current
 selected design and prepared runs are not modified.
+### Digital-group brightness factors
+
+In the template editor's **Custom digital-bit groups** tab, select a group,
+enter its **Brightness factor**, and click **Update group** (or set it before
+**Create group**). Save the bit schema JSON and load it in PAINT Analysis Step 3.
+Use `1` for normal signal, `2` for a group expected to need twice the signal,
+and `0.2` for a group that may pass with one-fifth the signal.
+
+Each `logical_bits` entry stores an optional positive finite `brightness_factor`;
+missing values default to `1`. Schema JSON, template PNG metadata, and template
+JSON sidecars preserve this value. PAINT Analysis divides weighted localization
+support by both the number of group positions and this factor before its usual
+support, prominence, and probability checks. After loading a changed schema,
+rerun analysis Steps 3 and 4. This calibration affects digital-bit detection;
+it does not change rendered template spots or physical mixing volumes.
+
+Dark alignment groups can be created in the template editor by choosing
+**Role → Dark (alignment)**. Select lattice sites, enter a **Dark mask radius
+(nm)**, and create or update the group. Dashed blue circles preview the expected
+empty regions. Brightness factor and bit ON/OFF state apply to digital bits;
+dark groups are always active alignment constraints and do not add bright spots.
+Dark and bright groups cannot occupy the same lattice sites.
+
+PNG metadata, sidecar JSON, and reusable group JSON preserve `dark_groups`, with
+an `id`, one-based `physical_sites`, and positive `mask_radius_nm` for each group.
+Alignment-only templates with bright and dark groups can be exported without
+any digital bits. Reload the template in PAINT Analysis and rerun Steps 1–4.

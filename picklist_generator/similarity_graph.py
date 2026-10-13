@@ -1,5 +1,6 @@
 """Rank all layouts by source-content RGB error on a shared scoring raster."""
 from pathlib import Path
+from copy import deepcopy
 from dataclasses import replace
 import csv
 import json
@@ -125,9 +126,9 @@ def export_similarity(destination, settings, progress=lambda done,total,phase:No
         folder = Path(folder)
         source = folder/('source'+Path(settings.image_path).suffix)
         shutil.copyfile(settings.image_path,source)
-        snapshot = replace(settings,image_path=str(source),multipliers=dict(settings.multipliers))
+        snapshot = replace(deepcopy(settings),image_path=str(source),multipliers=dict(settings.multipliers))
         rows = []
-        for index,(key,rotation) in enumerate(report_jobs(source,keys)):
+        for index,(key,rotation) in enumerate(report_jobs(source,keys,snapshot.active_image_columns)):
             rows.append(generate_views(snapshot,key,rotation,
                 checkpoint=lambda phase,index=index,key=key:check(index,SELECTABLE_SCHEMES[key].label+' | '+phase), score_only=True))
             check(index+1,'Scored '+SELECTABLE_SCHEMES[key].label)

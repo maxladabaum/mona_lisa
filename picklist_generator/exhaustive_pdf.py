@@ -1,5 +1,6 @@
 """Bounded-memory PDF report with the best-fitting orientation for each encoding."""
 from dataclasses import dataclass, field, replace
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 import math
@@ -14,8 +15,8 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from alignment_reconstruction import AlignmentModel, AlignmentSettings, VALIDATION_SEED
 from gaussian_reconstruction import render_gaussian_overlay
 from gaussian_optimization import fitted_target, optimize_designs
-from image_encoding import SELECTABLE_SCHEMES, CHANNELS, FIT_MODES, bin_image, compile_designs, geometry, physical_reference_raster, best_rotation, rotate_point
-from picklist_core import replacement_fractions
+from image_encoding import SELECTABLE_SCHEMES, CHANNELS, FIT_MODES, active_columns, validate_barcode_schema, fiducial_sites, bin_image, compile_designs, geometry, physical_reference_raster, best_rotation, rotate_point
+from image_encoding import rgb_transfer_grid
 from optimization_regularization import DEFAULT_REGULARIZATION, validate_regularization
 
 PANEL_TITLES = ('Binned RGB', 'Before optimization — Gaussian overlay', 'Predicted RGB',
@@ -45,7 +46,28 @@ class ReportSettings:
     example_seed: int = 42
     regularization_strength: float = DEFAULT_REGULARIZATION
 
+    barcode_schema: dict | None = None
+    active_image_columns: list | None = None
+    plate_relative_transfers: bool = False
+    plate_defaults_nm: dict | None = None
+    base_desired_concentration_nm: float = 50.0
+    base_concentration_nm: float = 200000.0
+    source_concentrations_nm: dict | None = None
+
+    def concentration_options(self):
+        return dict(plate_defaults_nm=self.plate_defaults_nm,
+                    active_image_columns=self.active_image_columns,
+                    barcode_schema=self.barcode_schema,
+                    plate_relative_transfers=self.plate_relative_transfers,
+                    base_desired_concentration_nm=self.base_desired_concentration_nm,
+                    base_concentration_nm=self.base_concentration_nm,
+                    source_concentrations_nm=self.source_concentrations_nm)
+
     def validate(self):
+        active_columns(self.active_image_columns)
+        fiducial_sites(self.barcode_schema, self.active_image_columns)
+        if self.barcode_schema is not None:
+            validate_barcode_schema(self.barcode_schema)
         if not Path(self.image_path).is_file():
             raise ValueError('Upload a readable image first.')
         if self.fit_mode not in FIT_MODES:
@@ -55,29 +77,32 @@ class ReportSettings:
         self.alignment.validate()
         validate_regularization(self.regularization_strength)
         for color in CHANNELS:
-            replacement_fractions(self.base_volume, self.multipliers[color])
+            target = (self.base_desired_concentration_nm * self.multipliers[color]
+                      if self.plate_defaults_nm is None else self.plate_defaults_nm[color])
+            rgb_transfer_grid(self.base_volume, target, target if self.plate_relative_transfers else self.base_desired_concentration_nm,
+                              self.base_concentration_nm, (self.source_concentrations_nm or {}).get(color, 200000.0))
 
     def light_options(self):
         return dict(linear_light=self.linear_light, normalize_designs=self.normalize_designs,
                     compensate_area=self.compensate_area)
 
 
-def report_jobs(image_path, schemes=None):
+def report_jobs(image_path, schemes=None, active_image_columns=None):
     with Image.open(image_path) as source:
         image_size = ImageOps.exif_transpose(source).size
-    return [(key, best_rotation(image_size, key))
+    return [(key, best_rotation(image_size, key, active_image_columns))
             for key in (SELECTABLE_SCHEMES if schemes is None else schemes)]
 
 
 def generate_views(settings, scheme_id, rotation, checkpoint=lambda phase: None, score_only=False):
     """Same assignments and models as the RGB tab; no Tk access or UI mutation."""
     checkpoint('Binning image')
-    info = geometry(scheme_id, rotation)
+    info = geometry(scheme_id, rotation, settings.active_image_columns, settings.barcode_schema)
     options = settings.light_options()
-    pixels = bin_image(settings.image_path, settings.fit_mode, rotation, scheme_id, linear_light=settings.linear_light)
+    pixels = bin_image(settings.image_path, settings.fit_mode, rotation, scheme_id, linear_light=settings.linear_light, active_image_columns=settings.active_image_columns)
     designs = compile_designs(pixels, settings.base_volume, settings.multipliers, scheme_id, rotation,
-                              linear_light=settings.linear_light)
-    binned = physical_reference_raster(Image.fromarray(np.asarray(pixels, dtype=np.uint8)), scheme_id, rotation)
+                              linear_light=settings.linear_light, **settings.concentration_options())
+    binned = physical_reference_raster(Image.fromarray(np.asarray(pixels, dtype=np.uint8)), scheme_id, rotation, settings.active_image_columns)
     checkpoint('Building alignment model')
     model = AlignmentModel(designs, settings.alignment, settings.fwhm_nm, settings.exposure, **options)
     checkpoint('Rendering before optimization')
@@ -139,8 +164,14 @@ def _font(size):
 def settings_lines(settings):
     return [
         'Source: ' + Path(settings.image_path).name,
+        'Barcode schema: ' + (settings.barcode_schema or {}).get('name', 'Standard barcode sites'),
+        'Always-on fiducials: ' + (', '.join((settings.barcode_schema or {}).get('always_on_sites', [])) or 'none'),
+        'Active analog rows: ' + ', '.join(active_columns(settings.active_image_columns)),
         'Fit: {} | Gaussian FWHM: {:g} nm | Shared exposure: {:g}x'.format(settings.fit_mode, settings.fwhm_nm, settings.exposure),
-        'Base transfer: {} nL | Excess: {}'.format(settings.base_volume, ', '.join('{} {:g}x'.format(c, settings.multipliers[c]) for c in CHANNELS)),
+        ('Base transfer: {} nL | Plate targets: {}'.format(settings.base_volume,
+            ', '.join('{} {:g} nM'.format(c, settings.plate_defaults_nm[c]) for c in CHANNELS))
+         if settings.plate_defaults_nm is not None else
+         'Base transfer: {} nL | Legacy excess: {}'.format(settings.base_volume, ', '.join('{} {:g}x'.format(c, settings.multipliers[c]) for c in CHANNELS))),
         'Linear light: {} | Equal total signal: {} | Canvas brightness compensation: {}'.format(settings.linear_light, settings.normalize_designs, settings.compensate_area),
         'Replacement optimization: {} | Alignment used for prediction/optimization: {}'.format(settings.optimize, settings.alignment_enabled),
         'Alignment SD: X {translation_x_nm:g} nm, Y {translation_y_nm:g} nm, angle {rotation_deg:g} degrees'.format(**vars(settings.alignment)),
@@ -294,8 +325,8 @@ def export_report(destination, settings, progress=lambda done, total, phase: Non
         folder = Path(folder)
         source = folder/('source' + Path(settings.image_path).suffix)
         shutil.copyfile(settings.image_path, source)
-        snapshot = replace(settings, image_path=str(source), multipliers=dict(settings.multipliers))
-        jobs = report_jobs(snapshot.image_path, keys)
+        snapshot = replace(deepcopy(settings), image_path=str(source), multipliers=dict(settings.multipliers))
+        jobs = report_jobs(snapshot.image_path, keys, snapshot.active_image_columns)
         output = folder/'report.pdf'
         cover_page(settings, len(jobs)).save(output, 'PDF', resolution=150, title='Exhaustive RGB encoding report')
         for index, (key, rotation) in enumerate(jobs):

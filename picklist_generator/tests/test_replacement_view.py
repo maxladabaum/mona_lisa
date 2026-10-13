@@ -4,10 +4,60 @@ import tkinter as tk
 import unittest
 from unittest.mock import patch
 
-from picklist_app import SHEET_DIR, SetView, panel_definitions, SHIFT_STATES, COLOR_BITS
+from picklist_app import SHEET_DIR, PicklistApp, SetView, panel_definitions
+from types import SimpleNamespace
 
 
 class ReplacementViewTests(unittest.TestCase):
+    def test_site_targets_and_labels_follow_overrides_or_plate_default(self):
+        view = self.view
+        names = [name for name in view.circle_sites if view.selectable[name]][:2]
+        view.new_selection_concentration.set("100")
+        view.variables[names[0]].set(True)
+        view._on_square_toggled(names[0])
+        view.new_selection_concentration.set("")
+        view.variables[names[1]].set(True)
+        view._on_square_toggled(names[1])
+        view.desired_concentration_nm.set("25")
+        self.assertEqual(view.site_target(names[0]), 100)
+        self.assertEqual(view.site_target(names[1]), 25)
+        for name, expected in zip(names, ("100 nM", "25 nM")):
+            canvas, ring, _, _ = view.circle_sites[name]
+            self.assertEqual(canvas.itemcget("target_{}".format(ring), "text"), expected)
+        panels = PicklistApp._replacement_selection_panels(SimpleNamespace(set_views=[view]))
+        self.assertEqual(panels[0]["site_concentrations_nm"], dict(zip(names, (100, 25))))
+        view.variables[names[0]].set(False)
+        view._on_square_toggled(names[0])
+        self.assertNotIn(names[0], view.site_concentrations_nm)
+        view.variables[names[0]].set(True)
+        view._on_square_toggled(names[0])
+        self.assertEqual(view.site_target(names[0]), 25)
+        view.clear()
+        self.assertFalse(view.site_concentrations_nm)
+        canvas, ring, _, _ = view.circle_sites[names[0]]
+        self.assertEqual(canvas.itemcget("target_{}".format(ring), "text"), "")
+
+    def test_invalid_selection_target_does_not_select_site(self):
+        view = self.view
+        name = next(name for name in view.circle_sites if view.selectable[name])
+        for value in ("0", "-5", "nan", "oops"):
+            view.new_selection_concentration.set(value)
+            view.variables[name].set(True)
+            view._on_square_toggled(name)
+            self.assertFalse(view.variables[name].get())
+            self.assertNotIn(name, view.site_concentrations_nm)
+
+    def test_button_sites_show_target_text(self):
+        title, filename, plate, panels = next(item for item in panel_definitions() if item[0] == "Aptamers")
+        view = SetView(self.root, title, SHEET_DIR / filename, plate, panels)
+        name = next(name for name in view.buttons if view.selectable[name])
+        view.new_selection_concentration.set("100")
+        view.variables[name].set(True)
+        view._on_square_toggled(name)
+        self.assertEqual(view.buttons[name].cget("text"), "100 nM")
+        view.mark_conflicts({name})
+        self.assertIn("100 nM", view.buttons[name].cget("text"))
+
     def setUp(self):
         try:
             self.root = tk.Tk()
@@ -17,6 +67,28 @@ class ReplacementViewTests(unittest.TestCase):
         self.addCleanup(self.root.destroy)
         title, filename, plate, panels = panel_definitions()[0]
         self.view = SetView(self.root, title, SHEET_DIR / filename, plate, panels)
+
+    def test_low_concentration_r1_reuses_layout_with_distinct_stock(self):
+        definitions = {title: (filename, plate, panels)
+                       for title, filename, plate, panels in panel_definitions()}
+        standard_file, standard_plate, standard_panels = definitions["PAINT R1"]
+        filename, plate, panels = definitions["LowConc PAINT R1"]
+        self.assertEqual(filename, standard_file)
+        self.assertEqual(panels, standard_panels)
+        self.assertNotEqual(plate, standard_plate)
+        view = SetView(self.root, "LowConc PAINT R1", SHEET_DIR / filename, plate, panels)
+        self.assertEqual(view.concentration_nm, 20000)
+        self.assertEqual(view.desired_concentration_nm.get(), "25")
+        view.desired_concentration_nm.set("250")
+        view.update_percentage_options(25)
+        self.assertEqual(list(view._fraction_options), ["0%", "20%", "40%", "60%", "80%", "100%"])
+        self.assertTrue(any(view.selectable.values()))
+        view.desired_concentration_nm.set("5")
+        view.update_percentage_options(50)
+        self.assertEqual(list(view._fraction_options), ["100%"])
+        self.assertEqual(view.replacement_error.get(), "")
+        view.update_percentage_options(500)
+        self.assertEqual(list(view._fraction_options), ["0%", "50%", "100%"])
 
     def test_switching_back_reuses_graphic_and_preserves_selection(self):
         view = self.view
@@ -41,131 +113,6 @@ class ReplacementViewTests(unittest.TestCase):
         self.assertEqual(view.selected(), [])
         self.assertEqual(canvas.itemcget(ring, "fill"), "")
 
-    def test_percentage_updates_cyan_and_cached_panels(self):
-        view = self.view
-        view.update_percentage_options(100)
-        self.assertEqual(list(view.percentage_picker["values"]), ["0%", "25%", "50%", "75%", "100%"])
-        name = next(name for name in view.circle_sites if view.selectable[name])
-        view.variables[name].set(True)
-        view.replacement_percentage.set("50%")
-        canvas, ring, _, _ = view.circle_sites[name]
-        self.assertEqual(canvas.itemcget(ring, "fill"), "#0a8c8e")
-        label = view.panel_var.get()
-        view.panel_var.set(str(view.panels[1]["label"]))
-        view._show_panel()
-        view.replacement_percentage.set("25%")
-        view.panel_var.set(label)
-        view._show_panel()
-        self.assertEqual(canvas.itemcget(ring, "fill"), view._selected_highlight("#15191d"))
-        view.update_percentage_options(50)
-        self.assertTrue(view.replacement_error.get())
-        with self.assertRaises(ValueError):
-            view.selected_fraction()
-        view.replacement_percentage.set("50%")
-        self.assertEqual(view.selected_fraction(), 0.5)
-        self.assertFalse(view.replacement_error.get())
-
-    def test_base_volume_and_excess_independently_update_split(self):
-        view = self.view
-        view.base_transfer_volume.set("100")
-        view.excess_multiplier.set("2")
-        view.replacement_percentage.set("25%")
-        self.assertEqual(view.selected_fraction(), 0.25)
-        self.assertIn("50 nL replacement + 150 nL original", view.volume_summary.get())
-        view.base_transfer_volume.set("200")
-        self.assertIn("100 nL replacement + 300 nL original", view.volume_summary.get())
-        view.excess_multiplier.set("1")
-        self.assertIn("50 nL replacement + 150 nL original", view.volume_summary.get())
-        view.base_transfer_volume.set("33")
-        self.assertTrue(view.replacement_error.get())
-        self.assertEqual(view.volume_summary.get(), "")
-        with self.assertRaises(ValueError):
-            view.selected_fraction()
-
-    def test_tabs_share_editable_base_volume(self):
-        view = self.view
-        title, filename, plate, panels = panel_definitions()[0]
-        other = SetView(self.root, title, SHEET_DIR / filename, plate, panels,
-                        base_transfer_volume=view.base_transfer_volume)
-        view.base_transfer_volume.set("100")
-        self.assertEqual(other.base_transfer_volume.get(), "100")
-        self.assertEqual(tuple(view.percentage_picker["values"]), tuple(other.percentage_picker["values"]))
-        other.base_transfer_volume.set("200")
-        self.assertEqual(view.base_transfer_volume.get(), "200")
-        self.assertEqual(len(view.percentage_picker["values"]), 9)
-
-    def test_r1_color_tabs_share_extensions_and_scale_highlight_opacity(self):
-        definitions = {item[0]: item for item in panel_definitions()}
-        original = definitions["PAINT R1"]
-        for title, color in (("R1 R", "#ff0000"), ("R1 B", "#0000ff"), ("R1 G", "#00ff00")):
-            with self.subTest(title=title):
-                _, filename, plate, panels = definitions[title]
-                self.assertEqual((filename, plate, panels), original[1:])
-                view = SetView(self.root, title, SHEET_DIR / filename, plate, panels)
-                self.assertEqual(view.excess_multiplier.get(), "5")
-                name = next(name for name in view.circle_sites if view.selectable[name])
-                view.variables[name].set(True)
-                view._on_square_toggled(name)
-                canvas, ring, _, _ = view.circle_sites[name]
-                self.assertEqual(canvas.itemcget(ring, "fill"), color)
-                view.replacement_percentage.set("50%")
-                expected = {"R1 R": "#8a0c0e", "R1 B": "#0a0c8e", "R1 G": "#0a8c0e"}[title]
-                self.assertEqual(canvas.itemcget(ring, "fill"), expected)
-                view.clear()
-                self.assertEqual(canvas.itemcget(ring, "fill"), "")
-
-    def test_shift_dropdowns_control_all_six_bits_without_changing_image(self):
-        definitions = {item[0]: item for item in panel_definitions()}
-        for title, color_bits in COLOR_BITS.items():
-            _, filename, plate, panels = definitions[title]
-            view = SetView(self.root, title, SHEET_DIR / filename, plate, panels)
-            self.assertEqual(view.selected(), [])
-            image_site = "U-Apt_H07-03_R1"
-            view.variables[image_site].set(True)
-            view._on_square_toggled(image_site)
-            self.assertTrue(view.encoding_enabled.get())
-            for x_label, x_bits in SHIFT_STATES.items():
-                for y_label, y_bits in SHIFT_STATES.items():
-                    with self.subTest(title=title, x=x_label, y=y_label):
-                        view.x_shift.set(x_label)
-                        view.y_shift.set(y_label)
-                        view._shift_changed()
-                        states = color_bits + x_bits + y_bits
-                        expected = {name for name, bit in view.encoded_sites.items() if states[bit]}
-                        self.assertEqual(set(view.selected()), expected | {image_site})
-            locked = "U-Apt_H01-11_R1"
-            view.variables[locked].set(not color_bits[0])
-            view._on_square_toggled(locked)
-            self.assertEqual(view.variables[locked].get(), color_bits[0])
-            view.refresh()
-            self.assertEqual(set(view.selected()), {name for name, bit in view.encoded_sites.items()
-                                                   if (color_bits + (True,) * 4)[bit]})
-            view.encoding_enabled.set(False)
-            view._encoding_changed()
-            self.assertEqual(view.selected(), [])
-            view.clear()
-            self.assertEqual(view.x_shift.get(), next(iter(SHIFT_STATES)))
-            self.assertEqual(view.y_shift.get(), next(iter(SHIFT_STATES)))
-            self.assertEqual({name for name, variable in view.variables.items() if variable.get()},
-                             {name for name, bit in view.encoded_sites.items() if bit < 2 and color_bits[bit]})
-
-    def test_color_bits_stay_highlighted_when_disabled_or_cleared(self):
-        for title, filename, plate, panels in panel_definitions():
-            if title not in COLOR_BITS:
-                continue
-            with self.subTest(title=title):
-                view = SetView(self.root, title, SHEET_DIR / filename, plate, panels)
-                for action in (lambda: None, view.clear, view._encoding_changed, view.refresh):
-                    action()
-                    self.assertEqual(view.selected(), [])
-                    for name, bit in view.encoded_sites.items():
-                        if bit >= 2:
-                            continue
-                        expected = COLOR_BITS[title][bit]
-                        self.assertEqual(view.variables[name].get(), expected)
-                        canvas, ring, _, _ = view.circle_sites[name]
-                        self.assertEqual(canvas.itemcget(ring, "fill"), view.selection_color if expected else "")
-
     def test_repaint_counts_selections_once_and_skips_unchanged_conflicts(self):
         view = self.view
         with patch.object(view, "_update_selection_summary", wraps=view._update_selection_summary) as summary:
@@ -186,6 +133,41 @@ class ReplacementViewTests(unittest.TestCase):
         view.refresh()
         self.assertFalse(replacement_canvas.winfo_exists())
         self.assertEqual(len(view._panel_cache), 1)
+
+    def test_percentages_and_colors_are_locked_per_selection(self):
+        view = self.view
+        view.desired_concentration_nm.set("50")
+        view.update_percentage_options(100)
+        names = [name for name in view.circle_sites if view.selectable[name]][:2]
+        colors = []
+        for name, percentage in zip(names, ("25%", "75%")):
+            view.replacement_percentage.set(percentage)
+            view.variables[name].set(True)
+            view._on_square_toggled(name)
+            canvas, ring, _, _ = view.circle_sites[name]
+            colors.append(canvas.itemcget(ring, "fill"))
+        self.assertNotEqual(*colors)
+        view.replacement_percentage.set("100%")
+        panels = PicklistApp._replacement_selection_panels(SimpleNamespace(set_views=[view]))
+        self.assertEqual(panels[0]["site_fractions"], dict(zip(names, (0.25, 0.75))))
+        view._show_panel()
+        for name, fraction, color in zip(names, (0.25, 0.75), colors):
+            self.assertEqual(view.site_fractions[name], fraction)
+            canvas, ring, _, _ = view.circle_sites[name]
+            self.assertEqual(canvas.itemcget(ring, "fill"), color)
+        view.circle_radius_var.set("3")
+        canvas, ring, _, _ = view.circle_sites[names[0]]
+        self.assertEqual(canvas.itemcget(ring, "fill"), colors[0])
+        view.variables[names[0]].set(False)
+        view._on_square_toggled(names[0])
+        view.variables[names[0]].set(True)
+        view._on_square_toggled(names[0])
+        self.assertEqual(view.site_fractions[names[0]], 1)
+        view.update_percentage_options(25)
+        self.assertEqual(view.site_fractions[names[1]], 0.75)
+        self.assertIn("do not fit", view.replacement_error.get())
+        view.clear()
+        self.assertEqual(view.site_fractions, {})
 
 
 if __name__ == "__main__":

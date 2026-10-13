@@ -43,7 +43,7 @@ def render_gaussian_overlay(designs, fwhm_nm=DEFAULT_FWHM_NM, exposure=DEFAULT_E
     if any(item.get("encoding_scheme", DEFAULT_SCHEME) != scheme_id or
            item.get("origami_rotation_degrees_clockwise", 0) != rotation for item in designs):
         raise ValueError("Reconstruct one encoding scheme and origami orientation at a time.")
-    info = geometry(scheme_id, rotation)
+    info = geometry(scheme_id, rotation, designs[0].get('active_image_columns'))
     sigma = fwhm_nm / math.sqrt(8 * math.log(2))
     # Resolve narrow Gaussians while bounding memory for accidental tiny inputs.
     min_pixel_nm = math.sqrt(info['field_width_nm'] * info['field_height_nm'] / 1_900_000)

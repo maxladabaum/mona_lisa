@@ -20,7 +20,6 @@ from app_state import (
 )
 from picklist_core import (
     ReplacementSelection,
-    replacement_fractions,
     calculate_mixing_volumes,
     combine_picklists,
     generate_picklist,
@@ -147,7 +146,7 @@ class PicklistCoreTests(unittest.TestCase):
             with self.subTest(name=record["Name"]):
                 rows = generate_picklist(
                     SHEETS / "book_base.csv",
-                    [ReplacementSelection(SHEETS / "miRNA_replace.csv", [record["Name"]], "SourcePlate3[3]", 5)],
+                    [ReplacementSelection(SHEETS / "miRNA_replace.csv", [record["Name"]], "SourcePlate3[3]", desired_concentration_nm=250)],
                     ["A01", "A02"], transfer_volume_nl=25,
                 )
                 self.assertEqual(len(rows), len(base))
@@ -167,76 +166,45 @@ class PicklistCoreTests(unittest.TestCase):
                 ["A01", "A02"],
             )
 
-    def _excess_picklist(self, multipliers=(5, 2), destinations=("A01", "A02"), capacity=0.15, repeats=1):
+    def _target_picklist(self, targets=(250, 100), destinations=("A01", "A02"), capacity=0.15, repeats=1):
         with tempfile.TemporaryDirectory() as folder:
             base = Path(folder) / "base.csv"
             base.write_text("Well Position,Sequence Name,Sequence\nA01,one,AAA\nA02,two,CCC\nA03,three,GGG\n")
             replacement = Path(folder) / "replacement.csv"
             replacement.write_text("Well,Name,Sequence,Replace Well\nB01,R1,TTT,A01\nB02,P1,ATA,A02\n")
             selections = [
-                ReplacementSelection(replacement, [name], "Shared plate", **({} if multiplier is None else {"excess_multiplier": multiplier}))
-                for name, multiplier in zip(("R1", "P1"), multipliers)
+                ReplacementSelection(replacement, [name], "Shared plate", **({} if target is None else {"desired_concentration_nm": target}))
+                for name, target in zip(("R1", "P1"), targets)
             ]
             return generate_picklist(base, selections, destinations, transfer_volume_nl=25,
                                      max_destination_volume_ul=capacity, transfers_per_source=repeats)
 
-    def test_percentage_options_follow_droplets_and_excess(self):
-        self.assertEqual(replacement_fractions(50), [0, 0.5, 1])
-        self.assertEqual(replacement_fractions(100), [0, 0.25, 0.5, 0.75, 1])
-        self.assertEqual(replacement_fractions(50, 2), replacement_fractions(100))
-        self.assertEqual(replacement_fractions(50, 1.5), [0, 1/3, 2/3, 1])
-        for volume in (0, 33, float("nan")):
-            with self.assertRaises(ValueError):
-                replacement_fractions(volume)
-
-    def test_partial_replacements_preserve_volume_and_original_identity(self):
-        with tempfile.TemporaryDirectory() as folder:
-            base = Path(folder) / "base.csv"
-            base.write_text("Well Position,Sequence Name,Sequence,Original Well Position\nF19,one,AAA,A01\nA02,two,CCC,A02\n")
-            replacement = Path(folder) / "replacement.csv"
-            replacement.write_text("Well,Name,Sequence,Replace Well\nB01,R1,TTT,A01\n")
-            for fraction in (0, 0.25, 0.5, 0.75, 1):
-                with self.subTest(fraction=fraction):
-                    rows = generate_picklist(base, [ReplacementSelection(replacement, ["R1"], "Replacement", 2, fraction)],
-                                             ["A01"], transfer_volume_nl=50, transfers_per_source=2)
-                    volumes = {}
-                    for row in rows:
-                        volumes[row["Source Well"]] = volumes.get(row["Source Well"], 0) + row["Transfer Volume"]
-                        self.assertEqual(row["Transfer Volume"] % 25, 0)
-                        self.assertGreater(row["Transfer Volume"], 0)
-                    self.assertEqual(volumes.get("F19", 0), 200 * (1 - fraction))
-                    self.assertEqual(volumes.get("B01", 0), 200 * fraction)
-                    self.assertEqual(sum(volumes.values()), 300)
-            with self.assertRaisesRegex(ValueError, "25 nL"):
-                generate_picklist(base, [ReplacementSelection(replacement, ["R1"], "Replacement", 1, 0.33)],
-                                 ["A01"], transfer_volume_nl=100)
-
-    def test_excess_multipliers_are_independent_and_respect_capacity(self):
-        rows = self._excess_picklist()
+    def test_plate_targets_are_independent_and_respect_capacity(self):
+        rows = self._target_picklist()
         self.assertEqual([row["Transfer Volume"] for row in rows], [25, 125, 50])
         self.assertEqual([row["Destination Well"] for row in rows], ["A01", "A01", "A02"])
 
-    def test_default_excess_multiplier_keeps_standard_volume(self):
-        rows = self._excess_picklist(multipliers=(None, None))
+    def test_default_target_keeps_standard_volume(self):
+        rows = self._target_picklist(targets=(None, None))
         self.assertEqual([row["Transfer Volume"] for row in rows], [25, 25, 25])
 
-    def test_fractional_excess_rejects_partial_droplets(self):
-        with self.assertRaisesRegex(ValueError, "25 nL"):
-            self._excess_picklist(multipliers=(1.5, 2), capacity=1, repeats=2)
+    def test_targets_applies_to_every_repeat(self):
+        rows = self._target_picklist(targets=(100, 150), capacity=1, repeats=2)
+        self.assertEqual([row["Transfer Volume"] for row in rows], [25, 25, 50, 50, 75, 75])
 
-    def test_invalid_excess_is_rejected(self):
-        for multiplier in (0, -1, float("nan"), float("inf")):
-            with self.subTest(multiplier=multiplier), self.assertRaisesRegex(ValueError, "Excess Multiplier"):
-                self._excess_picklist(multipliers=(multiplier, 1))
+    def test_invalid_target_is_rejected(self):
+        for target in (0, -1, float("nan"), float("inf")):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "concentration"):
+                self._target_picklist(targets=(target, 50))
 
-    def test_excess_cannot_overfill_destination_wells(self):
+    def test_target_cannot_overfill_destination_wells(self):
         with self.assertRaisesRegex(ValueError, "Too many transfers"):
-            self._excess_picklist(destinations=("A01",))
+            self._target_picklist(destinations=("A01",))
         with self.assertRaisesRegex(ValueError, "larger than"):
-            self._excess_picklist(multipliers=(7, 1))
+            self._target_picklist(targets=(350, 50))
 
-    def test_mixing_uses_weighted_staple_count_for_excess(self):
-        rows = self._excess_picklist(multipliers=(3, 2), capacity=1)
+    def test_mixing_uses_weighted_staple_count_for_targets(self):
+        rows = self._target_picklist(targets=(100, 150), capacity=1)
         effective_staples = sum(row["Transfer Volume"] for row in rows) / 25
         recipe = calculate_mixing_volumes(
             [200000, 1, 0, 0], effective_staples, [400, 0.1, 0, 0], [0, 0, 100, 0],
@@ -534,7 +502,7 @@ class PicklistCoreTests(unittest.TestCase):
             rows, _ = parse_source2(SHEETS / filename)
             self.assertTrue(rows, filename)
 
-    def test_paint_r1_row_15_uses_its_distinct_replacement_scheme(self):
+    def test_paint_r1_row_15_removes_corrected_target_and_preserves_old_target(self):
         base, _ = parse_source1(SHEETS / "book_base.csv")
         rows = generate_picklist(
             SHEETS / "book_base.csv",
@@ -556,6 +524,13 @@ class PicklistCoreTests(unittest.TestCase):
             )
         )
         self.assertFalse(
+            any(
+                row["Source Plate Name"] == "SourcePlate1[1]"
+                and row["Source Well"] == "H08"
+                for row in rows
+            )
+        )
+        self.assertTrue(
             any(
                 row["Source Plate Name"] == "SourcePlate1[1]"
                 and row["Source Well"] == "H09"

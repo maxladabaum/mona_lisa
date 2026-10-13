@@ -4,7 +4,7 @@ import math
 import numpy as np
 from PIL import Image, ImageOps
 from color_light import fit_linear_source, abundance_scale, canvas_area_gain
-from image_encoding import FIT_MODES, geometry
+from image_encoding import FIT_MODES, geometry, transfer_fraction_steps, set_site_fraction
 from optimization_regularization import regularization_weight
 from gaussian_reconstruction import render_gaussian_overlay, REFERENCE_AREA_NM2
 
@@ -41,7 +41,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
     if target.shape != baseline.density.shape or not np.all(np.isfinite(target)) or np.any((target < 0) | (target > 1)):
         raise ValueError('Target must be finite RGB in [0,1] on the reconstruction raster.')
     rotation = designs[0].get('origami_rotation_degrees_clockwise', 0)
-    info = geometry(designs[0]['encoding_scheme'], rotation)
+    info = geometry(designs[0]['encoding_scheme'], rotation, designs[0].get('active_image_columns'))
     local_target = np.rot90(target, rotation // 90)
     height, width = local_target.shape[:2]
     nx, ny = info['columns'], info['rows']
@@ -73,7 +73,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
                     raise ValueError('Optimization requires one design assignment per channel and pixel.')
                 seen.add((y,x))
                 weights[y,x] = site['replacement_fraction']
-                steps[y,x] = (site['replacement_nl']+site['original_nl'])/25
+                steps[y,x] = transfer_fraction_steps(design, site)
         if len(seen) != nx*ny or np.any(steps < 1) or np.any(steps != np.rint(steps)):
             raise ValueError('Optimization requires a complete grid and 25 nL transfer increments.')
         b = gain * ky.T @ local_target[:,:,channel] @ kx + alpha*weights
@@ -112,9 +112,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
                 y,x = site['pixel_y'],site['pixel_x']
                 drops = int(round(best[y,x]*steps[y,x]))
                 fraction = drops/steps[y,x]
-                site.update(replacement_fraction=float(fraction), replacement_nl=drops*25,
-                            original_nl=(int(steps[y,x])-drops)*25)
-                design['site_fractions'][site['name']] = float(fraction)
+                set_site_fraction(design, site, fraction)
     optimized = render_gaussian_overlay(result,fwhm_nm,exposure,linear_light,normalize_designs,compensate_area)
     before = float(np.mean((baseline.density*signal_gain-target)**2))
     after = float(np.mean((optimized.density*signal_gain-target)**2))

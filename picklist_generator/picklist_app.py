@@ -42,6 +42,7 @@ from picklist_core import (
     parse_source2,
     replacement_names,
     replacement_fractions,
+    desired_concentration_ratio,
     separate_mixing_recipes,
     valid_well_list,
     write_csv,
@@ -64,6 +65,8 @@ from template_generator import (
 )
 
 
+APP_VERSION = "1.0.1"
+APP_TITLE = "Echo Picklist Generator v{}".format(APP_VERSION)
 APP_DIR = Path(__file__).resolve().parent
 SHEET_DIR = APP_DIR / "replacement_sheets"
 OUTPUT_DIR = APP_DIR / "generated_output"
@@ -85,16 +88,22 @@ DEFAULT_CONFIG = {
     "destination_plate_name": "Destination[1]",
     "source_plate_type": "384PP_AQ_BP",
     "transfers_per_source": 1,
-    "transfer_volume_nL": 50,
+    "transfer_volume_nL": 25,
     "max_destination_volume_uL": 12.5,
 }
+BASE_PLATES = {
+    "Base plate — 200 µM": ("book_base.csv", 200000.0),
+    "LowConc base plate — 20 µM (original layout)": ("book_base_20uM.csv", 20000.0),
+    "LowConc base plate — 20 µM (interleaved)": ("book_base_20uM_interleaved.csv", 20000.0),
+}
+
 DEFAULT_PLATE_STATE = {"version": 1, "plates": {}}
 DEFAULT_STORAGE_STATE = {"version": 2, "items": []}
 
 ROWS = ["H01", "H03", "H05", "H07", "H09", "H11", "H13", "H15"]
 COLS = ["{:02d}".format(i) for i in range(1, 13)]
 R1_SELECTION_COLORS = {"R1 R": "#ff0000", "R1 B": "#0000ff", "R1 G": "#00ff00"}
-ACTIVE_REPLACEMENT_TABS = {"PAINT P1", "PAINT R1", *R1_SELECTION_COLORS}
+ACTIVE_REPLACEMENT_TABS = {"PAINT P1", "PAINT R1", "LowConc PAINT R1"}
 
 
 class ScrollFrame(ttk.Frame):
@@ -140,13 +149,18 @@ class SetView:
                 for row, column in sites:
                     self.encoded_sites[panel_sequence_name(panels[0], row, column)] = bit
         self.path_var = tk.StringVar(value=str(csv_path))
-        self.excess_multiplier = tk.StringVar(value="5" if title in ACTIVE_REPLACEMENT_TABS else "1")
+        self.concentration_nm = 20000.0 if title == "LowConc PAINT R1" or title in R1_SELECTION_COLORS else 200000.0
+        self.base_concentration_nm = 200000.0
+        self.desired_concentration_nm = tk.StringVar(value="25" if title == "LowConc PAINT R1" or title in R1_SELECTION_COLORS else ("250" if title in ACTIVE_REPLACEMENT_TABS else "50"))
+        self.base_desired_concentration_nm = 50.0
         self.replacement_percentage = tk.StringVar(value="100%")
+        self.site_fractions: Dict[str, float] = {}
+        self.site_concentrations_nm: Dict[str, float] = {}
+        self.new_selection_concentration = tk.StringVar(value="")
+        self.transfer_volume_nl = 25
         self.replacement_error = tk.StringVar()
-        self.base_transfer_volume = base_transfer_volume if base_transfer_volume is not None else tk.StringVar(value="50")
-        self.transfer_volume_nl = self.base_transfer_volume.get()
-        self.volume_summary = tk.StringVar()
-        self._fraction_options = {}
+        self.excess_multiplier = tk.StringVar(value="5" if title in ACTIVE_REPLACEMENT_TABS else "1")
+        self.base_transfer_volume = base_transfer_volume if base_transfer_volume is not None else tk.StringVar(value="25")
         self.plate_name = plate_name
         self.variables: Dict[str, tk.BooleanVar] = {}
         self.buttons: Dict[str, tk.Checkbutton] = {}
@@ -168,22 +182,27 @@ class SetView:
         toolbar = ttk.Frame(scroll.inner)
         toolbar.pack(fill="x", padx=10, pady=(8, 2))
         ttk.Label(toolbar, text="{} replacement sheet".format(title)).pack(side="left")
+        ttk.Label(toolbar, text="  Stock: {:g} µM".format(self.concentration_nm / 1000)).pack(side="left")
         ttk.Entry(toolbar, textvariable=self.path_var).pack(side="left", fill="x", expand=True, padx=8)
         ttk.Button(toolbar, text="Browse…", command=self._browse).pack(side="left")
         ttk.Button(toolbar, text="Clear set", command=self.clear).pack(side="left", padx=(8, 0))
-        excess_bar = ttk.Frame(scroll.inner)
-        excess_bar.pack(fill="x", padx=12, pady=4)
-        ttk.Label(excess_bar, text="Base transfer volume (nL, all tabs)").pack(side="left")
-        ttk.Spinbox(excess_bar, from_=25, to=100000, increment=25,
+        volume_bar = ttk.Frame(scroll.inner)
+        volume_bar.pack(fill="x", padx=12, pady=4)
+        ttk.Label(volume_bar, text="Base transfer volume (nL, all tabs)").pack(side="left")
+        ttk.Spinbox(volume_bar, from_=25, to=100000, increment=25,
                     textvariable=self.base_transfer_volume, width=8).pack(side="left", padx=8)
-        ttk.Label(excess_bar, text="Excess Multiplier").pack(side="left")
-        ttk.Entry(excess_bar, textvariable=self.excess_multiplier, width=8).pack(side="left", padx=8)
-        ttk.Label(excess_bar, text="Replacement percentage").pack(side="left", padx=(12, 0))
-        self.percentage_picker = ttk.Combobox(excess_bar, textvariable=self.replacement_percentage,
-                                             state="readonly", width=14)
+        concentration_bar = ttk.Frame(scroll.inner)
+        concentration_bar.pack(fill="x", padx=12, pady=4)
+        ttk.Label(concentration_bar, text="Plate default (nM)").pack(side="left")
+        ttk.Entry(concentration_bar, textvariable=self.desired_concentration_nm, width=8).pack(side="left", padx=8)
+        ttk.Label(concentration_bar, text="New selections (nM; blank = default)").pack(side="left")
+        ttk.Entry(concentration_bar, textvariable=self.new_selection_concentration, width=8).pack(side="left", padx=8)
+        ttk.Label(concentration_bar, text="Replacement % for new selections").pack(side="left", padx=(12, 0))
+        self.percentage_picker = ttk.Combobox(
+            concentration_bar, textvariable=self.replacement_percentage, width=12, state="readonly")
         self.percentage_picker.pack(side="left", padx=8)
-        ttk.Label(excess_bar, textvariable=self.replacement_error, foreground="#a40000").pack(side="left")
-        ttk.Label(scroll.inner, textvariable=self.volume_summary, foreground="#555555").pack(anchor="w", padx=12)
+        ttk.Label(scroll.inner, text="Selected sites keep their percentage and concentration override. Deselect and reselect to change or reset them.").pack(anchor="w", padx=12)
+        ttk.Label(scroll.inner, textvariable=self.replacement_error, foreground="#a40000").pack(anchor="w", padx=12)
         if self.title in COLOR_BITS:
             encoding_bar = ttk.Frame(scroll.inner)
             encoding_bar.pack(fill="x", padx=12, pady=4)
@@ -222,7 +241,7 @@ class SetView:
         ttk.Label(panel_bar, textvariable=self.orientation_summary, foreground="#3d626f").pack(
             side="left", padx=(12, 0)
         )
-        if self.title in {"Aptamers", "MB"} | ACTIVE_REPLACEMENT_TABS:
+        if self.title in {"Aptamers", "MB", "PAINT P1", "PAINT R1", "LowConc PAINT R1"} | ACTIVE_REPLACEMENT_TABS:
             legend = tk.Frame(scroll.inner, background="#f0f0f0")
             legend.pack(fill="x", padx=12, pady=(4, 2))
             self._legend_square(legend, self.SELECTABLE_BG, "").pack(side="left")
@@ -243,8 +262,8 @@ class SetView:
         self.panel_host.pack(fill="both", expand=True, padx=10, pady=6)
         self.refresh()
         self.circle_radius_var.trace_add("write", self._circle_radius_changed)
-        self.replacement_percentage.trace_add("write", self._percentage_changed)
-        self.excess_multiplier.trace_add("write", lambda *_args: self.update_percentage_options(self.transfer_volume_nl))
+        self.desired_concentration_nm.trace_add("write", self._concentration_changed)
+        self.new_selection_concentration.trace_add("write", lambda *_args: self.update_percentage_options(self.transfer_volume_nl))
         self.base_transfer_volume.trace_add("write", lambda *_args: self.update_percentage_options(self.base_transfer_volume.get()))
         self.update_percentage_options(self.base_transfer_volume.get())
 
@@ -253,6 +272,8 @@ class SetView:
             return
         states = COLOR_BITS[self.title] + SHIFT_STATES[self.x_shift.get()] + SHIFT_STATES[self.y_shift.get()]
         for name, bit in self.encoded_sites.items():
+            self.site_fractions.pop(name, None)
+            self.site_concentrations_nm.pop(name, None)
             if name in self.variables:
                 self.variables[name].set((bit < 2 or self.encoding_enabled.get())
                                          and states[bit] and self.selectable.get(name, False))
@@ -272,49 +293,51 @@ class SetView:
     def update_percentage_options(self, volume) -> None:
         self.transfer_volume_nl = volume
         try:
-            fractions = replacement_fractions(float(volume), float(self.excess_multiplier.get()))
-            self._fraction_options = {"{:.10g}%".format(fraction * 100): fraction for fraction in fractions}
-            self.percentage_picker.configure(values=list(self._fraction_options), state="readonly")
-            self._validate_percentage()
+            fractions = replacement_fractions(
+                float(volume), float(self.new_selection_concentration.get().strip() or self.desired_concentration_nm.get()),
+                self.base_desired_concentration_nm,
+                self.base_concentration_nm / self.concentration_nm,
+            )
+            self.replacement_error.set("")
         except ValueError as exc:
-            self._fraction_options = {}
-            self.percentage_picker.configure(values=(), state="disabled")
-            self.replacement_error.set(str(exc))
-            self.volume_summary.set("")
+            fractions = [1.0]
+            self.replacement_error.set("Partial replacement unavailable: {}".format(exc))
+        self._fraction_options = {"{:.10g}%".format(f * 100): f for f in fractions}
+        self.percentage_picker.configure(values=list(self._fraction_options))
+        if self.replacement_percentage.get() not in self._fraction_options:
+            self.replacement_percentage.set(next(reversed(self._fraction_options)))
+        for name, fraction in self.site_fractions.items():
+            try:
+                options = replacement_fractions(float(volume), self.site_target(name),
+                    self.base_desired_concentration_nm, self.base_concentration_nm / self.concentration_nm)
+                if not any(math.isclose(fraction, option, rel_tol=0, abs_tol=1e-9) for option in options):
+                    raise ValueError
+            except ValueError:
+                self.replacement_error.set("Some selected targets/percentages do not fit this volume. Adjust settings or reselect those sites.")
+                break
 
-    def _validate_percentage(self) -> None:
-        fraction = self._fraction_options.get(self.replacement_percentage.get())
-        if fraction is None:
-            self.volume_summary.set("")
-        else:
-            total = float(self.transfer_volume_nl) * float(self.excess_multiplier.get())
-            self.volume_summary.set(
-                "Base {} nL × excess {} = {:g} nL per selected site: {:g} nL replacement + {:g} nL original.".format(
-                    self.transfer_volume_nl, self.excess_multiplier.get(), total,
-                    round(total * fraction / 25) * 25, round(total * (1 - fraction) / 25) * 25))
-        self.replacement_error.set("" if self.replacement_percentage.get() in self._fraction_options
-                                   else "Choose a valid percentage for the current volume.")
+    def site_target(self, name: str) -> float:
+        if name in self.site_concentrations_nm:
+            return self.site_concentrations_nm[name]
+        return float(self.desired_concentration_nm.get())
 
-    def selected_fraction(self) -> float:
-        value = self._fraction_options.get(self.replacement_percentage.get())
-        if value is None:
-            raise ValueError("{}: choose a valid replacement percentage for the current volume.".format(self.title))
-        return value
+    def _target_label(self, name: str) -> str:
+        try:
+            target = self.site_target(name)
+            return "{:g} nM".format(target) if math.isfinite(target) and target > 0 else "Invalid nM"
+        except ValueError:
+            return "Invalid nM"
 
-    def _percentage_changed(self, *_args) -> None:
-        self._validate_percentage()
+    def _concentration_changed(self, *_args):
+        self.update_percentage_options(self.transfer_volume_nl)
         for name in self.buttons.keys() | self.circle_sites.keys():
             self._paint_square(name)
-        if self.selection_changed:
-            self.selection_changed()
 
-    def _selected_highlight(self, background: str) -> str:
-        # Tk canvases have no alpha channel; composite the selection color over their background.
-        alpha = float(self.replacement_percentage.get().rstrip("%")) / 100
-        rgb = [int(background[index:index + 2], 16) for index in (1, 3, 5)]
-        highlight = [int(self.selection_color[index:index + 2], 16) for index in (1, 3, 5)]
-        return "#{:02x}{:02x}{:02x}".format(*(round(base * (1 - alpha) + color * alpha)
-                                              for base, color in zip(rgb, highlight)))
+    def _selected_highlight(self, name: str, background: str, highlight: str) -> str:
+        alpha = self.site_fractions.get(name, 1.0)
+        base = [int(background[i:i + 2], 16) for i in (1, 3, 5)]
+        color = [int(highlight[i:i + 2], 16) for i in (1, 3, 5)]
+        return "#{:02x}{:02x}{:02x}".format(*(round(b * (1 - alpha) + c * alpha) for b, c in zip(base, color)))
 
     def _circle_radius_changed(self, *_args):
         try:
@@ -340,6 +363,8 @@ class SetView:
     def refresh(self) -> None:
         self._clear_panel_cache()
         self.variables.clear()
+        self.site_fractions.clear()
+        self.site_concentrations_nm.clear()
         self.buttons.clear()
         self.circle_sites.clear()
         self.color_frames.clear()
@@ -474,7 +499,7 @@ class SetView:
                     text="" if is_selectable else "×",
                     variable=variable,
                     indicatoron=False,
-                    width=2,
+                    width=9,
                     height=1,
                     relief="raised" if is_selectable else "flat",
                     borderwidth=1,
@@ -549,11 +574,14 @@ class SetView:
             ring = canvas.create_oval(x-r, y-r, x+r, y+r, outline=color, width=1.5)
             dot = canvas.create_oval(x-4, y-4, x+4, y+4, fill=color, outline="")
             if configured:
+                canvas.create_text(x, y, text="", fill="white", font=("TkDefaultFont", 9, "bold"),
+                                   tags=("concentration_labels", "target_{}".format(ring)))
                 self.circle_sites[name] = (canvas, ring, dot, color)
                 self._paint_square(name)
             if not selectable:
                 canvas.create_text(x, y, text="×", fill="#969ba0")
             targets.append((name, x_nm, y_nm, selectable))
+        canvas.tag_raise("concentration_labels")
         def toggle(event):
             name = nearest_panel_site(targets, (event.x-left)/scale, (event.y-top)/scale, radius_nm=radius)
             if name is not None and name not in self.encoded_sites:
@@ -581,11 +609,13 @@ class SetView:
         if circle is not None:
             canvas, ring, dot, color = circle
             selected = self.variables[name].get()
-            highlight = self._selected_highlight(str(canvas.cget("background")))
+            highlight = self._selected_highlight(name, canvas.cget("background"), self.selection_color)
             color = self.CONFLICT_BG if selected and name in self.conflicts else (highlight if selected else color)
             canvas.itemconfigure(ring, outline=color, fill=highlight if selected else "",
                                  width=3 if selected else 1.5)
-            canvas.itemconfigure(dot, fill=color)
+            canvas.itemconfigure(dot, fill=color, state="hidden" if selected else "normal")
+            canvas.itemconfigure("target_{}".format(ring), text=self._target_label(name) if selected else "",
+                                 fill="black" if selected and self.site_fractions.get(name, 1.0) >= 0.5 else "white")
             return
         button = self.buttons.get(name)
         variable = self.variables.get(name)
@@ -593,15 +623,35 @@ class SetView:
             return
         selected = variable.get()
         conflict = selected and name in self.conflicts
+        highlight = self._selected_highlight(name, self.SELECTABLE_BG, self.SELECTED_BG)
         button.configure(
-            text="×" if conflict else ("✓" if selected else ""),
-            background=self.CONFLICT_BG if conflict else (self.SELECTED_BG if selected else self.SELECTABLE_BG),
-            activebackground=self.CONFLICT_BG if conflict else (self.SELECTED_BG if selected else self.SELECTABLE_HOVER_BG),
+            text=(("× " if conflict else "") + self._target_label(name)) if selected else "",
+            background=self.CONFLICT_BG if conflict else (highlight if selected else self.SELECTABLE_BG),
+            activebackground=self.CONFLICT_BG if conflict else (highlight if selected else self.SELECTABLE_HOVER_BG),
+            selectcolor=self.CONFLICT_BG if conflict else highlight,
             foreground="#ffffff" if selected else "#222222",
             relief="sunken" if selected else "raised",
         )
 
     def _on_square_toggled(self, name: str) -> None:
+        if self.variables[name].get():
+            override = self.new_selection_concentration.get().strip()
+            try:
+                target = float(override or self.desired_concentration_nm.get())
+                desired_concentration_ratio(target, self.base_desired_concentration_nm)
+            except ValueError:
+                self.variables[name].set(False)
+                self.replacement_error.set("Enter a finite positive concentration before selecting sites.")
+                self._paint_square(name)
+                return
+            if override:
+                self.site_concentrations_nm[name] = target
+            else:
+                self.site_concentrations_nm.pop(name, None)
+            self.site_fractions[name] = self._fraction_options[self.replacement_percentage.get()]
+        else:
+            self.site_fractions.pop(name, None)
+            self.site_concentrations_nm.pop(name, None)
         if self.title in COLOR_BITS:
             self.encoding_enabled.set(True)
             self._apply_encoding()
@@ -638,6 +688,8 @@ class SetView:
         self.x_shift.set(next(iter(SHIFT_STATES)))
         self.y_shift.set(next(iter(SHIFT_STATES)))
         self.conflicts.clear()
+        self.site_fractions.clear()
+        self.site_concentrations_nm.clear()
         for name, variable in self.variables.items():
             variable.set(False)
             self._paint_square(name)
@@ -823,9 +875,18 @@ def panel_definitions() -> List[Tuple[str, str, str, List[Dict[str, object]]]]:
                 )
             ],
         ),
+        (
+            "LowConc PAINT R1",
+            "PAINT_R1_replace.csv",
+            "SourcePlate7[7]",
+            [dense_panel(
+                "U-Apt R1", colors=paint_r1_colors,
+                name_template="U-Apt_{row}-{column}_R1", mirror_columns=True,
+            )],
+        ),
     ]
 
-    _, filename, plate_name, panels = next(item for item in definitions if item[0] == "PAINT R1")
+    _, filename, plate_name, panels = next(item for item in definitions if item[0] == "LowConc PAINT R1")
     definitions.extend((title, filename, plate_name, deepcopy(panels)) for title in R1_SELECTION_COLORS)
     return definitions
 
@@ -1001,6 +1062,8 @@ class OrigamiTemplateView(ttk.Frame):
         self.selected_group_id: Optional[str] = None
         self.selected_group_ids: List[str] = []
         self.group_name_var = tk.StringVar()
+        self.group_brightness_var = tk.StringVar(value="1")
+        self.group_dark_radius_var = tk.StringVar(value="5")
         self.group_role_var = tk.StringVar(value="Digital bit")
         self.group_active_var = tk.BooleanVar(value=True)
         self._built_shape = (8, 12)
@@ -1048,6 +1111,8 @@ class OrigamiTemplateView(ttk.Frame):
                                ("Load bit schema JSON…", self._load_logical_schema),
                                ("Save bit schema JSON…", self._save_logical_schema)):
             ttk.Button(file_actions, text=label, command=command).pack(side="left", padx=(0, 6))
+
+        ttk.Button(file_actions, text="Apply to RGB Image", command=self._apply_to_rgb).pack(side="left", padx=(0, 6))
 
         self.editor_split = tk.PanedWindow(
             self, orient="vertical", sashwidth=8, sashrelief="raised",
@@ -1254,15 +1319,23 @@ class OrigamiTemplateView(ttk.Frame):
         ttk.Label(editor, text="Role").grid(row=1, column=0, sticky="w", pady=4)
         ttk.Combobox(
             editor, textvariable=self.group_role_var,
-            values=("Digital bit", "Alignment-only"), state="readonly", width=16,
+            values=("Digital bit", "Alignment-only", "Dark (alignment)"), state="readonly", width=16,
         ).grid(row=1, column=1, sticky="ew", padx=(8, 12), pady=4)
         ttk.Checkbutton(editor, text="Bit is ON in this template", variable=self.group_active_var).grid(
             row=2, column=0, columnspan=2, sticky="w"
         )
+        ttk.Label(editor, text="Brightness factor").grid(row=3, column=0, sticky="w")
+        ttk.Entry(editor, textvariable=self.group_brightness_var, width=10).grid(
+            row=3, column=1, sticky="ew", padx=(8, 12))
+        ttk.Label(editor, text="Digital bits: 1 = normal, 2 = twice the signal, 0.2 = one-fifth.",
+                  wraplength=300).grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Label(editor, text="Dark mask radius (nm)").grid(row=5, column=0, sticky="w")
+        ttk.Entry(editor, textvariable=self.group_dark_radius_var, width=10).grid(row=5, column=1, sticky="ew")
+        ttk.Label(editor, text="Dark groups mark empty regions for alignment, not ON/OFF bits.", wraplength=300).grid(row=6, column=0, columnspan=2, sticky="w")
         for row, buttons in enumerate((
             (("Create group", self._create_group), ("Update group", self._update_group)),
             (("Delete selected", self._delete_group), ("Toggle bit ON/OFF", self._toggle_group_active)),
-        ), start=3):
+        ), start=7):
             for column, (label, command) in enumerate(buttons):
                 ttk.Button(editor, text=label, command=command).grid(
                     row=row, column=column, sticky="ew", padx=2, pady=3,
@@ -1271,7 +1344,7 @@ class OrigamiTemplateView(ttk.Frame):
 
         self.group_tree = ttk.Treeview(
             self.logical_frame,
-            columns=("color", "name", "role", "sites", "state"),
+            columns=("color", "name", "role", "sites", "state", "brightness"),
             show="headings",
             height=5,
             selectmode="extended",
@@ -1283,6 +1356,7 @@ class OrigamiTemplateView(ttk.Frame):
             ("role", "Role", 85),
             ("sites", "Sites", 40),
             ("state", "State", 65),
+            ("brightness", "Brightness", 75),
         ):
             self.group_tree.heading(key, text=label)
             self.group_tree.column(key, width=width, anchor="w" if key == "name" else "center")
@@ -1294,10 +1368,11 @@ class OrigamiTemplateView(ttk.Frame):
         if sys.platform == "darwin":
             self.group_tree.bind("<Command-Button-1>", self._command_select_group)
         bit_ids = {str(bit["id"]) for bit in schema.get("logical_bits", [])}
-        groups = list(schema.get("alignment_groups", [])) + list(schema.get("logical_bits", []))
+        groups = list(schema.get("alignment_groups", [])) + list(schema.get("logical_bits", [])) + list(schema.get("dark_groups", []))
         for group in groups:
             group_id = str(group["id"])
             is_bit = group_id in bit_ids
+            is_dark = group in schema.get("dark_groups", [])
             color = str(group.get("display_color", "#ffffff"))
             self.group_tree.insert(
                 "",
@@ -1307,9 +1382,10 @@ class OrigamiTemplateView(ttk.Frame):
                 values=(
                     "● " + color,
                     str(group.get("label", group_id)),
-                    "Digital bit" if is_bit else "Alignment-only",
+                    "Digital bit" if is_bit else ("Dark" if is_dark else "Alignment-only"),
                     len(group.get("physical_sites", [])),
-                    ("ON" if group_id in active else "OFF") if is_bit else "Always on",
+                    ("ON" if group_id in active else "OFF") if is_bit else ("Dark" if is_dark else "Always on"),
+                    f"{group.get('brightness_factor', 1.0):g}×" if is_bit else (f"r={group['mask_radius_nm']:g} nm" if is_dark else "—"),
                 ),
             )
             self.group_tree.tag_configure(group_id, foreground=color)
@@ -1336,7 +1412,7 @@ class OrigamiTemplateView(ttk.Frame):
             return []
         return list(self.logical_schema.get("alignment_groups", [])) + list(
             self.logical_schema.get("logical_bits", [])
-        )
+        ) + list(self.logical_schema.get("dark_groups", []))
 
     def _group_by_id(self, group_id: Optional[str]) -> Optional[Dict[str, object]]:
         if group_id is None:
@@ -1359,11 +1435,14 @@ class OrigamiTemplateView(ttk.Frame):
             group = groups[0]
             group_id = self.selected_group_id
             self.group_name_var.set(str(group.get("label", group_id)))
+            self.group_brightness_var.set(str(group.get("brightness_factor", 1.0)))
             is_bit = group_id in self.logical_stroke_variables
-            self.group_role_var.set("Digital bit" if is_bit else "Alignment-only")
+            self.group_role_var.set("Digital bit" if is_bit else ("Dark (alignment)" if group in self.logical_schema.get("dark_groups", []) else "Alignment-only"))
+            self.group_dark_radius_var.set(str(group.get("mask_radius_nm", 5.0)))
             self.group_active_var.set(self.logical_stroke_variables[group_id].get() if is_bit else True)
         else:
             self.group_name_var.set("")
+            self.group_brightness_var.set("1")
         sites = {(int(row) - 1, int(column) - 1)
                  for group in groups for row, column in group.get("physical_sites", [])}
         for site, variable in self.site_variables.items():
@@ -1407,13 +1486,33 @@ class OrigamiTemplateView(ttk.Frame):
         if not create and self.selected_group_id is None:
             messagebox.showerror("No group selected", "Select the group you want to update.", parent=self)
             return
+        is_bit = self.group_role_var.get() == "Digital bit"
+        is_dark = self.group_role_var.get() == "Dark (alignment)"
+        dark_radius = 5.0
+        if is_dark:
+            try:
+                dark_radius = float(self.group_dark_radius_var.get())
+                if not math.isfinite(dark_radius) or dark_radius <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid dark radius", "Enter a positive finite radius in nm.", parent=self)
+                return
+        brightness_factor = 1.0
+        if is_bit:
+            try:
+                brightness_factor = float(self.group_brightness_var.get())
+                if not math.isfinite(brightness_factor) or brightness_factor <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Invalid brightness factor", "Enter a positive finite number, such as 2 or 0.2.", parent=self)
+                return
         if self.logical_schema is None:
             self.logical_schema = empty_logical_bit_schema(*self._built_shape)
         old_id = None if create else self.selected_group_id
         old_group = self._group_by_id(old_id)
         old_active = set(self._active_bit_ids())
         if old_id is not None:
-            for key in ("alignment_groups", "logical_bits"):
+            for key in ("alignment_groups", "logical_bits", "dark_groups"):
                 self.logical_schema[key] = [
                     group
                     for group in self.logical_schema.get(key, [])
@@ -1432,8 +1531,12 @@ class OrigamiTemplateView(ttk.Frame):
         }
         is_bit = self.group_role_var.get() == "Digital bit"
         if is_bit:
+            group["brightness_factor"] = brightness_factor
             group["evidence_sites"] = list(group["physical_sites"])
             self.logical_schema.setdefault("logical_bits", []).append(group)
+        elif is_dark:
+            group["mask_radius_nm"] = dark_radius
+            self.logical_schema.setdefault("dark_groups", []).append(group)
         else:
             self.logical_schema.setdefault("alignment_groups", []).append(group)
         old_active.discard(str(old_id))
@@ -1450,7 +1553,7 @@ class OrigamiTemplateView(ttk.Frame):
             return
         deleted = set(self.selected_group_ids)
         active = set(self._active_bit_ids())
-        for key in ("alignment_groups", "logical_bits"):
+        for key in ("alignment_groups", "logical_bits", "dark_groups"):
             self.logical_schema[key] = [
                 group
                 for group in self.logical_schema.get(key, [])
@@ -1475,6 +1578,9 @@ class OrigamiTemplateView(ttk.Frame):
         self.logical_schema["active_logical_bits"] = active
         self._build_logical_controls(self.logical_schema, active)
         self._settings_changed()
+
+    def _apply_to_rgb(self):
+        self.winfo_toplevel().rgb_image_view._use_barcode_template()
 
     def _load_logical_schema(self) -> None:
         path_text = filedialog.askopenfilename(
@@ -1520,10 +1626,10 @@ class OrigamiTemplateView(ttk.Frame):
         self._rebuild_grid(select_all=False, selected_sites=loaded_sites)
 
     def _save_logical_schema(self) -> None:
-        if self.logical_schema is None or not self.logical_schema.get("logical_bits"):
+        if self.logical_schema is None or not self._all_groups():
             messagebox.showinfo(
                 "No bit schema",
-                "Create at least one digital-bit group first.",
+                "Create at least one group first.",
                 parent=self,
             )
             return
@@ -1602,7 +1708,7 @@ class OrigamiTemplateView(ttk.Frame):
         return [site for site, variable in self.site_variables.items() if variable.get()]
 
     def _rendered_sites(self) -> List[Tuple[int, int]]:
-        if self.logical_schema is None or not self.logical_schema.get("logical_bits"):
+        if self.logical_schema is None or not self._all_groups():
             return []
         return logical_template_sites(
             *self._built_shape,
@@ -1699,6 +1805,13 @@ class OrigamiTemplateView(ttk.Frame):
                 color = str(group.get("display_color", "#ffffff"))
                 for group_row, group_column in group.get("physical_sites", []):
                     group_colors[(int(group_row) - 1, int(group_column) - 1)].append(color)
+        for group in (self.logical_schema or {}).get("dark_groups", []):
+            dark_radius = float(group.get("mask_radius_nm", 5.0)) * scale
+            for group_row, group_column in group["physical_sites"]:
+                x = left + (width_nm - margin - positions[int(group_column) - 1]) * scale
+                y = top + (margin + (int(group_row) - 1) * spacing_y) * scale
+                self.preview.create_oval(x-dark_radius, y-dark_radius, x+dark_radius, y+dark_radius,
+                                         fill="", outline="#38bdf8", dash=(3, 2), tags=("dark-mask",))
         for row in range(rows):
             for column in range(columns):
                 x = left + (width_nm - margin - positions[column]) * scale
@@ -1755,8 +1868,8 @@ class OrigamiTemplateView(ttk.Frame):
             settings = self._settings()
             if settings[:2] != self._built_shape:
                 raise ValueError("Click Apply grid size after changing the row or column count.")
-            if self.logical_schema is None or not self.logical_schema.get("logical_bits"):
-                raise ValueError("Create at least one digital-bit group before saving a template.")
+            if self.logical_schema is None or not self._all_groups():
+                raise ValueError("Create at least one group before saving a template.")
             selected = self._rendered_sites()
             if not selected:
                 raise ValueError("Turn on a digital bit or create an alignment-only group before saving.")
@@ -1812,6 +1925,12 @@ class PicklistApp(tk.Tk):
         plate_defaults = load_json(PLATE_STATE_EXAMPLE_PATH, DEFAULT_PLATE_STATE)
         storage_defaults = load_json(STORAGE_STATE_EXAMPLE_PATH, DEFAULT_STORAGE_STATE)
         self.config = load_json(CONFIG_PATH, config_defaults)
+        # Apply the requested default once to existing installations as well.
+        # An older running app may have saved its former 75 nL setting again.
+        if not self.config.get("base_transfer_25nl_migrated", False):
+            self.config["transfer_volume_nL"] = 25
+            self.config["base_transfer_25nl_migrated"] = True
+            save_json(CONFIG_PATH, self.config)
         self.plate_state = load_json(PLATE_STATE_PATH, plate_defaults)
         self.storage_state = load_json(STORAGE_STATE_PATH, storage_defaults)
         if not CONFIG_PATH.exists():
@@ -1821,7 +1940,7 @@ class PicklistApp(tk.Tk):
         if not STORAGE_STATE_PATH.exists():
             save_json(STORAGE_STATE_PATH, self.storage_state)
         self._config_save_job = None
-        self.title("Echo Picklist Generator")
+        self.title(APP_TITLE)
         self.geometry("1280x880")
         self.minsize(960, 700)
         self._set_style()
@@ -1834,6 +1953,7 @@ class PicklistApp(tk.Tk):
         self.last_run_committed = False
         self.last_run_saved = False
         self.last_run_stored = False
+        self._advancing_destination = False
         self._build()
 
     def _set_style(self) -> None:
@@ -1850,7 +1970,7 @@ class PicklistApp(tk.Tk):
     def _build(self) -> None:
         header = ttk.Frame(self, padding=(14, 10))
         header.pack(fill="x")
-        ttk.Label(header, text="Echo Picklist Generator", style="Title.TLabel").pack(side="left")
+        ttk.Label(header, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Label(header, text="Select replacements, preview the run, then save it or send it to storage.").pack(side="left", padx=18)
         main_tabs = ttk.Notebook(self)
         main_tabs.pack(fill="both", expand=True, padx=12, pady=(0, 8))
@@ -1893,7 +2013,16 @@ class PicklistApp(tk.Tk):
             hinge_controls, textvariable=self.hinge_type,
             values=list(HINGE_TYPES.values()), state="readonly", width=38,
         ).pack(side="left")
-        self.transfer_volume = tk.StringVar(value=str(self.config.get("transfer_volume_nL", 50)))
+        self.base_plate_options = BASE_PLATES
+        saved_base_plate = self.config.get("base_plate", next(iter(BASE_PLATES)))
+        # The user's physical 20 µM base stock now uses the interleaved layout.
+        # Preserve explicitly chosen legacy layouts, but migrate the old generic label.
+        if saved_base_plate == "LowConc base plate — 20 µM":
+            saved_base_plate = "LowConc base plate — 20 µM (interleaved)"
+        self.base_plate = tk.StringVar(value=saved_base_plate if saved_base_plate in BASE_PLATES else next(iter(BASE_PLATES)))
+        if BASE_PLATES[self.base_plate.get()][0] == "book_base_20uM_interleaved.csv":
+            self.hinge_type.set(HINGE_TYPES["balanced_rigid"])
+        self.transfer_volume = tk.StringVar(value=str(self.config.get("transfer_volume_nL", 25)))
         set_tabs = ttk.Notebook(replacement_page)
         set_tabs.pack(side="top", fill="both", expand=True)
         for title, filename, plate_name, panels in panel_definitions():
@@ -1917,6 +2046,24 @@ class PicklistApp(tk.Tk):
         for view in self.set_views:
             view.path_var.trace_add("write", lambda *_args: self._selections_changed())
         self._build_settings(settings_page, main_tabs, preview_page)
+        self.base_plate.trace_add("write", self._base_plate_changed)
+        def update_percentage_options(*_args):
+            try:
+                base_concentration = parse_vector(self.staple.get(), 4, "Base staple")[0]
+            except ValueError:
+                base_concentration = float("nan")
+            try:
+                base_target = parse_vector(self.desired.get(), 6, "Desired")[1]
+            except ValueError:
+                base_target = float("nan")
+            for view in self.set_views:
+                view.base_concentration_nm = base_concentration
+                view.base_desired_concentration_nm = base_target
+                view.update_percentage_options(self.transfer_volume.get())
+        self.transfer_volume.trace_add("write", update_percentage_options)
+        self.staple.trace_add("write", update_percentage_options)
+        self.desired.trace_add("write", update_percentage_options)
+        update_percentage_options()
         plate_actions = ttk.Frame(plate_page, padding=(12, 10, 12, 0))
         plate_actions.pack(fill="x")
         ttk.Button(plate_actions, text="Start fresh plate", command=self._start_fresh_plate).pack(side="left")
@@ -1929,12 +2076,14 @@ class PicklistApp(tk.Tk):
         self._build_storage(storage_page)
         self._build_preview(preview_page)
         image_page = ttk.Frame(main_tabs)
+        self.rgb_image_page = image_page
         main_tabs.add(image_page, text="7. RGB Image")
         image_scroll = ScrollFrame(image_page)
         image_scroll.pack(fill="both", expand=True)
         self.rgb_image_view = RGBImageView(image_scroll.inner, self, APP_DIR, STORAGE_STATE_PATH, PLATE_STATE_PATH)
         self.rgb_image_view.pack(fill="both", expand=True)
         self._bind_config_updates()
+        self._bind_preview_updates()
         self._refresh_plate_view()
         self.protocol("WM_DELETE_WINDOW", self._close_app)
 
@@ -2024,6 +2173,8 @@ class PicklistApp(tk.Tk):
                             "active": sorted(active),
                             "selected": selected,
                             "selected_names": names,
+                            "site_fractions": {name: view.site_fractions.get(name, 1.0) for name in names},
+                            "site_concentrations_nm": {name: view.site_target(name) for name in names},
                             "spacing_x_nm": panel.get("spacing_x_nm"),
                             "spacing_y_nm": panel.get("spacing_y_nm"),
                             "mirror_columns": bool(panel.get("mirror_columns", False)),
@@ -2072,6 +2223,7 @@ class PicklistApp(tk.Tk):
         self.clash_text.configure(state="disabled")
 
     def _selections_changed(self) -> None:
+        self._invalidate_preview()
         self._lock_run_settings()
         for view in self.set_views:
             view.mark_conflicts(set())
@@ -2175,6 +2327,18 @@ class PicklistApp(tk.Tk):
         except ValueError:
             return str(path)
 
+    def base_stock_concentration_nm(self):
+        return BASE_PLATES[self.base_plate.get()][1]
+
+    def _base_plate_changed(self, *_args):
+        filename, stock = BASE_PLATES[self.base_plate.get()]
+        self.base_path.set(str(SHEET_DIR / filename))
+        if filename == "book_base_20uM_interleaved.csv":
+            self.hinge_type.set(HINGE_TYPES["balanced_rigid"])
+        parts = self.staple.get().split(",")
+        self.staple.set(",".join([str(int(stock)), *(parts[1:] if len(parts) == 4 else ["1", "0", "0"])]))
+        self._schedule_config_save()
+
     def _bind_config_updates(self) -> None:
         variables = (
             self.picklist_path,
@@ -2191,6 +2355,28 @@ class PicklistApp(tk.Tk):
         for variable in variables:
             variable.trace_add("write", lambda *_args: self._schedule_config_save())
 
+    def _bind_preview_updates(self) -> None:
+        variables = (
+            self.base_path, self.destination_wells, self.destination_plate,
+            self.source_plate_type, self.transfers_per_source, self.transfer_volume,
+            self.max_volume, self.hinge_type, self.staple, self.scaffold,
+            self.magnesium, self.sodium, self.te_10x, self.desired,
+            *(view.desired_concentration_nm for view in self.set_views),
+        )
+        for variable in variables:
+            variable.trace_add("write", self._invalidate_preview)
+
+    def _invalidate_preview(self, *_args) -> None:
+        if self._advancing_destination or not (self.last_picklist or self.last_mix):
+            return
+        self.last_picklist = []
+        self.last_mix = []
+        self._fill_tree(self.pick_tree, [], PICKLIST_COLUMNS)
+        self._fill_tree(self.mix_tree, [], ("Reagent", "Volume_uL"))
+        self.summary.set("Inputs changed — generate a new preview.")
+        self.status.set("Inputs changed — generate a new preview before saving or storing.")
+        self._update_result_action_buttons()
+
     def _schedule_config_save(self) -> None:
         if self._config_save_job is not None:
             self.after_cancel(self._config_save_job)
@@ -2201,6 +2387,7 @@ class PicklistApp(tk.Tk):
         self.config.update(
             {
                 "version": 1,
+                "base_plate": self.base_plate.get(),
                 "save_picklist_path": self._portable_path(self.picklist_path.get()),
                 "save_recipe_path": self._portable_path(self.mix_path.get()),
                 "output_root_path": self._portable_path(self.output_root.get()),
@@ -2310,7 +2497,7 @@ class PicklistApp(tk.Tk):
         recent = normalize_recent_wells(self.config.get("recent_destination_wells", []))
         pending = normalize_recent_wells(self.config.get("pending_destination_wells", ["A01", "A02", "A03"]))
         default_wells = next_unused_wells(self.plate_state, configured_plate, len(recent) or len(pending) or 3)
-        self.base_path = self._field(pick, 0, "Base Source1", str(SHEET_DIR / "book_base.csv"))
+        self.base_path = self._field(pick, 0, "Base Source1", str(SHEET_DIR / BASE_PLATES[self.base_plate.get()][0]))
         self.destination_wells = self._field(pick, 1, "Destination wells", ",".join(default_wells))
         self.transfers_per_source = self._field(pick, 2, "Transfers/source", str(self.config.get("transfers_per_source", 1)))
         ttk.Label(pick, text="Base transfer volume (nL)").grid(row=3, column=0, sticky="e", padx=6, pady=4)
@@ -2323,23 +2510,29 @@ class PicklistApp(tk.Tk):
         self.picklist_path = self._field(pick, 8, "Latest picklist path", str(self._restore_path("save_picklist_path", OUTPUT_DIR / "picklist_combined.csv")))
         self.starting_well = self._field(pick, 9, "Destination starting well", "")
         ttk.Button(pick, text="Start here", command=self._apply_starting_well).grid(row=9, column=2, sticky="w", padx=6, pady=4)
-        excess = ttk.LabelFrame(pick, text="Excess Multiplier (per replacement tab)", padding=4)
-        excess.grid(row=10, column=0, columnspan=3, sticky="ew", pady=4)
-        for index, view in enumerate(self.set_views):
-            field = ttk.Frame(excess)
-            field.grid(row=index // 3, column=index % 3, sticky="w", padx=8, pady=2)
-            ttk.Label(field, text=view.title).pack(side="left")
-            ttk.Entry(field, textvariable=view.excess_multiplier, width=6).pack(side="left", padx=6)
+        ttk.Label(pick, text="Base plate stock").grid(row=10, column=0, sticky="e", padx=6, pady=4)
+        self.base_plate_picker = ttk.Combobox(pick, textvariable=self.base_plate,
+            values=tuple(BASE_PLATES), state="readonly", width=45)
+        self.base_plate_picker.grid(row=10, column=1, sticky="ew", padx=6, pady=4)
         mix = ttk.LabelFrame(page, text="Mixing recipe", padding=10)
         mix.grid(row=1, column=0, sticky="new", padx=14, pady=6)
         mix.columnconfigure(1, weight=1)
         self.mix_path = self._field(mix, 0, "Latest recipe path", str(self._restore_path("save_recipe_path", OUTPUT_DIR / "mixing_recipe.csv")))
-        self.staple = self._field(mix, 1, "Staple [nM, xTE, Mg, Na]", "200000,1,0,0")
+        self.staple = self._field(mix, 1, "Base staple [nM, xTE, Mg, Na]", "{:g},1,0,0".format(self.base_stock_concentration_nm()))
         self.scaffold = self._field(mix, 2, "Scaffold [nM, xTE, Mg, Na]", "400,0.1,0,0")
         self.te_10x = self._field(mix, 3, "10X TE [nM, xTE, Mg, Na]", "0,10,0,0")
         self.magnesium = self._field(mix, 4, "Mg [nM, xTE, mM, Na]", "0,0,100,0")
         self.sodium = self._field(mix, 5, "Na [nM, xTE, Mg, mM]", "0,0,0,100")
-        self.desired = self._field(mix, 6, "Desired [µL, staple nM, scaffold nM, xTE, Mg mM, Na mM]", "100,50,10,1,12,5")
+        self.desired = self._field(mix, 6, "Desired [µL, base staple nM, scaffold nM, xTE, Mg mM, Na mM]", "100,50,10,1,12,5")
+        targets = ttk.LabelFrame(mix, text="Desired replacement staple concentrations (nM)", padding=8)
+        targets.grid(row=7, column=0, columnspan=3, sticky="ew", pady=6)
+        ttk.Label(targets, text="Enter a positive final concentration per staple for each plate.\n"
+                  "Replacement % splits the target between replacement and original staples.").grid(
+                      row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
+        for index, view in enumerate(self.set_views, 1):
+            ttk.Label(targets, text="{} (stock: {:g} µM)".format(view.title, view.concentration_nm / 1000)).grid(row=index, column=0, sticky="w", padx=(0, 12))
+            ttk.Entry(targets, textvariable=view.desired_concentration_nm, width=12).grid(
+                row=index, column=1, sticky="w", pady=2)
 
         action = ttk.Frame(page, padding=14)
         action.grid(row=2, column=0, sticky="ew")
@@ -2580,7 +2773,13 @@ class PicklistApp(tk.Tk):
             self.plate_state, destination_plate, len(used_destination_wells) or 1
         )
         self.starting_well.set("")
-        self.destination_wells.set(",".join(next_destination_wells))
+        # Advancing to the next run's wells must preserve this committed preview
+        # so it can still be saved after storage (or stored after saving).
+        self._advancing_destination = True
+        try:
+            self.destination_wells.set(",".join(next_destination_wells))
+        finally:
+            self._advancing_destination = False
         self.config["last_committed_run"] = {
             "committed_utc": self.plate_state.get("updated_utc"),
             "run_id": self.last_run_id,
@@ -2791,38 +2990,53 @@ class PicklistApp(tk.Tk):
                 return
             selections = []
             design_names = []
+            desired = parse_vector(self.desired.get(), 6, "Desired")
             for view in self.set_views:
                 names = view.selected()
                 if names:
                     try:
-                        multiplier = float(view.excess_multiplier.get())
+                        target = view.desired_concentration_nm.get().strip()
+                        desired_concentration = float(target)
+                        desired_concentration_ratio(desired_concentration, desired[1])
                     except ValueError:
-                        raise ValueError("{} Excess Multiplier must be a positive number.".format(view.title))
-                    selections.append(ReplacementSelection(Path(view.path_var.get()), names, view.plate_name, multiplier, view.selected_fraction()))
+                        raise ValueError("{}: desired base and replacement concentrations must be finite positive numbers.".format(view.title))
+                    selections.append(ReplacementSelection(
+                        Path(view.path_var.get()), names, view.plate_name,
+                        site_fractions={name: view.site_fractions.get(name, 1.0) for name in names},
+                        concentration_nm=view.concentration_nm,
+                        desired_concentration_nm=desired_concentration,
+                        site_concentrations_nm={name: view.site_concentrations_nm[name]
+                                                for name in names if name in view.site_concentrations_nm},
+                    ))
                     design_names.extend(names)
             if not selections:
                 raise ValueError("Select at least one replacement.")
             transfer_volume = int(self.transfer_volume.get())
             transfers_per_source = int(self.transfers_per_source.get())
             destination_wells = valid_well_list(self.destination_wells.get())
+            staple = parse_vector(self.staple.get(), 4, "Base staple")
             self.destination_wells.set(",".join(destination_wells))
             picklist = generate_picklist(
                 Path(self.base_path.get()), selections, destination_wells,
                 self.source_plate_type.get().strip(), self.destination_plate.get().strip(),
                 transfer_volume, float(self.max_volume.get()), transfers_per_source,
                 hinge_type=self._selected_hinge_type(),
+                base_concentration_nm=staple[0],
+                base_desired_concentration_nm=desired[1],
             )
             unique_sources = {(str(row["Source Plate Name"]), str(row["Source Well"])) for row in picklist}
             total_volume_nl = sum(float(row["Transfer Volume"]) for row in picklist)
             available_ul = total_volume_nl / 1000.0
-            # Count each replacement in proportion to its excess so the nominal
-            # staple concentration is maintained when diluting the pooled mix.
+            # Transfers already compensate for each stock concentration. The
+            # physical pool volume per base transfer sets the aliquot needed for
+            # the base target concentration, including plate targets and dilute stocks.
+            # All staple stocks share the buffer composition in the staple vector.
             effective_staples = total_volume_nl / (transfer_volume * transfers_per_source)
             mixing = calculate_mixing_volumes(
-                parse_vector(self.staple.get(), 4, "Staple"), effective_staples,
+                staple, effective_staples,
                 parse_vector(self.scaffold.get(), 4, "Scaffold"),
                 parse_vector(self.magnesium.get(), 4, "Mg"), parse_vector(self.sodium.get(), 4, "Na"),
-                parse_vector(self.te_10x.get(), 4, "10X TE"), parse_vector(self.desired.get(), 6, "Desired"),
+                parse_vector(self.te_10x.get(), 4, "10X TE"), desired,
             )
             requested_ul = mixing[0]["Volume_uL"]
             if requested_ul > available_ul + 1e-9:

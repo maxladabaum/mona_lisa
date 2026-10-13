@@ -11,7 +11,7 @@ from PIL import Image
 from optimization_regularization import regularization_weight
 from color_light import display_rgb, abundance_scale, canvas_area_gain, quadrant_weight
 from gaussian_reconstruction import GaussianReconstruction, REFERENCE_AREA_NM2
-from image_encoding import geometry
+from image_encoding import geometry, transfer_fraction_steps, set_site_fraction
 from template_generator import EXTENSION_COLUMN_SPACING_NM, EXTENSION_ROW_SPACING_NM, EXTENSION_EXTRA_COLUMN_GAP_NM
 
 DEFAULT_CENTER_X = -EXTENSION_COLUMN_SPACING_NM / 2 - EXTENSION_EXTRA_COLUMN_GAP_NM / 2
@@ -46,7 +46,7 @@ def transformed_sites(design, settings, error):
     """Error = [dx nm, dy nm, clockwise degrees] in aligned origami coordinates."""
     shift = np.array([design['x_shift_nm'], design['y_shift_nm']])
     points = np.array([[s['x_nm'], s['y_nm']] for s in design['image_sites']]) - shift
-    center = np.array([settings.center_x_nm, settings.center_y_nm])
+    center = np.array([settings.center_x_nm, settings.center_y_nm]) - np.asarray(design.get("active_canvas_offset_nm", [0, 0]))
     angle = math.radians(error[2])
     rotation = np.array([[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]])
     return (points-center) @ rotation.T + center + np.asarray(error[:2]) + shift
@@ -65,7 +65,7 @@ class AlignmentModel:
         self.scheme = designs[0]['encoding_scheme']
         if any(d['encoding_scheme'] != self.scheme or d.get('origami_rotation_degrees_clockwise',0) != self.rotation for d in designs):
             raise ValueError('Alignment models require a single scheme and orientation.')
-        self.info = geometry(self.scheme, self.rotation)
+        self.info = geometry(self.scheme, self.rotation, designs[0].get('active_image_columns'))
         # Larger virtual mosaics need not use the single-origami 0.75 nm raster.
         # Still resolve FWHM with at least four samples and record the true pitch.
         area = self.info['field_width_nm'] * self.info['field_height_nm']
@@ -220,7 +220,10 @@ class AlignmentModel:
             lipschitz = float(rows.max())
         local_target = np.rot90(target,self.rotation//90).reshape(-1,3)
         b = self.gain*self.mean.T@local_target + alpha*weights
-        steps = np.array([[(s['replacement_nl']+s['original_nl'])/25 for d in group for s in d['image_sites']] for group in self.groups]).T
+        # The cached model describes geometry, which can be reused after a
+        # volume or stock change. Quantization must use the current designs.
+        current_groups = [[d for d in designs if d['channel'] == c] for c in range(3)]
+        steps = np.array([[transfer_fraction_steps(d, s) for d in group for s in d['image_sites']] for group in current_groups]).T
         if np.any(steps<1) or np.any(steps!=np.rint(steps)):
             raise ValueError('Alignment optimization requires 25 nL transfer increments.')
         w = weights.copy()
@@ -275,8 +278,7 @@ class AlignmentModel:
                 for site in design['image_sites']:
                     drops = int(round(best[i,channel]*steps[i,channel]))
                     fraction = float(drops/steps[i,channel])
-                    site.update(replacement_fraction=fraction,replacement_nl=25*drops,original_nl=25*(int(steps[i,channel])-drops))
-                    design['site_fractions'][site['name']] = fraction
+                    set_site_fraction(design, site, fraction)
                     i += 1
         before,after = self.evaluate(designs,target),self.evaluate(result,target)
         deviation = float(np.mean((self.weights(result)-weights)**2))

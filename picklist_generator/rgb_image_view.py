@@ -1,16 +1,18 @@
 """RGB image import and preview of independently synthesized color/shift designs."""
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+from types import SimpleNamespace
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from app_state import all_384_wells, create_run_output_directory, plate_wells, record_transfers, save_json, next_unused_wells
 from image_encoding import (
-    CHANNELS, FIT_MODES, ROWS, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, physical_raster_size,
+    CHANNELS, FIT_MODES, ROWS, IMAGE_COLUMNS, active_columns, default_barcode_schema, validate_barcode_schema, fiducial_sites, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, TILE_COUNT_SCHEMES, physical_raster_size,
     bin_image, compile_designs, geometry, prepare_runs, reconstruct, site_name, rotate_point, physical_reference_raster, best_image_rotation,
 )
 from gaussian_reconstruction import DEFAULT_FWHM_NM, DEFAULT_EXPOSURE, render_gaussian_overlay
@@ -25,7 +27,13 @@ class RGBImageView(ttk.Frame):
         super().__init__(parent, padding=10)
         self.app, self.app_dir = app, app_dir
         self.storage_path, self.plate_path = storage_path, plate_path
-        self.color_views = {view.title: view for view in app.set_views if view.title in CHANNELS}
+        # RGB targets belong to this workflow, not manual replacement tabs.
+        targets = app.config.get("image_plate_targets_nm", {})
+        self.color_views = {color: SimpleNamespace(
+            desired_concentration_nm=tk.StringVar(value=str(targets.get(color, 25))),
+            path_var=tk.StringVar(value=str(Path(app_dir) / "replacement_sheets" / "PAINT_R1_replace.csv")),
+            plate_name="SourcePlate7[7]", concentration_nm=20000.0,
+        ) for color in CHANNELS}
         self.pixels = None
         self.comparison_window = None
         self.tiling_window = None
@@ -56,9 +64,27 @@ class RGBImageView(ttk.Frame):
         if saved_scheme not in SELECTABLE_SCHEMES:
             saved_scheme = DEFAULT_SCHEME
         self.scheme = tk.StringVar(value=SELECTABLE_SCHEMES[saved_scheme].label)
-        self.image_geometry = geometry(saved_scheme)
+        self.tile_count = tk.StringVar()
+        self.tile_layout = tk.StringVar()
+        try:
+            saved_canvas = active_columns(app.config.get("image_active_columns"))
+        except (ValueError, TypeError):
+            saved_canvas = IMAGE_COLUMNS[:]
+        self.active_row_vars = {c: tk.BooleanVar(value=c in saved_canvas) for c in IMAGE_COLUMNS}
+        saved_barcode = app.config.get("image_barcode_schema")
+        try:
+            self.barcode_schema = default_barcode_schema() if saved_barcode is None else validate_barcode_schema(saved_barcode)
+            fiducial_sites(self.barcode_schema, saved_canvas, SELECTABLE_SCHEMES[saved_scheme].bit_count)
+            barcode_status = self.barcode_schema["name"] + " · {} always-on sites".format(len(self.barcode_schema["always_on_sites"]))
+        except ValueError as exc:
+            self.barcode_schema = default_barcode_schema()
+            barcode_status = "Saved schema invalid; using standard sites: {}".format(exc)
+        self.barcode_schema_status = tk.StringVar(value=barcode_status)
+        self.image_geometry = geometry(saved_scheme, active_image_columns=saved_canvas, barcode_schema=self.barcode_schema)
         self.geometry_summary = tk.StringVar()
         self.explanation = tk.StringVar()
+        self.auto_export_templates = tk.BooleanVar(value=app.config.get("image_auto_export_templates", True))
+        self.alignment_template_directory = None
         self.start_well = tk.StringVar(value="A01")
         self.design_name = tk.StringVar()
         self.status = tk.StringVar(value="Upload an image to preview its color/shift designs.")
@@ -78,6 +104,19 @@ class RGBImageView(ttk.Frame):
         self.scheme_picker.pack(side="left", padx=8)
         ttk.Button(scheme_bar, text="Compare original schemes…", command=self._compare_schemes).pack(side="left", padx=4)
         ttk.Button(scheme_bar, text="Compare tiling & FWHM…", command=self._compare_tiling).pack(side="left", padx=4)
+        tile_bar = ttk.Frame(self)
+        tile_bar.pack(fill="x", pady=(6, 0))
+        ttk.Label(tile_bar, text="Tiles per color").pack(side="left")
+        self.tile_count_picker = ttk.Combobox(tile_bar, textvariable=self.tile_count,
+            values=("Use encoding scheme", *map(str, range(1, 17))), state="readonly", width=20)
+        self.tile_count_picker.pack(side="left", padx=8)
+        self.tile_count_picker.bind("<<ComboboxSelected>>", self._tile_count_changed)
+        ttk.Label(tile_bar, text="Grid (columns × rows)").pack(side="left")
+        self.tile_layout_picker = ttk.Combobox(tile_bar, textvariable=self.tile_layout,
+            state="readonly", width=10)
+        self.tile_layout_picker.pack(side="left", padx=8)
+        self.tile_layout_picker.bind("<<ComboboxSelected>>", self._tile_layout_changed)
+        ttk.Label(tile_bar, text="One R, G, and B design per tile; 3 × tile count runs.").pack(side="left")
         self.exhaustive_pdf_button = ttk.Button(self, text="Export exhaustive PDF…", command=self._export_exhaustive_pdf)
         self.exhaustive_pdf_button.pack(anchor="w", pady=(6, 0))
         self.similarity_graph_button = ttk.Button(self, text="Export similarity graph…", command=self._export_similarity_graph)
@@ -97,14 +136,37 @@ class RGBImageView(ttk.Frame):
         ttk.Button(rotation_bar, text="Best fit", command=lambda: self._load(auto_rotate=True)).pack(side="left", padx=4)
         ttk.Label(rotation_bar, text="Image stays upright; uploads and layout changes choose the best fit.").pack(side="left", padx=10)
         ttk.Label(self, textvariable=self.geometry_summary).pack(anchor="w", pady=6)
+        barcode_bar = ttk.LabelFrame(self, text="Barcode site schema (12–07)", padding=5)
+        barcode_bar.pack(fill="x", pady=(0, 6))
+        ttk.Button(barcode_bar, text="Edit in Origami Templates…", command=self._edit_barcode_template).pack(side="left", padx=(0, 6))
+        ttk.Button(barcode_bar, text="Use Origami Templates", command=self._use_barcode_template).pack(side="left", padx=(0, 6))
+        ttk.Button(barcode_bar, text="Load schema…", command=self._load_barcode_schema).pack(side="left")
+        ttk.Button(barcode_bar, text="Save schema…", command=self._save_barcode_schema).pack(side="left", padx=6)
+        ttk.Button(barcode_bar, text="Reset to standard", command=lambda: self._apply_barcode_schema(default_barcode_schema())).pack(side="left")
+        ttk.Label(barcode_bar, textvariable=self.barcode_schema_status, wraplength=500).pack(side="left", padx=10)
+        canvas_bar = ttk.Frame(self)
+        canvas_bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(canvas_bar, text="Active analog rows").pack(side="left", padx=(0, 8))
+        for column, variable in self.active_row_vars.items():
+            ttk.Checkbutton(canvas_bar, text=column, variable=variable,
+                command=lambda c=column: self._active_canvas_changed(c)).pack(side="left", padx=3)
+        self.canvas_summary = tk.StringVar()
+        ttk.Label(canvas_bar, textvariable=self.canvas_summary).pack(side="left", padx=12)
+        source_bar = ttk.Frame(self)
+        source_bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(source_bar, text="Base plate stock").pack(side="left")
+        self.base_plate_picker = ttk.Combobox(source_bar, textvariable=app.base_plate,
+            values=tuple(app.base_plate_options), state="readonly", width=36)
+        self.base_plate_picker.pack(side="left", padx=8)
         settings = ttk.Frame(self)
         settings.pack(fill="x")
         ttk.Label(settings, text="Base volume (nL)").pack(side="left")
         ttk.Spinbox(settings, from_=25, to=100000, increment=25, textvariable=app.transfer_volume, width=7).pack(side="left", padx=6)
         for color, view in self.color_views.items():
-            ttk.Label(settings, text=color + " excess").pack(side="left", padx=(8, 0))
-            ttk.Entry(settings, textvariable=view.excess_multiplier, width=5).pack(side="left", padx=6)
+            ttk.Label(settings, text=color + " target (nM)").pack(side="left", padx=(8, 0))
+            ttk.Entry(settings, textvariable=view.desired_concentration_nm, width=6).pack(side="left", padx=6)
         ttk.Button(settings, text="Run & Mixing Settings", command=self._open_settings).pack(side="right")
+        ttk.Label(self, text="Set RGB plate targets here. All colors use LowConc PAINT R1 (source plate 7, 20 µM stock).").pack(anchor="w", pady=3)
         reconstruction_bar = ttk.Frame(self)
         reconstruction_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(reconstruction_bar, text="Gaussian FWHM (nm)").pack(side="left")
@@ -206,6 +268,13 @@ class RGBImageView(ttk.Frame):
         self.store_button = ttk.Button(actions, command=self._store, state="disabled")
         self.store_button.pack(side="left", padx=6)
         ttk.Label(self, textvariable=self.status, wraplength=1150).pack(anchor="w", pady=4)
+        template_actions = ttk.Frame(self)
+        template_actions.pack(fill="x", pady=4)
+        ttk.Checkbutton(template_actions, text="Automatically export PAINT alignment templates when preparing runs",
+            variable=self.auto_export_templates, command=self._save_template_export_preference).pack(side="left")
+        self.open_templates_button = ttk.Button(template_actions, text="Open alignment templates",
+            command=self._open_alignment_templates, state="disabled")
+        self.open_templates_button.pack(side="left", padx=8)
         self._update_scheme_controls()
         self.regularization.trace_add("write", self._regularization_changed)
         self.scheme.trace_add("write", self._scheme_changed)
@@ -213,15 +282,29 @@ class RGBImageView(ttk.Frame):
         self.gaussian_exposure.trace_add("write", self._render_settings_changed)
         for variable in self.alignment_values.values():
             variable.trace_add("write", self._alignment_changed)
-        for variable in (app.transfer_volume, *(view.excess_multiplier for view in self.color_views.values())):
+        for variable in (app.transfer_volume, app.base_plate,
+                         *(view.desired_concentration_nm for view in self.color_views.values())):
             variable.trace_add("write", self._volumes_changed)
+        for view in self.color_views.values():
+            view.desired_concentration_nm.trace_add("write", self._save_rgb_targets)
         for variable in (self.start_well, app.base_path, app.destination_plate, app.source_plate_type, app.max_volume,
-                         app.transfers_per_source, app.hinge_type, app.staple, app.scaffold, app.magnesium,
-                         app.sodium, app.te_10x, app.desired, *(view.path_var for view in self.color_views.values())):
+                         app.transfers_per_source, app.hinge_type, *(view.path_var for view in self.color_views.values())):
             variable.trace_add("write", self._invalidate)
 
     def _regularization_value(self):
         return validate_regularization(self.regularization.get())
+
+    def _save_rgb_targets(self, *_args):
+        try:
+            targets = {color: float(view.desired_concentration_nm.get())
+                       for color, view in self.color_views.items()}
+            import math
+            if not all(math.isfinite(value) and value > 0 for value in targets.values()):
+                return
+        except ValueError:
+            return
+        self.app.config["image_plate_targets_nm"] = targets
+        self.app._schedule_config_save()
 
     def _regularization_changed(self, *_args):
         try:
@@ -265,7 +348,8 @@ class RGBImageView(ttk.Frame):
         settings = self._alignment_settings()
         key = (designs[0]["encoding_scheme"], designs[0]["origami_rotation_degrees_clockwise"],
                settings, float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm), float(self.gaussian_exposure.get()),
-               self.linear_light.get(), self.normalize_designs.get(), self.compensate_area.get())
+               self.linear_light.get(), self.normalize_designs.get(), self.compensate_area.get(),
+               tuple(designs[0].get("active_image_columns", IMAGE_COLUMNS)))
         if key not in self.alignment_models:
             if len(self.alignment_models) >= 2:
                 self.alignment_models.clear()
@@ -287,12 +371,110 @@ class RGBImageView(ttk.Frame):
             return self._alignment_model(designs, fwhm_nm).expected(designs)
         return render_gaussian_overlay(designs, fwhm_nm, float(self.gaussian_exposure.get()), **self._light_options())
 
+    def _apply_barcode_schema(self, schema):
+        value = validate_barcode_schema(schema)
+        fiducial_sites(value, self._active_columns(), SELECTABLE_SCHEMES[self._scheme_id()].bit_count)
+        self.barcode_schema = value
+        self.barcode_schema_status.set(value["name"] + " · {} always-on sites".format(len(value["always_on_sites"])))
+        self.app.config["image_barcode_schema"] = deepcopy(value)
+        self.app._schedule_config_save()
+        self._update_scheme_controls()
+        self._volumes_changed()
+
+    def _edit_barcode_template(self):
+        from barcode_template_schema import to_template
+        editor = self.app.template_view
+        model = to_template(self.barcode_schema, SELECTABLE_SCHEMES[self._scheme_id()].bit_count)
+        editor.logical_schema = model
+        editor.rows_var.set("8")
+        editor.columns_var.set("12")
+        editor.spacing_x_var.set("9.9")
+        editor.spacing_y_var.set("5.1")
+        editor.column_gap_var.set("10")
+        editor.selected_group_id = None
+        editor.selected_group_ids = []
+        selected = {(row-1, col-1) for key in ("logical_bits", "alignment_groups")
+                    for group in model[key] for row, col in group["physical_sites"]}
+        editor._rebuild_grid(select_all=False, selected_sites=selected)
+        editor.source_name.set("RGB barcode editor: name digital groups Bit 1, Bit 2, etc. Alignment-only groups are permanent fiducials. C1–C12 = 01–12; R1–R8 = H01,H03,…,H15.")
+        editor.status.set("Edit site groups, then click Apply to RGB Image. Template bit ON/OFF checkboxes do not change the RGB codebook.")
+        self.app.main_tabs.select(self.app.template_page)
+
+    def _use_barcode_template(self):
+        try:
+            editor = self.app.template_view
+            editor._settings()
+            self._apply_schema_payload(editor.logical_schema)
+            self.app.main_tabs.select(self.app.rgb_image_page)
+        except (ValueError, TypeError) as exc:
+            messagebox.showerror("Cannot use template schema", str(exc), parent=self)
+
+    def _apply_schema_payload(self, payload):
+        if isinstance(payload, dict) and ("logical_model" in payload or "physical_rows" in payload):
+            from barcode_template_schema import from_template
+            value, count = from_template(payload, self.barcode_schema)
+            if count != SELECTABLE_SCHEMES[self._scheme_id()].bit_count:
+                raise ValueError("This template defines {} bits. Select a {}-bit RGB encoding scheme first.".format(count, count))
+            self._apply_barcode_schema(value)
+        else:
+            self._apply_barcode_schema(payload)
+
+    def _load_barcode_schema(self):
+        path = filedialog.askopenfilename(parent=self, title="Load barcode site schema",
+            filetypes=[("JSON schema", "*.json")])
+        if path:
+            try:
+                self._apply_schema_payload(json.loads(Path(path).read_text(encoding="utf-8")))
+            except (ValueError, TypeError, OSError) as exc:
+                messagebox.showerror("Cannot load barcode schema", str(exc), parent=self)
+
+    def _save_barcode_schema(self):
+        path = filedialog.asksaveasfilename(parent=self, title="Save barcode site schema",
+            defaultextension=".json", initialfile="barcode_schema.json", filetypes=[("JSON schema", "*.json")])
+        if path:
+            try:
+                Path(path).write_text(json.dumps(self.barcode_schema, indent=2) + "\n", encoding="utf-8")
+            except OSError as exc:
+                messagebox.showerror("Cannot save barcode schema", str(exc), parent=self)
+
+    def _active_columns(self):
+        return active_columns([c for c, var in self.active_row_vars.items() if var.get()])
+
+    def _active_canvas_changed(self, changed_column):
+        if not any(var.get() for var in self.active_row_vars.values()):
+            self.active_row_vars[changed_column].set(True)
+            self.status.set("Keep at least one analog row active.")
+            return
+        try:
+            fiducial_sites(self.barcode_schema, self._active_columns(), SELECTABLE_SCHEMES[self._scheme_id()].bit_count)
+        except ValueError as exc:
+            self.active_row_vars[changed_column].set(False)
+            self.status.set(str(exc))
+            return
+        self.app.config["image_active_columns"] = self._active_columns()
+        self.app._schedule_config_save()
+        self.alignment_models.clear()
+        self._update_scheme_controls()
+        self._invalidate()
+        if self.image_path.get():
+            self._load(auto_rotate=True)
+        else:
+            self._refresh_comparison()
+
+    def _concentration_options(self):
+        return dict(barcode_schema=deepcopy(self.barcode_schema), active_image_columns=self._active_columns(), plate_defaults_nm={color: float(view.desired_concentration_nm.get())
+                                      for color, view in self.color_views.items()},
+                    plate_relative_transfers=True,
+                    base_concentration_nm=self.app.base_stock_concentration_nm(),
+                    source_concentrations_nm={color: view.concentration_nm for color, view in self.color_views.items()})
+
     def _compile_scheme(self, pixels, scheme_id):
         """Use identical concentration settings for the main view and comparison."""
         return compile_designs(
             pixels, int(self.app.transfer_volume.get()),
-            {color: float(view.excess_multiplier.get()) for color, view in self.color_views.items()},
-            scheme_id, int(self.rotation.get()), linear_light=self.linear_light.get())
+            {color: 1.0 for color in self.color_views},
+            scheme_id, int(self.rotation.get()), linear_light=self.linear_light.get(),
+            **self._concentration_options())
 
     def _optimize(self, designs, fwhm_nm=None):
         fwhm_nm = float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm)
@@ -352,8 +534,60 @@ class RGBImageView(ttk.Frame):
     def _scheme_id(self):
         return next(key for key, scheme in SELECTABLE_SCHEMES.items() if scheme.label == self.scheme.get())
 
+    def _tile_layouts(self, count):
+        return {"{} × {}".format(s.tile_columns, s.tile_rows): key
+                for key, s in TILE_COUNT_SCHEMES.items() if s.tile_count == count}
+
+    def _tile_count_changed(self, _event=None):
+        if self.tile_count.get() == "Use encoding scheme":
+            self.scheme.set(SELECTABLE_SCHEMES[DEFAULT_SCHEME].label)
+            return
+        layouts = self._tile_layouts(int(self.tile_count.get()))
+        # Start with the most compact grid; either orientation remains selectable.
+        key = min(layouts.values(), key=lambda k: (
+            abs(TILE_COUNT_SCHEMES[k].tile_columns - TILE_COUNT_SCHEMES[k].tile_rows),
+            -TILE_COUNT_SCHEMES[k].tile_columns))
+        self.scheme.set(TILE_COUNT_SCHEMES[key].label)
+
+    def _tile_layout_changed(self, _event=None):
+        key = self._grid_layout_options[self.tile_layout.get()]
+        self.scheme.set(SELECTABLE_SCHEMES[key].label)
+
+    def _sync_tile_controls(self):
+        key = self._scheme_id()
+        scheme = SELECTABLE_SCHEMES[key]
+        # Existing saved sweep layouts can also have one design per color per
+        # tile. Expose their grid without forcing the user to reselect a count.
+        direct_tiles = (scheme.bit_count == 6 and not scheme.joint
+                        and scheme.x_states == scheme.tile_columns
+                        and scheme.y_states == scheme.tile_rows)
+        if direct_tiles:
+            self.tile_count.set(str(scheme.tile_count))
+            layouts = self._tile_layouts(scheme.tile_count)
+        else:
+            self.tile_count.set("Use encoding scheme")
+            # Preserve the encoding capacity and barcode family when changing
+            # an advanced layout's grid.
+            layouts = {}
+            for candidate_key, candidate in SELECTABLE_SCHEMES.items():
+                if (candidate.tile_count == scheme.tile_count
+                        and candidate.design_count == scheme.design_count
+                        and candidate.bit_count == scheme.bit_count
+                        and candidate.joint == scheme.joint
+                        and candidate.parity == scheme.parity):
+                    label = "{} × {}".format(candidate.tile_columns, candidate.tile_rows)
+                    layouts.setdefault(label, candidate_key)
+        current = "{} × {}".format(scheme.tile_columns, scheme.tile_rows)
+        layouts[current] = key
+        self._grid_layout_options = layouts
+        self.tile_layout_picker.configure(values=tuple(layouts), state="readonly")
+        self.tile_layout.set(current)
+
     def _update_scheme_controls(self):
-        self.image_geometry = geometry(self._scheme_id(), int(self.rotation.get()))
+        self._sync_tile_controls()
+        self.image_geometry = geometry(self._scheme_id(), int(self.rotation.get()), self._active_columns(), self.barcode_schema)
+        self._last_valid_scheme = self._scheme_id()
+        self.canvas_summary.set("8 × {} pixels per origami; barcode rows 12–07 unchanged".format(len(self._active_columns())))
         info = self.image_geometry
         self.geometry_summary.set(
             "Upright image: {display_columns} × {display_rows} pixels · {display_pixel_pitch_x_nm:.4g} × {display_pixel_pitch_y_nm:.4g} nm/pixel · "
@@ -379,15 +613,22 @@ class RGBImageView(ttk.Frame):
         if scheme.position_codebook:
             meaning = "2 fixed color bits + 4 bits jointly encoding tile/local shift. {}×{} tiles; local X {}, local Y {}.".format(
                 scheme.tile_columns, scheme.tile_rows, scheme.x_counts, scheme.y_counts)
-        meaning += " {} sites per bit.".format(len(scheme.bit_sites[0]))
+        meaning += " {} sites per bit.".format(info["sites_per_bit"])
         if scheme.parity:
             meaning += " Parity detects single-bit errors; it does not correct them."
         self.explanation.set(
             ("{} designs: 3 colors distributed across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
             + meaning + " Barcode bits stay at 100% or 0%.\n\n"
-            "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode sites are excluded.")
+            "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode and fiducial sites are excluded.")
 
     def _scheme_changed(self, *_args):
+        try:
+            fiducial_sites(self.barcode_schema, self._active_columns(), SELECTABLE_SCHEMES[self._scheme_id()].bit_count)
+        except ValueError as exc:
+            self.scheme.set(SELECTABLE_SCHEMES[self._last_valid_scheme].label)
+            self._sync_tile_controls()
+            messagebox.showerror("Incompatible barcode layout", str(exc), parent=self)
+            return
         self._update_scheme_controls()
         self.app.config["image_encoding_scheme"] = self._scheme_id()
         self.app._schedule_config_save()
@@ -398,6 +639,9 @@ class RGBImageView(ttk.Frame):
             self.status.set("Upload an image to preview {} color/shift designs.".format(self.image_geometry["design_count"]))
 
     def _invalidate(self, *_args):
+        self.alignment_template_directory = None
+        if hasattr(self, "open_templates_button"):
+            self.open_templates_button.configure(state="disabled")
         self.runs = []
         self.saved = self.stored = self.committed = False
         self.export_button.configure(state="disabled")
@@ -433,9 +677,9 @@ class RGBImageView(ttk.Frame):
         self._invalidate()
         try:
             if auto_rotate:
-                self.rotation.set(str(best_image_rotation(self.image_path.get(), self._scheme_id())))
+                self.rotation.set(str(best_image_rotation(self.image_path.get(), self._scheme_id(), self._active_columns())))
                 self._update_scheme_controls()
-            self.pixels = bin_image(self.image_path.get(), self.fit_mode.get(), int(self.rotation.get()), self._scheme_id(), linear_light=self.linear_light.get())
+            self.pixels = bin_image(self.image_path.get(), self.fit_mode.get(), int(self.rotation.get()), self._scheme_id(), linear_light=self.linear_light.get(), active_image_columns=self._active_columns())
             self._volumes_changed()
         except Exception as exc:
             self.status.set(str(exc))
@@ -503,6 +747,11 @@ class RGBImageView(ttk.Frame):
             self.status.set("Check volume and reconstruction settings: {}".format(exc))
             self.reconstruction_summary.set(str(exc))
             self.pixel_canvases[1].delete("all")
+            self.pixel_canvases[1].create_text(150, 20, anchor="n", width=275,
+                fill="#ffd166", text="Preview unavailable\n\n{}".format(exc), tags="preview_error")
+            self.design_picker.configure(values=())
+            self.design_name.set("")
+            self.design_summary.set("")
             self.design_canvas.delete("all")
             self.site_tree.delete(*self.site_tree.get_children())
         self._refresh_comparison()
@@ -528,6 +777,22 @@ class RGBImageView(ttk.Frame):
             for x, rgb in enumerate(row):
                 canvas.create_rectangle(*self._pixel_bounds(x, y, info, draw_width),
                                         fill="#{:02x}{:02x}{:02x}".format(*rgb), outline="")
+        # Tile boundaries depend on image geometry, not on valid transfer
+        # volumes or a successfully compiled/selected design.
+        scheme = SELECTABLE_SCHEMES[info["encoding_scheme"]]
+        if scheme.tile_count > 1:
+            y = 0
+            for ny in scheme.y_counts:
+                x = 0
+                for nx in scheme.x_counts:
+                    first = self._pixel_bounds(x, y, info, draw_width)
+                    last = self._pixel_bounds(x + len(info["image_columns_left_to_right"]) * nx - 1, y + 8 * ny - 1, info, draw_width)
+                    bounds = (min(first[0], last[0]), min(first[1], last[1]),
+                              max(first[2], last[2]), max(first[3], last[3]))
+                    canvas.create_rectangle(*bounds, outline="black", width=3, tags="tile_grid")
+                    canvas.create_rectangle(*bounds, outline="#ffd166", width=1, tags="tile_grid")
+                    x += len(info["image_columns_left_to_right"]) * nx
+                y += 8 * ny
 
     def _draw_design(self):
         if not self.designs:
@@ -542,6 +807,8 @@ class RGBImageView(ttk.Frame):
             binned_canvas.create_rectangle(*bounds, fill="", outline="white", width=1, tags="design_pixels")
         self.design_summary.set("Bits {} · composite placement +{:g} nm X, +{:g} nm Y".format(
             "".join(map(str, design["bits"])), design["x_shift_nm"], design["y_shift_nm"]))
+        if design.get("always_on_sites"):
+            self.design_summary.set(self.design_summary.get() + " · {} always-on fiducials (gold rings)".format(len(design["always_on_sites"])))
         if "quadrant" in design:
             self.design_summary.set(self.design_summary.get() + " · origami-frame {} · local shift ({}, {})".format(
                 self.image_geometry["quadrant_order"][design["quadrant"]],
@@ -567,6 +834,10 @@ class RGBImageView(ttk.Frame):
                 fraction = design["site_fractions"].get(site_name(row, "{:02d}".format(12-c)), 0)
                 shade = "#{:02x}{:02x}{:02x}".format(*(round(bg*(1-fraction)+fg*fraction) for bg, fg in zip((21,25,29),color)))
                 canvas.create_oval(x-8, y-8, x+8, y+8, fill=shade, outline="#748087")
+                if [row, "{:02d}".format(12-c)] in design.get("always_on_sites", []):
+                    canvas.create_oval(x-10, y-10, x+10, y+10, outline="#ffd166", width=2, tags="fiducial_sites")
+                elif "{:02d}".format(12-c) in IMAGE_COLUMNS and "{:02d}".format(12-c) not in design.get("active_image_columns", IMAGE_COLUMNS):
+                    canvas.create_line(x-5, y+5, x+5, y-5, fill="#748087", width=2, tags="inactive_canvas")
         self.site_tree.delete(*self.site_tree.get_children())
         for site in design["image_sites"]:
             self.site_tree.insert("", "end", values=(
@@ -580,6 +851,14 @@ class RGBImageView(ttk.Frame):
             if item.get("destination_plate_name") == plate and item.get("id") not in ignore_ids:
                 used.update(item.get("destination_wells", []))
         return used
+
+    def _save_template_export_preference(self):
+        self.app.config["image_auto_export_templates"] = self.auto_export_templates.get()
+        self.app._schedule_config_save()
+
+    def _open_alignment_templates(self):
+        if self.alignment_template_directory is not None:
+            self.app._open_path(self.alignment_template_directory)
 
     def _prepare(self):
         self._invalidate()
@@ -598,13 +877,16 @@ class RGBImageView(ttk.Frame):
             settings = {"destination_plate_name": plate, "source_plate_type": app.source_plate_type.get().strip(),
                         "max_destination_volume_ul": float(app.max_volume.get()),
                         "transfers_per_source": int(app.transfers_per_source.get()), "hinge_type": app._selected_hinge_type()}
-            mixing = {key: parse_vector(getattr(app, attr).get(), length, label) for key, attr, length, label in (
-                ("staple", "staple", 4, "Staple"), ("scaffold", "scaffold", 4, "Scaffold"),
-                ("magnesium", "magnesium", 4, "Mg"), ("sodium", "sodium", 4, "Na"),
-                ("te_10x", "te_10x", 4, "10X TE"), ("desired", "desired", 6, "Desired"))}
+            # RGB concentration targets come only from the replacement plates.
+            # Keep the standard buffer recipe separate from the manual-run form;
+            # prepare_runs fills in each color's target before calculating it.
+            mixing = {"staple": [app.base_stock_concentration_nm(), 1, 0, 0], "scaffold": [400, .1, 0, 0],
+                      "magnesium": [0, 0, 100, 0], "sodium": [0, 0, 0, 100],
+                      "te_10x": [0, 10, 0, 0], "desired": [100, 25, 10, 1, 12, 5]}
             runs = prepare_runs(self.designs, app.base_path.get(),
                                 {color: (view.path_var.get(), view.plate_name) for color, view in self.color_views.items()},
-                                available, settings, mixing)
+                                available, settings, mixing,
+                                source_concentrations_nm={color: view.concentration_nm for color, view in self.color_views.items()})
             self.batch_id = uuid4().hex
             now = datetime.now(timezone.utc).isoformat()
             for run in runs:
@@ -618,7 +900,8 @@ class RGBImageView(ttk.Frame):
                              "source_image_rotation_degrees": 0,
                              "png_coordinate_frame": "upright image; JSON RGB arrays remain origami-local",
                              "encoding_scheme": self._scheme_id(),
-                             "geometry": deepcopy(self.image_geometry), "binned_rgb": deepcopy(self.pixels),
+                             "geometry": deepcopy(self.image_geometry), "barcode_schema": deepcopy(self.barcode_schema),
+                             "binned_rgb": deepcopy(self.pixels),
                              "quantized_rgb": reconstruct(self.designs),
                              "quantized_rgb_encoding": "linear intensity × 255" if self.linear_light.get() else "legacy direct RGB",
                              "quantized_rgb_role": "per-site intensity reference; predicted appearance is gaussian_reconstruction",
@@ -631,6 +914,25 @@ class RGBImageView(ttk.Frame):
             count = sum(len(run["destination_wells"]) for run in runs)
             self.status.set("Prepared {} independent runs using {} unused wells on {} ({}–{}). Save the batch or send it to storage.".format(
                 len(runs), count, plate, runs[0]["destination_wells"][0], runs[-1]["destination_wells"][-1]))
+            if self.auto_export_templates.get():
+                from alignment_template_export import export_alignment_templates
+                root = Path(app.output_root.get()).expanduser()
+                if not root.is_absolute():
+                    root = self.app_dir / root
+                destination = root / "rgb_alignment_templates" / self.batch_id
+                self.status.set("Prepared runs. Exporting alignment templates…")
+                self.update_idletasks()
+                try:
+                    manifest = export_alignment_templates(destination, self.snapshot, self.runs)
+                except (OSError, ValueError) as exc:
+                    self.status.set("Runs prepared, but alignment-template export failed: {}. Saving the image batch will retry the export.".format(exc))
+                    messagebox.showerror("Alignment-template export failed", str(exc), parent=self)
+                else:
+                    self.alignment_template_directory = destination
+                    self.open_templates_button.configure(state="normal")
+                    self.snapshot["alignment_template_directory"] = str(destination)
+                    self.status.set("Prepared {} runs. Exported {} barcode templates to {} ({} all-off designs without bright sites skipped).".format(
+                        len(runs), manifest["exported_count"], destination, manifest["skipped_count"]))
             self.export_button.configure(state="normal")
             self.store_button.configure(state="normal")
         except Exception as exc:
@@ -687,7 +989,8 @@ class RGBImageView(ttk.Frame):
             settings = ReportSettings(
                 image_path=self.image_path.get(), fit_mode=self.fit_mode.get(),
                 base_volume=int(self.app.transfer_volume.get()),
-                multipliers={color: float(view.excess_multiplier.get()) for color, view in self.color_views.items()},
+                multipliers={color: 1.0 for color in self.color_views},
+                **self._concentration_options(),
                 fwhm_nm=float(self.gaussian_fwhm.get()), exposure=float(self.gaussian_exposure.get()),
                 **self._light_options(), optimize=self.optimize_enabled.get(),
                 alignment_enabled=self.alignment_enabled.get(), alignment=self._alignment_settings(),
@@ -732,12 +1035,15 @@ class RGBImageView(ttk.Frame):
             import numpy as np
             self._check_destinations()
             output = create_run_output_directory(Path(folder))
+            from alignment_template_export import export_alignment_templates
+            export_alignment_templates(output / "alignment_templates", self.snapshot, self.runs)
             write_csv(output / "picklist_combined.csv", combine_picklists([run["picklist"] for run in self.runs]), PICKLIST_COLUMNS)
             for run in self.runs:
                 run_dir = output / run["run_name"]
                 write_csv(run_dir / "picklist.csv", run["picklist"], PICKLIST_COLUMNS)
                 write_csv(run_dir / "mixing_recipe.csv", run["mixing_recipe"], ("Reagent", "Volume_uL"))
             manifest = deepcopy(self.snapshot)
+            manifest["alignment_template_directory"] = "alignment_templates"
             manifest["runs"] = [{key: run[key] for key in ("run_name", "destination_plate_name", "destination_wells", "transfer_count")} for run in self.runs]
             save_json(output / "image_manifest.json", manifest)
             pixel_rows = []
@@ -758,7 +1064,7 @@ class RGBImageView(ttk.Frame):
                     from color_light import display_rgb
                     raster = display_rgb(np.asarray(raster, dtype=float)/255, True)
                 rotation = self.snapshot["origami_rotation_degrees_clockwise"]
-                physical = physical_reference_raster(raster,self.snapshot["encoding_scheme"],rotation)
+                physical = physical_reference_raster(raster,self.snapshot["encoding_scheme"],rotation, self.snapshot["geometry"].get("active_image_columns"))
                 raster = raster.rotate(-rotation, expand=True)
                 raster.save(output / (key + ".png"))
                 physical.save(output / (key + "_physical.png"))
@@ -910,7 +1216,7 @@ class EncodingComparison(tk.Toplevel):
                 raise ValueError("Upload a valid image to compare the schemes.")
             path = Path(owner.image_path.get())
             source_key = (str(path), path.stat().st_mtime_ns, path.stat().st_size,
-                          owner.fit_mode.get(), int(owner.rotation.get()), owner.linear_light.get())
+                          owner.fit_mode.get(), int(owner.rotation.get()), owner.linear_light.get(), tuple(owner._active_columns()))
             if source_key != self._source_key:
                 self._binned_cache = {}
                 self._source_key = source_key
@@ -920,7 +1226,7 @@ class EncodingComparison(tk.Toplevel):
                 label = "{}-bit {}×{}".format(scheme.bit_count, scheme.x_states, scheme.y_states)
                 self._show_progress(index, "{} of {} complete · Loading {}…".format(index, total, label))
                 if scheme_id not in self._binned_cache:
-                    self._binned_cache[scheme_id] = bin_image(path, owner.fit_mode.get(), int(owner.rotation.get()), scheme_id, linear_light=owner.linear_light.get())
+                    self._binned_cache[scheme_id] = bin_image(path, owner.fit_mode.get(), int(owner.rotation.get()), scheme_id, linear_light=owner.linear_light.get(), active_image_columns=owner._active_columns())
                 binned = self._binned_cache[scheme_id]
                 designs = owner._compile_scheme(binned, scheme_id)
                 if owner.optimize_enabled.get():
@@ -934,7 +1240,7 @@ class EncodingComparison(tk.Toplevel):
             self.images = images
             self.optimization_metrics = optimization_metrics
             for scheme_id, (binned, achievable) in images.items():
-                info = geometry(scheme_id, int(owner.rotation.get()))
+                info = geometry(scheme_id, int(owner.rotation.get()), owner._active_columns())
                 self.metrics[scheme_id].set(("{display_columns} × {display_rows} pixels · {design_count} designs\n"
                     "{display_pixel_pitch_x_nm:.4g} × {display_pixel_pitch_y_nm:.4g} nm/pixel").format(**info))
                 if scheme_id in optimization_metrics:
@@ -946,7 +1252,7 @@ class EncodingComparison(tk.Toplevel):
                     self.metrics[scheme_id].set(self.metrics[scheme_id].get() + "\nHeld-out RMSE {:.4f} → {:.4f}".format(
                         metrics["validation_baseline"]["expected_mse"]**.5, metrics["validation_optimized"]["expected_mse"]**.5))
                 scheme = ENCODING_SCHEMES[scheme_id]
-                detail = "\n{} bits · {} sites/bit · {}".format(scheme.bit_count, len(scheme.bit_sites[0]),
+                detail = "\n{} bits · {} sites/bit · {}".format(scheme.bit_count, info["sites_per_bit"],
                     "even parity" if scheme.parity else "no parity")
                 detail += "\n{display_field_width_nm:g} × {display_field_height_nm:g} nm field".format(**info)
                 if scheme.tiled:
@@ -969,9 +1275,9 @@ class EncodingComparison(tk.Toplevel):
             settings_summary = ("Replacement optimization ON — applied independently to every scheme. "
                                 if owner.optimize_enabled.get() else "Replacement optimization OFF for every scheme. ")
             settings_summary += "Regularization {} (0 = off). ".format(owner.regularization.get())
-            settings_summary += "Base transfer {} nL; excess multipliers {}. ".format(
+            settings_summary += "Base transfer {} nL; plate targets {}. ".format(
                 owner.app.transfer_volume.get(), ", ".join(
-                    "{} {}×".format(color, view.excess_multiplier.get()) for color, view in owner.color_views.items()))
+                    "{} {} nM".format(color, view.desired_concentration_nm.get()) for color, view in owner.color_views.items()))
             if owner.alignment_enabled.get():
                 alignment = owner._alignment_settings()
                 settings_summary += ("Alignment: X SD {translation_x_nm:g} nm, Y SD {translation_y_nm:g} nm, "

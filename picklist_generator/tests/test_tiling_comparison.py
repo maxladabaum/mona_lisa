@@ -167,7 +167,7 @@ class TilingWorkflowTests(unittest.TestCase):
             self.assertTrue(metadata['linear_light'])
             self.assertTrue(metadata['normalize_designs'])
             self.assertTrue(metadata['compensate_area'])
-            self.assertEqual(metadata['canvas_area_gain'], TILING_SCHEMES[key].tile_count)
+            self.assertEqual(metadata['canvas_area_gain'], geometry(key)['tile_count'])
         self.assertIs(view.designs, original_designs)
         self.assertEqual(view.gaussian_fwhm.get(), original_width)
         # Changes invalidate displayed results rather than silently leaving old images.
