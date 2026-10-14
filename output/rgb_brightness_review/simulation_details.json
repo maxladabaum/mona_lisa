@@ -1,0 +1,86 @@
+{
+  "manifest": "/Users/maxladabaum/Documents/GitHub/mona_lisa/picklist_generator/generated_output/2026-10-13_15-07-35/image_manifest.json",
+  "systematic_mapping": [
+    0.4,
+    0.5
+  ],
+  "random_sd_percentage_points": 10.0,
+  "seed": 42,
+  "random_model": "Independent additive Gaussian error, fixed per design/site; nominal zero stays off; effective brightness clipped to [0,1]. Same noise draws in both random cases.",
+  "scope": "Image sites only; barcode and fiducial signals excluded by the image renderer. No synthesis or picklist changes.",
+  "render_settings": {
+    "alignment": {
+      "center_x_nm": -9.95,
+      "center_y_nm": 17.849999999999998,
+      "origami_per_design": 200,
+      "rotation_deg": 3.0,
+      "translation_x_nm": 3.0,
+      "translation_y_nm": 3.0,
+      "variability_penalty": 0.0
+    },
+    "alignment_center_default": "center of full C12\u2013C1 / H01\u2013H15 staple grid, including middle column gap",
+    "alignment_center_frame": "unshifted image-site coordinates; C6 H01 is (0,0)",
+    "alignment_distribution": "independent zero-mean Gaussian dx, dy, angle; shared rigid transform within each origami",
+    "alignment_error_frame": "origami-aligned axes, before decoded shift and display rotation",
+    "barcode_sites_included": false,
+    "canvas_area_gain": 4.0,
+    "clipped_pixel_fraction": 0.0,
+    "compensate_area": true,
+    "coordinate_frame": "upright image",
+    "design_abundance_scale": 4.0,
+    "display_encoding": "legacy direct RGB",
+    "edge_handling": "Gaussian tails outside the field are cropped without renormalization",
+    "encoding_scheme": "tiles_2x2",
+    "error_samples": 32,
+    "exposure": 0.8,
+    "field_height_nm": 99.0,
+    "field_width_nm": 81.6,
+    "finite_count_scope": "alignment uncertainty only; fractional site intensities, no occupancy or photon noise",
+    "first_sample_x_nm": -2.1756880733944954,
+    "first_sample_y_nm": -4.575,
+    "fwhm_nm": 7.5,
+    "linear_light": false,
+    "linear_rgb_gain": 40.391999999999996,
+    "model": "sampled_rigid_alignment_then_decoded_shift",
+    "model_seed": 1729,
+    "normalization": "mean per design; normalization balances unequal quadrant sampling and fixes total design weight; shared exposure, no image-dependent scaling",
+    "normalize_designs": true,
+    "origami_rotation_degrees_clockwise": 90,
+    "preview_kind": "sampled ensemble mean",
+    "raster_columns": 109,
+    "raster_pixel_x_nm": 0.7486238532110091,
+    "raster_pixel_y_nm": 0.75,
+    "raster_rows": 132,
+    "reference_area_nm2": 3.1556249999999997
+  },
+  "cases": [
+    {
+      "name": "Nominal",
+      "systematically_changed_sites": 0,
+      "clipped_site_weights": 0,
+      "integrated_signal_change_percent": 0.0,
+      "display_rmse_vs_nominal": 0.0
+    },
+    {
+      "name": "Systematic bias",
+      "systematically_changed_sites": 94,
+      "clipped_site_weights": 0,
+      "integrated_signal_change_percent": 5.777781997845044,
+      "display_rmse_vs_nominal": 0.02254360926930282
+    },
+    {
+      "name": "Random variation",
+      "systematically_changed_sites": 0,
+      "clipped_site_weights": 10,
+      "integrated_signal_change_percent": -0.43338115020558066,
+      "display_rmse_vs_nominal": 0.031032414931098293
+    },
+    {
+      "name": "Bias + random variation",
+      "systematically_changed_sites": 94,
+      "clipped_site_weights": 10,
+      "integrated_signal_change_percent": 5.344400847639452,
+      "display_rmse_vs_nominal": 0.037104207171398645
+    }
+  ]
+}

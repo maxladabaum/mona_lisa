@@ -75,7 +75,7 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
                 weights[y,x] = site['replacement_fraction']
                 steps[y,x] = transfer_fraction_steps(design, site)
         if len(seen) != nx*ny or np.any(steps < 1) or np.any(steps != np.rint(steps)):
-            raise ValueError('Optimization requires a complete grid and 25 nL transfer increments.')
+            raise ValueError('Optimization requires a complete grid and integral fraction steps.')
         b = gain * ky.T @ local_target[:,:,channel] @ kx + alpha*weights
         def hessian(w):
             return gain**2 * gy @ w @ gx + alpha*w

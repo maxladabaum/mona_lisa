@@ -111,10 +111,9 @@ def rgb_app(tmp_path, monkeypatch):
         monkeypatch.setattr(picklist_app,key,tmp_path/(key+'.json'))
     app = picklist_app.PicklistApp()
     app.withdraw()
-    app.transfer_volume.set('250')
+    app.rgb_image_view.final_volume.set('1000')
     for color, view in app.rgb_image_view.color_views.items():
         view.desired_concentration_nm.set(str(TARGETS[color]))
-        view.excess_multiplier.set('999')  # Old internal value must have no effect.
     yield app
     app.destroy()
 
@@ -142,18 +141,21 @@ def test_gui_plate_defaults_recompute_invalidate_and_export_snapshot(rgb_app,tmp
     view.color_views['R1 R'].desired_concentration_nm.set('30')
     assert settings.plate_defaults_nm['R1 R']==20
     assert view.runs==[]
-    app.transfer_volume.set('25')
+    app.rgb_image_view.final_volume.set('100')
+    assert view.designs == []  # These targets need smaller than one original-stock droplet.
+    for source in view.color_views.values():
+        source.desired_concentration_nm.set('50')
     assert len(view.designs)==48
     assert all(d['full_original_nl']==25 for d in view.designs)
-    assert settings.plate_relative_transfers
+    assert not settings.plate_relative_transfers
 
 
 def test_rgb_ignores_manual_mixing_fields_for_preview_report_and_picklist(rgb_app, tmp_path):
     app = rgb_app
     view = app.rgb_image_view
-    app.transfer_volume.set('25')
+    app.rgb_image_view.final_volume.set('100')
     for color_view in view.color_views.values():
-        color_view.desired_concentration_nm.set('25')
+        color_view.desired_concentration_nm.set('50')
     view.tile_count.set('1')
     view._tile_count_changed()
     path = tmp_path / 'rgb.png'
@@ -179,5 +181,5 @@ def test_rgb_ignores_manual_mixing_fields_for_preview_report_and_picklist(rgb_ap
         settings.validate()
         with patch('exhaustive_pdf.compile_designs', wraps=compile_designs) as call:
             generate_views(settings, 'tiles_1x1', 0, score_only=True)
-        assert call.call_args.kwargs['plate_relative_transfers'] is True
+        assert call.call_args.kwargs['plate_relative_transfers'] is False
         error.assert_not_called()

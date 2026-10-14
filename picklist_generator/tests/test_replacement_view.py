@@ -74,7 +74,8 @@ class ReplacementViewTests(unittest.TestCase):
         standard_file, standard_plate, standard_panels = definitions["PAINT R1"]
         filename, plate, panels = definitions["LowConc PAINT R1"]
         self.assertEqual(filename, standard_file)
-        self.assertEqual(panels, standard_panels)
+        self.assertEqual(panels[:1], standard_panels)
+        self.assertEqual(panels[1]["label"], "D-Biotin")
         self.assertNotEqual(plate, standard_plate)
         view = SetView(self.root, "LowConc PAINT R1", SHEET_DIR / filename, plate, panels)
         self.assertEqual(view.concentration_nm, 20000)
@@ -165,7 +166,7 @@ class ReplacementViewTests(unittest.TestCase):
         self.assertEqual(view.site_fractions[names[0]], 1)
         view.update_percentage_options(25)
         self.assertEqual(view.site_fractions[names[1]], 0.75)
-        self.assertIn("do not fit", view.replacement_error.get())
+        self.assertIn("not feasible", view.replacement_error.get())
         view.clear()
         self.assertEqual(view.site_fractions, {})
 

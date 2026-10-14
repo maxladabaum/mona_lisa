@@ -3,10 +3,29 @@ import argparse
 import csv
 import re
 from pathlib import Path
-import openpyxl
+
+
+def add_biotin_inventory(records):
+    """Retain the ordered staples and inventory the eight later additions."""
+    path = Path(__file__).resolve().parents[1] / 'replacement_sheets' / 'lowconc_D_biotin_additions.csv'
+    with path.open(newline='') as handle:
+        next(handle)
+        additions = list(csv.DictReader(handle))
+    occupied = {row['Well Position'] for row in records}
+    result = [dict(row, Usage='') for row in records]
+    for row in additions:
+        if row['Well'] in occupied:
+            raise ValueError(f"D-Biotin addition would overwrite occupied well {row['Well']}")
+        occupied.add(row['Well'])
+        result.append({'Well Position': row['Well'], 'Sequence Name': row['Name'], 'Sequence': row['Sequence'],
+                       'Original Well Position': row['Replace Well'], 'Hinge Type': '',
+                       'Nominal Concentration µM': row['Nominal Concentration µM'],
+                       'IDT Source Plate': '', 'IDT Source Well': '', 'Previous Quadrant Well': '', 'Usage': 'Supplemental'})
+    return result
 
 
 def build(workbook, reference, output):
+    import openpyxl
     with Path(reference).open(encoding='utf-8-sig', newline='') as handle:
         next(handle)
         known = {r['Sequence Name']: r for r in csv.DictReader(handle)}
@@ -44,6 +63,7 @@ def build(workbook, reference, output):
     for key in ('Well Position','Sequence Name','Original Well Position'):
         if len({r[key] for r in result}) != len(result):
             raise ValueError(f'Duplicate {key}')
+    result = add_biotin_inventory(result)
     result.sort(key=lambda r: r['Well Position'])
     with Path(output).open('w', encoding='utf-8', newline='') as handle:
         handle.write('Plate SourcePlate8[8]\n')

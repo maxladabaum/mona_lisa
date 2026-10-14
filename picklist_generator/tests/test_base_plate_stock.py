@@ -18,7 +18,7 @@ def test_dilute_plate_preserves_wells_sequences_and_hinges(hinge):
     assert dilute_name == 'SourcePlate8[8]'
 
 
-def test_shared_selector_updates_preview_picklist_report_and_saved_choice(tmp_path, monkeypatch):
+def test_independent_rgb_selector_updates_preview_picklist_report_and_saved_choice(tmp_path, monkeypatch):
     import picklist_app
     from exhaustive_pdf import ReportSettings
     for name in ('CONFIG_PATH', 'PLATE_STATE_PATH', 'STORAGE_STATE_PATH'):
@@ -38,13 +38,19 @@ def test_shared_selector_updates_preview_picklist_report_and_saved_choice(tmp_pa
             view._prepare()
             assert view.runs
             view.base_plate_picker.current(1)
+            view.final_volume.set('20')
+            view.base_target.set('25')
+            view.biotin_target.set('25')
+            for source in view.color_views.values():
+                source.desired_concentration_nm.set('25')
             view.base_plate_picker.event_generate('<<ComboboxSelected>>')
-            assert app.base_plate_picker.get() == view.base_plate_picker.get()
+            assert app.base_plate_picker.get() != view.base_plate_picker.get()
             assert not view.runs
-            assert app.base_stock_concentration_nm() == 20000
-            assert app.base_path.get().endswith('book_base_20uM.csv')
-            assert all(v.base_concentration_nm == 20000 for v in app.set_views)
-            assert app.staple.get().startswith('20000,')
+            assert view.base_stock_concentration_nm() == 20000
+            assert app.base_stock_concentration_nm() == 200000
+            assert view.base_path.get().endswith('book_base_20uM.csv')
+            assert all(v.base_concentration_nm == 200000 for v in app.set_views)
+            assert app.staple.get().startswith('200000,')
             assert all(d['full_original_nl'] == d['full_replacement_nl'] == 25 for d in view.designs)
             view._prepare()
             assert len(view.runs) == 3
@@ -59,13 +65,11 @@ def test_shared_selector_updates_preview_picklist_report_and_saved_choice(tmp_pa
             saved_designs = deepcopy(view.designs)
             app._flush_config()
             assert json.loads(picklist_app.CONFIG_PATH.read_text())['base_plate'] == app.base_plate.get()
-            # Change from the other tab and confirm both selectors follow.
-            app.base_plate_picker.current(0)
-            assert view.base_plate_picker.current() == 0
-            assert not view.runs
-            assert all(d['full_replacement_nl'] == 250 for d in view.designs)
-            assert all(d['full_replacement_nl'] == 25 for d in saved_designs)
-            app.base_plate_picker.current(1)
+            # Manual edits must leave the RGB preview and prepared runs untouched.
+            app.base_plate_picker.current(2)
+            assert view.base_plate_picker.current() == 1
+            assert view.runs
+            assert view.designs == saved_designs
             app._flush_config()
             error.assert_not_called()
     finally:
@@ -74,7 +78,8 @@ def test_shared_selector_updates_preview_picklist_report_and_saved_choice(tmp_pa
     reopened.withdraw()
     try:
         assert reopened.base_stock_concentration_nm() == 20000
-        assert reopened.base_path.get().endswith('book_base_20uM.csv')
+        assert reopened.base_path.get().endswith('book_base_20uM_interleaved.csv')
+        assert reopened.rgb_image_view.base_path.get().endswith('book_base_20uM.csv')
         assert reopened.rgb_image_view.base_plate_picker.current() == 1
     finally:
         reopened.destroy()

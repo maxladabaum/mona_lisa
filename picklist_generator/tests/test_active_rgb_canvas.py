@@ -82,7 +82,11 @@ def test_ui_canvas_picklists_reports_and_reload(tmp_path, monkeypatch):
     app.withdraw()
     try:
         view = app.rgb_image_view
-        app.base_plate_picker.current(1)
+        view.base_plate_picker.current(1)
+        view.final_volume.set('20')
+        view.base_target.set('25')
+        for source in view.color_views.values():
+            source.desired_concentration_nm.set('25')
         view.tile_count.set('1'); view._tile_count_changed()
         path = tmp_path/'white.png'; Image.new('RGB',(40,50),'white').save(path)
         with patch('rgb_image_view.messagebox.showerror') as error:

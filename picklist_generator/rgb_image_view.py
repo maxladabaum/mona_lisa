@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,16 +12,17 @@ from types import SimpleNamespace
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from app_state import all_384_wells, create_run_output_directory, plate_wells, record_transfers, save_json, next_unused_wells
+from app_state import all_384_wells, create_run_output_directory, plate_wells, record_transfers, save_json
 from image_encoding import (
     CHANNELS, FIT_MODES, ROWS, IMAGE_COLUMNS, active_columns, default_barcode_schema, validate_barcode_schema, fiducial_sites, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, TILE_COUNT_SCHEMES, physical_raster_size,
-    bin_image, compile_designs, geometry, prepare_runs, reconstruct, site_name, rotate_point, physical_reference_raster, best_image_rotation,
+    bin_image, compile_designs, geometry, prepare_runs, synthesis_base_volume_nl, rgb_replacement_options, reconstruct, site_name, rotate_point, physical_reference_raster, best_image_rotation,
 )
 from gaussian_reconstruction import DEFAULT_FWHM_NM, DEFAULT_EXPOSURE, render_gaussian_overlay
 from gaussian_optimization import fitted_target, optimize_designs
 from optimization_regularization import DEFAULT_REGULARIZATION, validate_regularization
 from alignment_reconstruction import AlignmentModel, AlignmentSettings, VALIDATION_SEED
-from picklist_core import PICKLIST_COLUMNS, combine_picklists, parse_vector, valid_well_list, write_csv
+from brightness_simulation import brightness_cases
+from picklist_core import HINGE_TYPES, PICKLIST_COLUMNS, combine_picklists, parse_vector, valid_well_list, write_csv
 
 
 class RGBImageView(ttk.Frame):
@@ -30,10 +33,47 @@ class RGBImageView(ttk.Frame):
         # RGB targets belong to this workflow, not manual replacement tabs.
         targets = app.config.get("image_plate_targets_nm", {})
         self.color_views = {color: SimpleNamespace(
-            desired_concentration_nm=tk.StringVar(value=str(targets.get(color, 25))),
+            desired_concentration_nm=tk.StringVar(value=str(targets.get(color, 50))),
             path_var=tk.StringVar(value=str(Path(app_dir) / "replacement_sheets" / "PAINT_R1_replace.csv")),
             plate_name="SourcePlate7[7]", concentration_nm=20000.0,
         ) for color in CHANNELS}
+        # RGB settings are persisted separately; never inherit the manual-run form.
+        self.base_plate_options = dict(app.base_plate_options)
+        defaults = {
+            "base_plate": next(iter(self.base_plate_options)),
+            "minimum_transfer_nl": "25", "transfer_increment_nl": "25",
+            "final_volume": "100", "base_target": "50", "biotin_target": "50", "scaffold_target": "10",
+            "destination_plate": "Destination[1]", "source_plate_type": "384PP_AQ_BP",
+            "max_volume": "12.5", "hinge_type": HINGE_TYPES["original"],
+            "output_root": "generated_output", "start_well": "A01",
+            "base_path": str(Path(app_dir) / "replacement_sheets" / "book_base.csv"),
+            "base_stock": "200000", "staple_buffer": "1,0,0",
+            "scaffold": "400,0.1,0,0", "magnesium": "0,0,100,0",
+            "sodium": "0,0,0,100", "te_10x": "0,10,0,0",
+            "desired_buffer": "1,12,5",
+            "replacement_path": str(Path(app_dir) / "replacement_sheets" / "PAINT_R1_replace.csv"),
+            "replacement_plate": "SourcePlate7[7]", "replacement_stock": "20000",
+            "biotin_path": str(Path(app_dir) / "replacement_sheets" / "lowconc_D_biotin_additions.csv"),
+            "biotin_plate": "SourcePlate8[8]", "biotin_stock": "20000",
+        }
+        saved = dict(app.config.get("image_run_settings", {}))
+        # Preserve the previous biotin concentration once, then keep it independent.
+        saved.setdefault("biotin_target", saved.get("base_target", defaults["base_target"]))
+        # Preserve explicitly saved RGB recipe inputs; old transfer/repeat inputs are retired.
+        legacy_mix = str(saved.get("desired_mix", "")).split(",")
+        if len(legacy_mix) == 5:
+            for key, value in (("final_volume", legacy_mix[0]), ("scaffold_target", legacy_mix[1]),
+                               ("desired_buffer", ",".join(legacy_mix[2:]))):
+                saved.setdefault(key, value)
+        self.run_variables = {key: tk.StringVar(value=str(saved.get(key, value))) for key, value in defaults.items()}
+        for key, variable in self.run_variables.items():
+            setattr(self, key, variable)
+        if self.base_plate.get() not in self.base_plate_options:
+            self.base_plate.set(defaults["base_plate"])
+        self.transfer_volume = tk.StringVar()
+        self.synthesis_summary = tk.StringVar()
+        self._update_base_volume()
+        self._sync_replacement_source()
         self.pixels = None
         self.comparison_window = None
         self.tiling_window = None
@@ -49,12 +89,17 @@ class RGBImageView(ttk.Frame):
         self.compensate_area = tk.BooleanVar(value=app.config.get("image_compensate_area", True))
         self.reconstruction = None
         self.reconstruction_summary = tk.StringVar()
-        self.optimize_enabled = tk.BooleanVar(value=False)
+        self.optimize_enabled = tk.BooleanVar(value=True)
         self.regularization = tk.StringVar(value=str(app.config.get("image_optimization_regularization", DEFAULT_REGULARIZATION)))
         self.optimization_metrics = None
         self.optimization_summary = tk.StringVar()
-        self.alignment_enabled = tk.BooleanVar(value=False)
+        self.alignment_enabled = tk.BooleanVar(value=True)
         self.alignment_values = {key: tk.StringVar(value=str(value)) for key, value in vars(AlignmentSettings()).items()}
+        self.brightness_enabled = tk.BooleanVar(value=False)
+        self.brightness_values = {key: tk.StringVar(value=value) for key,value in
+            (("ratio","1.10"),("cv_percent","10"),("transfer_cv_percent","10"),("seed","42"))}
+        self.brightness_summary = tk.StringVar()
+        self.brightness_results = []
         self.alignment_models = {}
         self.example_seed = 42
         self.alignment_example = None
@@ -85,7 +130,6 @@ class RGBImageView(ttk.Frame):
         self.explanation = tk.StringVar()
         self.auto_export_templates = tk.BooleanVar(value=app.config.get("image_auto_export_templates", True))
         self.alignment_template_directory = None
-        self.start_well = tk.StringVar(value="A01")
         self.design_name = tk.StringVar()
         self.status = tk.StringVar(value="Upload an image to preview its color/shift designs.")
         toolbar = ttk.Frame(self)
@@ -155,18 +199,40 @@ class RGBImageView(ttk.Frame):
         source_bar = ttk.Frame(self)
         source_bar.pack(fill="x", pady=(0, 6))
         ttk.Label(source_bar, text="Base plate stock").pack(side="left")
-        self.base_plate_picker = ttk.Combobox(source_bar, textvariable=app.base_plate,
-            values=tuple(app.base_plate_options), state="readonly", width=36)
+        self.base_plate_picker = ttk.Combobox(source_bar, textvariable=self.base_plate,
+            values=tuple(self.base_plate_options), state="readonly", width=36)
         self.base_plate_picker.pack(side="left", padx=8)
+        synthesis = ttk.LabelFrame(self, text="Synthesis per design")
+        synthesis.pack(fill="x", pady=5)
+        for index, (label, key) in enumerate((("Final volume (µL)", "final_volume"),
+                ("Book-base staple target (nM)", "base_target"), ("Biotin target (nM)", "biotin_target"),
+                ("Scaffold target (nM)", "scaffold_target"))):
+            ttk.Label(synthesis, text=label).grid(row=0, column=2*index, padx=5, sticky="w")
+            ttk.Entry(synthesis, textvariable=self.run_variables[key], width=9,
+                      state="normal").grid(row=0, column=2*index+1, padx=5)
+        ttk.Label(synthesis, text="Calculated base transfer (nL/staple)").grid(row=1, column=0, columnspan=2, sticky="w", padx=5)
+        ttk.Entry(synthesis, textvariable=self.transfer_volume, state="readonly", width=10).grid(row=1, column=2, sticky="w", padx=5)
+        for column, (label, key) in enumerate((("Minimum transfer (nL)", "minimum_transfer_nl"),
+                                               ("Transfer increment (nL)", "transfer_increment_nl"))):
+            ttk.Label(synthesis, text=label).grid(row=3, column=column*2, sticky="w", padx=5)
+            ttk.Entry(synthesis, textvariable=self.run_variables[key], width=9).grid(row=3, column=column*2+1, padx=5)
+        ttk.Label(synthesis, textvariable=self.synthesis_summary, wraplength=700).grid(row=2, column=0, columnspan=6, sticky="w", padx=5)
         settings = ttk.Frame(self)
         settings.pack(fill="x")
-        ttk.Label(settings, text="Base volume (nL)").pack(side="left")
-        ttk.Spinbox(settings, from_=25, to=100000, increment=25, textvariable=app.transfer_volume, width=7).pack(side="left", padx=6)
+        self.replacement_options = {}
         for color, view in self.color_views.items():
-            ttk.Label(settings, text=color + " target (nM)").pack(side="left", padx=(8, 0))
-            ttk.Entry(settings, textvariable=view.desired_concentration_nm, width=6).pack(side="left", padx=6)
-        ttk.Button(settings, text="Run & Mixing Settings", command=self._open_settings).pack(side="right")
-        ttk.Label(self, text="Set RGB plate targets here. All colors use LowConc PAINT R1 (source plate 7, 20 µM stock).").pack(anchor="w", pady=3)
+            group = ttk.Frame(settings)
+            group.pack(side="left", fill="both", expand=True, padx=6)
+            ttk.Label(group, text=color + " site target (nM)").grid(row=0, column=0, sticky="w")
+            ttk.Entry(group, textvariable=view.desired_concentration_nm, width=6).grid(row=0, column=1, padx=6)
+            self.replacement_options[color] = tk.StringVar()
+            ttk.Label(group, textvariable=self.replacement_options[color], wraplength=330).grid(
+                row=1, column=0, columnspan=2, sticky="w", pady=3)
+        self._update_replacement_options()
+        self._build_run_settings()
+        ttk.Label(self, text="Every RGB run includes 8 D-Biotin staples from the LowConc base plate at the independent biotin target. "
+                  "Load P17–P24 at 20 µM for the default map; source settings are under Sources & mixing….",
+                  wraplength=1050).pack(anchor="w", pady=3)
         reconstruction_bar = ttk.Frame(self)
         reconstruction_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(reconstruction_bar, text="Gaussian FWHM (nm)").pack(side="left")
@@ -197,6 +263,18 @@ class RGBImageView(ttk.Frame):
             ttk.Label(alignment_bar, text=label).grid(row=row, column=column, sticky="w", padx=4)
             ttk.Entry(alignment_bar, textvariable=self.alignment_values[key], width=8).grid(row=row, column=column+1, padx=4)
         ttk.Label(alignment_bar, text="Illustrative errors; center is relative to C6 H01 before shifts. Default center: full staple grid.").grid(row=3, column=0, columnspan=8, sticky="w")
+        brightness_bar = ttk.LabelFrame(self, text="R1/body competition error — preview only", padding=5)
+        self.brightness_controls = brightness_bar
+        ttk.Checkbutton(brightness_bar, text="Simulate stoichiometry errors", variable=self.brightness_enabled,
+                        command=self._brightness_changed).grid(row=0,column=0,columnspan=2,sticky="w")
+        for index,(key,label) in enumerate((("ratio","R1/body ratio multiplier (×)"),
+                                            ("cv_percent","Source ratio CV (%)"),("transfer_cv_percent","Per-transfer volume CV (%)"),("seed","Random seed"))):
+            ttk.Label(brightness_bar,text=label).grid(row=1,column=index*2,padx=4)
+            ttk.Entry(brightness_bar,textvariable=self.brightness_values[key],width=7).grid(row=1,column=index*2+1)
+        ttk.Label(brightness_bar,text="1.10 = 10% higher R1/body ratio; 0.90 = 10% lower. 0% stays off; 100% stays saturated.").grid(row=2,column=0,columnspan=6,sticky="w")
+        ttk.Button(brightness_bar,text="New brightness example",command=self._new_brightness_example).grid(row=2,column=6,columnspan=2)
+        ttk.Label(brightness_bar,text="R1 occupancy = g·p / (g·p + 1 − p), assuming equal binding effectiveness and brightness proportional to occupancy.\nSource ratios are log-normal (mean multiplier 1), shared across designs using the same staple. Transfer volumes have independent log-normal errors for R1 and body at each site/design.\nTransfer CV applies to total delivered volume per source/site/design, not each droplet. Set either CV to 0 to disable it. Image sites only; current alignment settings apply.\nPreview only: optimization, replacement percentages, and picklists are unchanged.",
+                  wraplength=1050).grid(row=3,column=0,columnspan=8,sticky="w")
         optimization_bar = ttk.Frame(self)
         optimization_bar.pack(fill="x", pady=(6, 0))
         ttk.Checkbutton(optimization_bar, text="Optimize replacement percentages for Gaussian overlap",
@@ -235,6 +313,16 @@ class RGBImageView(ttk.Frame):
         self.alignment_details = ttk.Frame(self)
         ttk.Label(self.alignment_details, textvariable=self.alignment_summary, wraplength=900).pack(side="left")
         ttk.Button(self.alignment_details, text="New alignment example", command=self._new_alignment_example).pack(side="right")
+        brightness_bar.pack(fill="x", pady=(6,0))
+        self.brightness_previews = ttk.LabelFrame(self,text="Brightness comparison — active replacement assignments",padding=5)
+        self.brightness_canvases=[]
+        for label in ("Nominal", "Systematic ratio", "Random source + transfer", "Systematic + random"):
+            frame=ttk.LabelFrame(self.brightness_previews,text=label)
+            frame.pack(side="left",padx=3)
+            canvas=tk.Canvas(frame,width=225,height=214,background="#15191d",highlightthickness=0)
+            canvas.pack()
+            self.brightness_canvases.append(canvas)
+        self.brightness_details=ttk.Label(self,textvariable=self.brightness_summary,wraplength=1000)
         chooser = ttk.Frame(self)
         self.alignment_pack_before = chooser
         chooser.pack(fill="x")
@@ -248,15 +336,65 @@ class RGBImageView(ttk.Frame):
         detail.pack(fill="both", expand=True, pady=6)
         self.design_canvas = tk.Canvas(detail, width=590, height=235, background="#15191d", highlightthickness=0)
         self.design_canvas.pack(side="left", fill="y")
-        columns = ("Site", "Image pixel x,y", "RGB", "Replacement %", "Repl. nL", "Original nL")
-        self.site_tree = ttk.Treeview(detail, columns=columns, show="headings", height=8)
+        inspector = self.design_inspector = ttk.Notebook(detail)
+        inspector.pack(side="left", fill="both", expand=True)
+        sites_page = ttk.Frame(inspector)
+        picklist_page = ttk.Frame(inspector)
+        recipe_page = ttk.Frame(inspector)
+        inspector.add(sites_page, text="Image sites")
+        inspector.add(picklist_page, text="Prepared picklist")
+        inspector.add(recipe_page, text="Prepared mixing recipe")
+        columns = ("Helix", "Row", "RGB", "Replacement %", "Repl. nL", "Original nL")
+        self.site_tree = ttk.Treeview(sites_page, columns=columns, show="headings", height=8, selectmode="browse")
         for column in columns:
             self.site_tree.heading(column, text=column)
             self.site_tree.column(column, width=85, stretch=True)
-        scroll = ttk.Scrollbar(detail, orient="vertical", command=self.site_tree.yview)
+        scroll = ttk.Scrollbar(sites_page, orient="vertical", command=self.site_tree.yview)
         self.site_tree.configure(yscrollcommand=scroll.set)
         scroll.pack(side="right", fill="y")
         self.site_tree.pack(side="left", fill="both", expand=True)
+        self.picklist_summary = tk.StringVar(value="Prepare runs to see the actual transfers for this design.")
+        ttk.Label(picklist_page, textvariable=self.picklist_summary, wraplength=540).pack(anchor="w")
+        picklist_table = ttk.Frame(picklist_page)
+        picklist_table.pack(fill="both", expand=True)
+        self.picklist_columns = ("function", *PICKLIST_COLUMNS)
+        self.picklist_tree = ttk.Treeview(picklist_table, columns=self.picklist_columns, show="headings", height=8, selectmode="browse")
+        for column in self.picklist_columns:
+            self.picklist_tree.heading(column, text="Transfer Volume (nL)" if column == "Transfer Volume" else column)
+            self.picklist_tree.column(column, width=150, stretch=False)
+        self.site_tree.bind("<<TreeviewSelect>>", self._highlight_selected_site)
+        self.picklist_tree.bind("<<TreeviewSelect>>", self._highlight_selected_site)
+        inspector.bind("<<NotebookTabChanged>>", self._highlight_selected_site)
+        self.picklist_tree.column("function", width=370)
+        vertical = ttk.Scrollbar(picklist_table, orient="vertical", command=self.picklist_tree.yview)
+        horizontal = ttk.Scrollbar(picklist_table, orient="horizontal", command=self.picklist_tree.xview)
+        self.picklist_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+        picklist_table.rowconfigure(0, weight=1)
+        picklist_table.columnconfigure(0, weight=1)
+        self.picklist_tree.grid(row=0, column=0, sticky="nsew")
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.recipe_summary = tk.StringVar(value="Prepare runs to see the mixing recipe for this design.")
+        ttk.Label(recipe_page, textvariable=self.recipe_summary, wraplength=600).pack(anchor="w", pady=4)
+        self.recipe_tree = ttk.Treeview(recipe_page, columns=("Reagent", "Volume (µL)"), show="headings", height=6)
+        for column, width in (("Reagent", 250), ("Volume (µL)", 120)):
+            self.recipe_tree.heading(column, text=column)
+            self.recipe_tree.column(column, width=width)
+        self.recipe_tree.pack(fill="x")
+        ttk.Label(recipe_page, text="Staple mix collected per destination well (all staple types). "
+                  "Pool the listed wells for this design before adding the recipe's other reagents.",
+                  wraplength=600).pack(anchor="w", pady=4)
+        well_frame = ttk.Frame(recipe_page)
+        well_frame.pack(fill="both", expand=True)
+        self.recipe_well_tree = ttk.Treeview(well_frame,
+            columns=("Destination plate", "Well", "Staple mix (µL)"), show="headings", height=4)
+        for column, width in (("Destination plate", 180), ("Well", 70), ("Staple mix (µL)", 130)):
+            self.recipe_well_tree.heading(column, text=column)
+            self.recipe_well_tree.column(column, width=width)
+        well_scroll = ttk.Scrollbar(well_frame, orient="vertical", command=self.recipe_well_tree.yview)
+        self.recipe_well_tree.configure(yscrollcommand=well_scroll.set)
+        well_scroll.pack(side="right", fill="y")
+        self.recipe_well_tree.pack(side="left", fill="both", expand=True)
         actions = ttk.Frame(self)
         actions.pack(fill="x", pady=6)
         ttk.Label(actions, text="Start at well").pack(side="left")
@@ -265,6 +403,9 @@ class RGBImageView(ttk.Frame):
         self.prepare_button.pack(side="left", padx=6)
         self.export_button = ttk.Button(actions, text="Save image batch…", command=self._export, state="disabled")
         self.export_button.pack(side="left", padx=6)
+        self.recipe_export_button = ttk.Button(actions, text="Save mixing recipe batch…",
+                                               command=self._export_recipes, state="disabled")
+        self.recipe_export_button.pack(side="left", padx=6)
         self.store_button = ttk.Button(actions, command=self._store, state="disabled")
         self.store_button.pack(side="left", padx=6)
         ttk.Label(self, textvariable=self.status, wraplength=1150).pack(anchor="w", pady=4)
@@ -282,14 +423,148 @@ class RGBImageView(ttk.Frame):
         self.gaussian_exposure.trace_add("write", self._render_settings_changed)
         for variable in self.alignment_values.values():
             variable.trace_add("write", self._alignment_changed)
-        for variable in (app.transfer_volume, app.base_plate,
-                         *(view.desired_concentration_nm for view in self.color_views.values())):
-            variable.trace_add("write", self._volumes_changed)
+        for variable in self.brightness_values.values():
+            variable.trace_add("write",self._brightness_changed)
+        self.base_plate.trace_add("write", self._base_plate_changed)
+        for key, variable in self.run_variables.items():
+            if key != "base_plate":
+                variable.trace_add("write", lambda *_args, key=key: self._run_setting_changed(key))
         for view in self.color_views.values():
+            view.desired_concentration_nm.trace_add("write", self._volumes_changed)
             view.desired_concentration_nm.trace_add("write", self._save_rgb_targets)
-        for variable in (self.start_well, app.base_path, app.destination_plate, app.source_plate_type, app.max_volume,
-                         app.transfers_per_source, app.hinge_type, *(view.path_var for view in self.color_views.values())):
-            variable.trace_add("write", self._invalidate)
+
+    def _build_run_settings(self):
+        frame = ttk.LabelFrame(self, text="RGB run settings (saved independently)")
+        frame.pack(fill="x", pady=5)
+        for index, (label, key) in enumerate((("Destination plate", "destination_plate"),
+                ("Max well volume (µL)", "max_volume"))):
+            ttk.Label(frame, text=label).grid(row=0, column=index*2, padx=5, sticky="w")
+            ttk.Entry(frame, textvariable=self.run_variables[key], width=18).grid(row=0, column=index*2+1, padx=5)
+        details = ttk.Notebook(frame)
+        self.run_settings_details = details
+        self.show_run_details = tk.BooleanVar(value=True)
+        def toggle():
+            if self.show_run_details.get():
+                details.grid(row=2, column=0, columnspan=7, sticky="ew", pady=5)
+            else:
+                details.grid_remove()
+        ttk.Checkbutton(frame, text="Sources & mixing…", variable=self.show_run_details,
+                        command=toggle).grid(row=0, column=6, padx=5)
+        toggle()
+        pages = [
+            ("Sources", [("Base source CSV", "base_path"), ("Base stock (nM)", "base_stock"),
+                         ("RGB source CSV (all colors)", "replacement_path"),
+                         ("RGB source plate name", "replacement_plate"), ("RGB stock (nM)", "replacement_stock"),
+                         ("D-Biotin source map", "biotin_path"), ("D-Biotin source plate", "biotin_plate"),
+                         ("D-Biotin stock (nM)", "biotin_stock"),
+                         ("Source plate type", "source_plate_type"), ("Hinges", "hinge_type")]),
+            ("Mixing", [("All staple stocks: buffer [×TE, Mg mM, Na mM]", "staple_buffer"),
+                        ("Scaffold [nM, ×TE, Mg mM, Na mM]", "scaffold"),
+                        ("Mg stock [nM, ×TE, Mg mM, Na mM]", "magnesium"),
+                        ("Na stock [nM, ×TE, Mg mM, Na mM]", "sodium"),
+                        ("TE stock [nM, ×TE, Mg mM, Na mM]", "te_10x"),
+                        ("Final buffer [×TE, Mg mM, Na mM]", "desired_buffer")]),
+            ("Output", [("Output folder", "output_root")]),
+        ]
+        for title, fields in pages:
+            page = ttk.Frame(details, padding=5)
+            details.add(page, text=title)
+            page.columnconfigure(1, weight=1)
+            for row, (label, key) in enumerate(fields):
+                ttk.Label(page, text=label).grid(row=row, column=0, sticky="w", padx=5)
+                if key == "hinge_type":
+                    entry = ttk.Combobox(page, textvariable=self.hinge_type, values=list(HINGE_TYPES.values()), state="readonly")
+                else:
+                    entry = ttk.Entry(page, textvariable=self.run_variables[key], width=55)
+                entry.grid(row=row, column=1, sticky="ew", padx=5, pady=2)
+            if title == "Mixing":
+                ttk.Label(page, text="Final volume and concentration targets are set above. Each transfer independently follows the minimum and increment. All dispensed staples go into that volume.").grid(
+                    row=len(fields), column=0, columnspan=2, sticky="w", pady=4)
+
+    def _save_run_settings(self):
+        self.app.config["image_run_settings"] = {key: variable.get() for key, variable in self.run_variables.items()}
+        self.app._schedule_config_save()
+
+    def _sync_replacement_source(self):
+        for view in self.color_views.values():
+            view.path_var.set(self.replacement_path.get())
+            view.plate_name = self.replacement_plate.get().strip()
+            try:
+                view.concentration_nm = float(self.replacement_stock.get())
+            except ValueError:
+                view.concentration_nm = float("nan")
+
+    def _run_setting_changed(self, key):
+        self._save_run_settings()
+        if key.startswith("replacement_"):
+            self._sync_replacement_source()
+        if key in ("final_volume", "base_target", "base_stock", "replacement_stock", "minimum_transfer_nl", "transfer_increment_nl"):
+            self._update_base_volume()
+            self._volumes_changed()
+        else:
+            self._invalidate()
+
+    def _base_plate_changed(self, *_args):
+        filename, stock = self.base_plate_options[self.base_plate.get()]
+        self.base_path.set(str(Path(self.app_dir) / "replacement_sheets" / filename))
+        self.base_stock.set(str(stock))
+        if filename == "book_base_20uM_interleaved.csv":
+            self.hinge_type.set(HINGE_TYPES["balanced_rigid"])
+        self._save_run_settings()
+
+    def base_stock_concentration_nm(self):
+        return float(self.base_stock.get())
+
+    def _transfer_limits(self):
+        return dict(minimum_transfer_nl=float(self.minimum_transfer_nl.get()),
+                    transfer_increment_nl=float(self.transfer_increment_nl.get()))
+
+    def _base_transfer_volume(self):
+        return synthesis_base_volume_nl(float(self.final_volume.get()), self._base_concentration(),
+                                        self.base_stock_concentration_nm(), **self._transfer_limits())
+
+    def _base_concentration(self):
+        return float(self.base_target.get())
+
+    def _update_replacement_options(self):
+        for color, view in self.color_views.items():
+            try:
+                grid = rgb_replacement_options(float(self.final_volume.get()), float(view.desired_concentration_nm.get()),
+                                               self.base_stock_concentration_nm(), view.concentration_nm, **self._transfer_limits())
+                fractions = grid["fractions"]
+                levels = ["{:g}%".format(100 * fraction) for fraction in fractions]
+                if len(levels) > 16:
+                    levels = levels[:5] + ["…"] + levels[-5:]
+                text = "Available: {} ({} levels).\n100% PAINT: {:g} nL; 0% original: {:g} nL. Minimum {:g} nL; increment {:g} nL.".format(
+                    ", ".join(levels), len(fractions), grid["full_replacement_nl"], grid["full_original_nl"], float(self.minimum_transfer_nl.get()), float(self.transfer_increment_nl.get()))
+                if not math.isclose(fractions[0], 0) or not math.isclose(fractions[-1], 1):
+                    text += " RGB unavailable: both 0% and 100% must be achievable."
+                self.replacement_options[color].set(text)
+            except (ValueError, OverflowError) as exc:
+                self.replacement_options[color].set("No available levels: {}".format(exc))
+
+    def _update_base_volume(self):
+        try:
+            volume = self._base_transfer_volume()
+        except ValueError as exc:
+            self.transfer_volume.set("")
+            self.synthesis_summary.set(str(exc))
+        else:
+            self.transfer_volume.set("{:g}".format(volume))
+            self.synthesis_summary.set("Base transfer: {:g} nL per standard body staple. PAINT/competitor and biotin transfers "
+                                       "follow their own targets, using the same minimum and increment.".format(volume))
+
+    def _mixing_settings(self):
+        vectors = {key: parse_vector(self.run_variables[key].get(), 4, key)
+                   for key in ("scaffold", "magnesium", "sodium", "te_10x")}
+        vectors["staple"] = [self.base_stock_concentration_nm(), *parse_vector(self.staple_buffer.get(), 3, "Staple buffer")]
+        vectors["desired"] = [float(self.final_volume.get()), self._base_concentration(), float(self.scaffold_target.get()),
+                              *parse_vector(self.desired_buffer.get(), 3, "Final buffer")]
+        if any(not math.isfinite(value) or value < 0 for values in vectors.values() for value in values):
+            raise ValueError("RGB mixing settings must contain finite, nonnegative values.")
+        if any(value <= 0 for value in vectors["desired"][:2]):
+            raise ValueError("Final volume and book-base target must be positive.")
+        return vectors
 
     def _regularization_value(self):
         return validate_regularization(self.regularization.get())
@@ -331,6 +606,33 @@ class RGBImageView(ttk.Frame):
 
     def _light_options(self):
         return {"linear_light": self.linear_light.get(), "normalize_designs": self.normalize_designs.get(), "compensate_area": self.compensate_area.get()}
+
+    def _new_brightness_example(self):
+        try:
+            self.brightness_values["seed"].set(str(int(self.brightness_values["seed"].get())+1))
+        except ValueError:
+            self.brightness_summary.set("Seed must be a nonnegative integer.")
+
+    def _brightness_changed(self, *_args):
+        self.brightness_previews.pack_forget()
+        self.brightness_details.pack_forget()
+        self.brightness_results=[]
+        if not self.brightness_enabled.get() or not self.designs or self.reconstruction is None:
+            return
+        self.brightness_details.pack(fill="x",before=self.alignment_pack_before)
+        try:
+            settings={k:float(v.get()) for k,v in self.brightness_values.items() if k!="seed"}
+            settings["seed"]=int(self.brightness_values["seed"].get())
+            cases=brightness_cases(self.designs,**settings)
+            self.brightness_results=[self._render_overlay(case) for case in cases]
+            self.brightness_previews.pack(fill="x",pady=5,before=self.brightness_details)
+            for canvas,result in zip(self.brightness_canvases,self.brightness_results):
+                self._draw_overlay(canvas,result)
+            self.brightness_summary.set("R1/body ratio {}×; source ratio CV {}%; per-transfer volume CV {}%; seed {}. "
+                "Source errors shared across designs; transfers independent. Same draws in both random panels. {}".format(settings["ratio"],settings["cv_percent"],settings["transfer_cv_percent"],settings["seed"],
+                "Includes expected alignment uncertainty." if self.alignment_enabled.get() else "Ideal alignment."))
+        except ValueError as exc:
+            self.brightness_summary.set("Brightness settings: {}".format(exc))
 
     def _alignment_settings(self):
         values = {key: float(var.get()) for key, var in self.alignment_values.items()}
@@ -462,16 +764,17 @@ class RGBImageView(ttk.Frame):
             self._refresh_comparison()
 
     def _concentration_options(self):
-        return dict(barcode_schema=deepcopy(self.barcode_schema), active_image_columns=self._active_columns(), plate_defaults_nm={color: float(view.desired_concentration_nm.get())
+        return dict(**self._transfer_limits(), barcode_schema=deepcopy(self.barcode_schema), active_image_columns=self._active_columns(), plate_defaults_nm={color: float(view.desired_concentration_nm.get())
                                       for color, view in self.color_views.items()},
-                    plate_relative_transfers=True,
-                    base_concentration_nm=self.app.base_stock_concentration_nm(),
+                    plate_relative_transfers=False,
+                    base_desired_concentration_nm=self._base_concentration(),
+                    base_concentration_nm=self.base_stock_concentration_nm(),
                     source_concentrations_nm={color: view.concentration_nm for color, view in self.color_views.items()})
 
     def _compile_scheme(self, pixels, scheme_id):
         """Use identical concentration settings for the main view and comparison."""
         return compile_designs(
-            pixels, int(self.app.transfer_volume.get()),
+            pixels, self._base_transfer_volume(),
             {color: 1.0 for color in self.color_views},
             scheme_id, int(self.rotation.get()), linear_light=self.linear_light.get(),
             **self._concentration_options())
@@ -494,13 +797,17 @@ class RGBImageView(ttk.Frame):
     def _draw_overlay(self, canvas, result, info=None, draw_width=288):
         from PIL import Image, ImageTk
         info = self.image_geometry if info is None else info
-        scale = draw_width / max(info["display_field_width_nm"], info["display_field_height_nm"])
-        width = round(scale * info["display_field_width_nm"])
-        height = round(scale * info["display_field_height_nm"])
+        # Comparison panels have different widths. Fit to this canvas rather
+        # than drawing a 288-pixel image into a 225-pixel brightness panel.
+        canvas_width = float(canvas.cget("width"))
+        available_width = max(1, min(draw_width, canvas_width - 12))
+        scale = available_width / max(info["display_field_width_nm"], info["display_field_height_nm"])
+        width = max(1, round(scale * info["display_field_width_nm"]))
+        height = max(1, round(scale * info["display_field_height_nm"]))
         canvas.delete("all")
         canvas.configure(height=height + 14)
         canvas._overlay_photo = ImageTk.PhotoImage(result.rgb.resize((width, height), Image.Resampling.LANCZOS), master=canvas)
-        canvas.create_image(6 + (draw_width - width) / 2, 7, anchor="nw", image=canvas._overlay_photo)
+        canvas.create_image((canvas_width - width) / 2, 7, anchor="nw", image=canvas._overlay_photo)
 
     def _compare_schemes(self):
         if self.pixels is None:
@@ -643,15 +950,13 @@ class RGBImageView(ttk.Frame):
         if hasattr(self, "open_templates_button"):
             self.open_templates_button.configure(state="disabled")
         self.runs = []
+        self._draw_picklist()
         self.saved = self.stored = self.committed = False
         self.export_button.configure(state="disabled")
+        self.recipe_export_button.configure(state="disabled")
         self.store_button.configure(state="disabled")
         if self.pixels is not None:
             self.status.set("Preview ready. Prepare {} runs to allocate separate unused wells using the current settings.".format(self.image_geometry["design_count"]))
-
-    def _open_settings(self):
-        self.app.main_tabs.tab(self.app.settings_page, state="normal")
-        self.app.main_tabs.select(self.app.settings_page)
 
     def _upload(self):
         path = filedialog.askopenfilename(parent=self, title="Choose RGB image", filetypes=[
@@ -671,6 +976,8 @@ class RGBImageView(ttk.Frame):
         self.pixels = None
         self.designs = []
         self.reconstruction = None
+        self.brightness_previews.pack_forget()
+        self.brightness_details.pack_forget()
         self.alignment_previews.pack_forget()
         self.alignment_details.pack_forget()
         self.alignment_example = self.ideal_reconstruction = None
@@ -690,10 +997,13 @@ class RGBImageView(ttk.Frame):
             messagebox.showerror("Cannot import image", str(exc), parent=self)
 
     def _volumes_changed(self, *_args):
+        self._update_replacement_options()
         self._invalidate()
         self.optimization_metrics = None
         self.optimization_summary.set("")
         self.baseline_frame.pack_forget()
+        self.brightness_previews.pack_forget()
+        self.brightness_details.pack_forget()
         self.alignment_previews.pack_forget()
         self.alignment_details.pack_forget()
         self.alignment_example = self.ideal_reconstruction = None
@@ -727,8 +1037,8 @@ class RGBImageView(ttk.Frame):
                 model = self._alignment_model(self.designs)
                 self.ideal_reconstruction = render_gaussian_overlay(self.designs, model.fwhm, model.exposure, **self._light_options())
                 self.alignment_example = model.example(self.designs, self.example_seed)
-                self.alignment_previews.pack(fill="x", pady=5, before=self.alignment_pack_before)
-                self.alignment_details.pack(fill="x", before=self.alignment_pack_before)
+                self.alignment_previews.pack(fill="x", pady=5, before=self.brightness_controls)
+                self.alignment_details.pack(fill="x", before=self.brightness_controls)
                 for canvas, result in zip(self.alignment_canvases, (self.ideal_reconstruction, self.reconstruction, self.alignment_example)):
                     self._draw_overlay(canvas, result)
                 self.alignment_summary.set("{} independent origami/design · zero-mean Gaussian rigid errors · 32 sampled transforms for expectation. "
@@ -738,10 +1048,13 @@ class RGBImageView(ttk.Frame):
             area_gain = self.reconstruction.metadata.get("canvas_area_gain", 1)
             self.reconstruction_summary.set(self.reconstruction_summary.get() + " · canvas exposure compensation {:g}×".format(area_gain))
             self._draw_design()
+            self._brightness_changed()
         except ValueError as exc:
             self.designs = []
             self.reconstruction = None
             self.baseline_frame.pack_forget()
+            self.brightness_previews.pack_forget()
+            self.brightness_details.pack_forget()
             self.alignment_previews.pack_forget()
             self.alignment_details.pack_forget()
             self.status.set("Check volume and reconstruction settings: {}".format(exc))
@@ -795,6 +1108,7 @@ class RGBImageView(ttk.Frame):
                 y += 8 * ny
 
     def _draw_design(self):
+        self._draw_picklist()
         if not self.designs:
             return
         design = next(item for item in self.designs if item["name"] == self.design_name.get())
@@ -833,7 +1147,8 @@ class RGBImageView(ttk.Frame):
                     canvas.create_text(*position(-8, r * 5.1), text=row, fill="white")
                 fraction = design["site_fractions"].get(site_name(row, "{:02d}".format(12-c)), 0)
                 shade = "#{:02x}{:02x}{:02x}".format(*(round(bg*(1-fraction)+fg*fraction) for bg, fg in zip((21,25,29),color)))
-                canvas.create_oval(x-8, y-8, x+8, y+8, fill=shade, outline="#748087")
+                canvas.create_oval(x-8, y-8, x+8, y+8, fill=shade, outline="#748087",
+                                   tags=("site_{}_{:02d}".format(row, 12-c),))
                 if [row, "{:02d}".format(12-c)] in design.get("always_on_sites", []):
                     canvas.create_oval(x-10, y-10, x+10, y+10, outline="#ffd166", width=2, tags="fiducial_sites")
                 elif "{:02d}".format(12-c) in IMAGE_COLUMNS and "{:02d}".format(12-c) not in design.get("active_image_columns", IMAGE_COLUMNS):
@@ -841,9 +1156,82 @@ class RGBImageView(ttk.Frame):
         self.site_tree.delete(*self.site_tree.get_children())
         for site in design["image_sites"]:
             self.site_tree.insert("", "end", values=(
-                "{} C{}".format(site["row"], site["column"]), "{},{}".format(site["display_pixel_x"], site["display_pixel_y"]),
+                site["row"], site["column"],
                 ",".join(map(str, site["rgb"])), "{:.4g}".format(site["replacement_fraction"]*100),
                 site["replacement_nl"], site["original_nl"]))
+
+    def _highlight_selected_site(self, _event=None):
+        canvas = self.design_canvas
+        canvas.delete("selected_site")
+        tab = self.design_inspector.index(self.design_inspector.select())
+        if tab not in (0, 1):
+            return
+        tree = self.site_tree if tab == 0 else self.picklist_tree
+        selection = tree.selection()
+        if not selection:
+            return
+        values = tree.item(selection[0], "values")
+        if tab == 0:
+            helix, row = values[:2]
+        else:
+            location = self.picklist_site_locations.get(selection[0])
+            if not location:
+                canvas.create_text(float(canvas.cget("width"))/2, float(canvas.cget("height"))-12,
+                                   text="Location unavailable for this staple", fill="#00e5ff",
+                                   tags="selected_site")
+                return
+            helix, row = location
+        items = canvas.find_withtag("site_{}_{}".format(helix, row))
+        if not items:
+            return
+        left, top, right, bottom = canvas.coords(items[0])
+        # Cyan square stays distinct from gold fiducial rings and RGB fills.
+        canvas.create_rectangle(left-5, top-5, right+5, bottom+5,
+                                outline="black", width=5, tags="selected_site")
+        canvas.create_rectangle(left-5, top-5, right+5, bottom+5,
+                                outline="#00e5ff", width=3, tags="selected_site")
+
+    def _draw_picklist(self):
+        self.design_canvas.delete("selected_site")
+        self.picklist_tree.delete(*self.picklist_tree.get_children())
+        self.picklist_site_locations = {}
+        run = next((run for run in self.runs if run["run_name"] == self.design_name.get()), None)
+        self._draw_mixing_recipe(run)
+        if run is None:
+            self.picklist_summary.set("Prepare runs to see the actual transfers for this design.")
+            return
+        for transfer in run["picklist"]:
+            item = self.picklist_tree.insert("", "end", values=tuple(transfer[column] for column in self.picklist_columns))
+            location = transfer.get("site_location")
+            if not location:
+                match = re.search(r"\((H\d{2}), (\d{2})(?:;|\))", transfer["function"])
+                location = match.groups() if match else None
+            self.picklist_site_locations[item] = location
+        self.picklist_summary.set("{} transfers · {} · wells {}".format(
+            len(run["picklist"]), run["destination_plate_name"], ", ".join(run["destination_wells"])))
+
+    def _draw_mixing_recipe(self, run):
+        self.recipe_tree.delete(*self.recipe_tree.get_children())
+        self.recipe_well_tree.delete(*self.recipe_well_tree.get_children())
+        if run is None:
+            self.recipe_summary.set("Prepare runs to see the mixing recipe for this design.")
+            return
+        recipe = run["mixing_recipe"]
+        wells = {}
+        for transfer in run["picklist"]:
+            key = (transfer["Destination Plate Name"], transfer["Destination Well"])
+            wells[key] = wells.get(key, 0.0) + float(transfer["Transfer Volume"])
+        required = recipe[0]["Volume_uL"]
+        collected = sum(wells.values()) / 1000
+        final_volume = sum(row["Volume_uL"] for row in recipe)
+        self.recipe_summary.set("{} · Staple mix required: {:g} µL · Collected: {:g} µL · "
+                                "Final synthesis: {:g} µL. One recipe for this design.".format(
+                                    run["run_name"], required, collected, final_volume))
+        for index, row in enumerate(recipe):
+            label = "Staple mix required (pooled)" if index == 0 else row["Reagent"]
+            self.recipe_tree.insert("", "end", values=(label, "{:g}".format(row["Volume_uL"])))
+        for (plate, well), volume_nl in wells.items():
+            self.recipe_well_tree.insert("", "end", values=(plate, well, "{:g}".format(volume_nl / 1000)))
 
     def _used_wells(self, plate, ignore_ids=()):
         used = set(plate_wells(deepcopy(self.app.plate_state), plate))
@@ -866,33 +1254,36 @@ class RGBImageView(ttk.Frame):
             messagebox.showinfo("Image required", "Upload an image and enter valid transfer volumes first.", parent=self)
             return
         try:
-            app = self.app
             wells = all_384_wells()
             start = valid_well_list(self.start_well.get())
             if len(start) != 1:
                 raise ValueError("Enter one starting well.")
-            plate = app.destination_plate.get().strip() or "Destination[1]"
+            plate = self.destination_plate.get().strip()
+            if not plate or not self.source_plate_type.get().strip() or not self.replacement_plate.get().strip() or not self.biotin_plate.get().strip():
+                raise ValueError("Enter RGB destination/source plate names and source plate type.")
             used = self._used_wells(plate)
             available = [well for well in wells[wells.index(start[0]):] if well not in used]
-            settings = {"destination_plate_name": plate, "source_plate_type": app.source_plate_type.get().strip(),
-                        "max_destination_volume_ul": float(app.max_volume.get()),
-                        "transfers_per_source": int(app.transfers_per_source.get()), "hinge_type": app._selected_hinge_type()}
-            # RGB concentration targets come only from the replacement plates.
-            # Keep the standard buffer recipe separate from the manual-run form;
-            # prepare_runs fills in each color's target before calculating it.
-            mixing = {"staple": [app.base_stock_concentration_nm(), 1, 0, 0], "scaffold": [400, .1, 0, 0],
-                      "magnesium": [0, 0, 100, 0], "sodium": [0, 0, 0, 100],
-                      "te_10x": [0, 10, 0, 0], "desired": [100, 25, 10, 1, 12, 5]}
-            runs = prepare_runs(self.designs, app.base_path.get(),
+            settings = {**self._transfer_limits(), "destination_plate_name": plate, "source_plate_type": self.source_plate_type.get().strip(),
+                        "max_destination_volume_ul": float(self.max_volume.get()),
+                        "transfers_per_source": 1, "hinge_type": next(key for key, label in HINGE_TYPES.items() if label == self.hinge_type.get())}
+            if not math.isfinite(settings["max_destination_volume_ul"]) or settings["max_destination_volume_ul"] <= 0:
+                raise ValueError("RGB maximum well volume must be finite and positive.")
+            mixing = self._mixing_settings()
+            runs = prepare_runs(self.designs, self.base_path.get(),
                                 {color: (view.path_var.get(), view.plate_name) for color, view in self.color_views.items()},
                                 available, settings, mixing,
-                                source_concentrations_nm={color: view.concentration_nm for color, view in self.color_views.items()})
+                                source_concentrations_nm={color: view.concentration_nm for color, view in self.color_views.items()},
+                                biotin_source=(self.biotin_path.get(), self.biotin_plate.get().strip(), float(self.biotin_stock.get())),
+                                biotin_target_nm=float(self.biotin_target.get()))
             self.batch_id = uuid4().hex
             now = datetime.now(timezone.utc).isoformat()
             for run in runs:
                 run.update(id=uuid4().hex, created_utc=now, source_run_id=uuid4().hex,
                            image_batch_id=self.batch_id, source_picklist_path="", source_recipe_path="")
+            if hasattr(self.app, "barcode_guard"):
+                self.app.barcode_guard.attach_rgb(runs)
             self.runs = runs
+            self._draw_picklist()
             self.snapshot = {"format": "origami-rgb-image-v2", "batch_id": self.batch_id,
                              "color_processing": self._light_options(),
                              "source_image": self.image_path.get(), "fit_mode": self.fit_mode.get(),
@@ -910,13 +1301,14 @@ class RGBImageView(ttk.Frame):
                              "alignment_simulation": deepcopy(self.reconstruction.metadata) if self.alignment_enabled.get() else None,
                              "alignment_example_seed": self.example_seed if self.alignment_enabled.get() else None,
                              "settings": settings, "mixing": mixing,
+                             "rgb_run_settings": {key: variable.get() for key, variable in self.run_variables.items()},
                              "designs": deepcopy(self.designs)}
             count = sum(len(run["destination_wells"]) for run in runs)
             self.status.set("Prepared {} independent runs using {} unused wells on {} ({}–{}). Save the batch or send it to storage.".format(
                 len(runs), count, plate, runs[0]["destination_wells"][0], runs[-1]["destination_wells"][-1]))
             if self.auto_export_templates.get():
                 from alignment_template_export import export_alignment_templates
-                root = Path(app.output_root.get()).expanduser()
+                root = Path(self.output_root.get()).expanduser()
                 if not root.is_absolute():
                     root = self.app_dir / root
                 destination = root / "rgb_alignment_templates" / self.batch_id
@@ -934,6 +1326,7 @@ class RGBImageView(ttk.Frame):
                     self.status.set("Prepared {} runs. Exported {} barcode templates to {} ({} all-off designs without bright sites skipped).".format(
                         len(runs), manifest["exported_count"], destination, manifest["skipped_count"]))
             self.export_button.configure(state="normal")
+            self.recipe_export_button.configure(state="normal")
             self.store_button.configure(state="normal")
         except Exception as exc:
             self.status.set("Preparation failed: {}".format(exc))
@@ -955,8 +1348,6 @@ class RGBImageView(ttk.Frame):
         save_json(self.plate_path, state)
         self.app.plate_state = state
         self.committed = True
-        plate = self.runs[0]["destination_plate_name"]
-        self.app.destination_wells.set(",".join(next_unused_wells(state, plate, 3)))
         self.app._refresh_plate_view()
 
     def _export_similarity_graph(self):
@@ -988,7 +1379,7 @@ class RGBImageView(ttk.Frame):
             from exhaustive_pdf import ReportSettings, start_export_dialog
             settings = ReportSettings(
                 image_path=self.image_path.get(), fit_mode=self.fit_mode.get(),
-                base_volume=int(self.app.transfer_volume.get()),
+                base_volume=self._base_transfer_volume(),
                 multipliers={color: 1.0 for color in self.color_views},
                 **self._concentration_options(),
                 fwhm_nm=float(self.gaussian_fwhm.get()), exposure=float(self.gaussian_exposure.get()),
@@ -1023,17 +1414,43 @@ class RGBImageView(ttk.Frame):
             self.status.set(("Cannot start graph export: " if similarity else "Cannot start PDF export: ") + detail)
             messagebox.showerror("Cannot export " + label, detail, parent=parent)
 
+    def _export_recipes(self):
+        if not self.runs:
+            return
+        folder = filedialog.askdirectory(parent=self, title="Choose parent folder for mixing recipe batch",
+                                         initialdir=self.output_root.get())
+        if not folder:
+            return
+        try:
+            self._check_destinations()
+            output = create_run_output_directory(Path(folder))
+            rows = []
+            for run in self.runs:
+                write_csv(output / run["run_name"] / "mixing_recipe.csv", run["mixing_recipe"],
+                          ("Reagent", "Volume_uL"))
+                for reagent in run["mixing_recipe"]:
+                    rows.append({"Run": run["run_name"], "Destination Plate": run["destination_plate_name"],
+                                 "Destination Wells": ", ".join(run["destination_wells"]), **reagent})
+            write_csv(output / "mixing_recipe_batch.csv", rows,
+                      ("Run", "Destination Plate", "Destination Wells", "Reagent", "Volume_uL"))
+            self.status.set("Saved {} separate mixing recipes and mixing_recipe_batch.csv to {}. "
+                            "Recipe export does not reserve destination wells.".format(len(self.runs), output))
+        except Exception as exc:
+            messagebox.showerror("Cannot save mixing recipe batch", str(exc), parent=self)
+
     def _export(self):
         if not self.runs or self.saved:
             return
         folder = filedialog.askdirectory(parent=self, title="Choose parent folder for image batch",
-                                         initialdir=self.app.output_root.get())
+                                         initialdir=self.output_root.get())
         if not folder:
             return
         try:
             from PIL import Image
             import numpy as np
             self._check_destinations()
+            if hasattr(self.app, "barcode_guard"):
+                self.app.barcode_guard.reserve_runs(self.runs)
             output = create_run_output_directory(Path(folder))
             from alignment_template_export import export_alignment_templates
             export_alignment_templates(output / "alignment_templates", self.snapshot, self.runs)
@@ -1044,7 +1461,7 @@ class RGBImageView(ttk.Frame):
                 write_csv(run_dir / "mixing_recipe.csv", run["mixing_recipe"], ("Reagent", "Volume_uL"))
             manifest = deepcopy(self.snapshot)
             manifest["alignment_template_directory"] = "alignment_templates"
-            manifest["runs"] = [{key: run[key] for key in ("run_name", "destination_plate_name", "destination_wells", "transfer_count")} for run in self.runs]
+            manifest["runs"] = [{key: run[key] for key in ("run_name", "destination_plate_name", "destination_wells", "transfer_count", "d_biotin", "id", "source_run_id", "barcode_experiment")} for run in self.runs]
             save_json(output / "image_manifest.json", manifest)
             pixel_rows = []
             for design in self.snapshot["designs"]:
@@ -1098,6 +1515,8 @@ class RGBImageView(ttk.Frame):
             return
         try:
             self._check_destinations()
+            if hasattr(self.app, "barcode_guard"):
+                self.app.barcode_guard.reserve_runs(self.runs)
             state = deepcopy(self.app.storage_state)
             # Keep the complete image mapping with each stored design so it survives restarts.
             existing_ids = {item.get("id") for item in state.get("items", [])}
@@ -1276,7 +1695,7 @@ class EncodingComparison(tk.Toplevel):
                                 if owner.optimize_enabled.get() else "Replacement optimization OFF for every scheme. ")
             settings_summary += "Regularization {} (0 = off). ".format(owner.regularization.get())
             settings_summary += "Base transfer {} nL; plate targets {}. ".format(
-                owner.app.transfer_volume.get(), ", ".join(
+                owner.transfer_volume.get(), ", ".join(
                     "{} {} nM".format(color, view.desired_concentration_nm.get()) for color, view in owner.color_views.items()))
             if owner.alignment_enabled.get():
                 alignment = owner._alignment_settings()

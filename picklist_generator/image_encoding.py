@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from picklist_core import ReplacementSelection, generate_picklist, replacement_fractions, calculate_mixing_volumes
+from picklist_core import ReplacementSelection, generate_picklist, replacement_fractions, calculate_mixing_volumes, parse_source1, parse_source2, valid_transfer, validate_transfer_limits
 from template_generator import EXTENSION_COLUMN_SPACING_NM, EXTENSION_ROW_SPACING_NM, EXTENSION_EXTRA_COLUMN_GAP_NM
 
 IMAGE_WIDTH, IMAGE_HEIGHT = 24, 32
@@ -611,21 +612,48 @@ def bin_image(path, mode=FIT_MODES[0], rotation_degrees=0, scheme_id=DEFAULT_SCH
     return rotate_pixels(upright, (-rotation_degrees) % 360)
 
 
-def rgb_transfer_grid(base_volume, target_nm, base_target_nm=50.0, base_stock_nm=200000.0, stock_nm=200000.0):
+def synthesis_base_volume_nl(final_volume_ul, target_nm, stock_nm, minimum_transfer_nl=25.0, transfer_increment_nl=25.0):
+    """Calculate the exact base volume, independently of the transfer increment."""
+    validate_transfer_limits(minimum_transfer_nl, transfer_increment_nl)
+    if any(not math.isfinite(value) or value <= 0 for value in (final_volume_ul, target_nm, stock_nm)):
+        raise ValueError("Synthesis volume, book-base target, and base stock must be finite and positive.")
+    volume = 1000 * final_volume_ul * target_nm / stock_nm
+    if not valid_transfer(volume, minimum_transfer_nl, transfer_increment_nl):
+        raise ValueError("Requested synthesis needs {:g} nL per base staple; minimum is {:g} nL with {:g} nL increments.".format(volume, minimum_transfer_nl, transfer_increment_nl))
+    return round(volume / transfer_increment_nl) * transfer_increment_nl
+
+
+def rgb_replacement_options(final_volume_ul, target_nm, base_stock_nm, stock_nm, minimum_transfer_nl=25.0, transfer_increment_nl=25.0):
+    """Allowed site splits at the requested final concentration and volume."""
+    if any(not math.isfinite(value) or value <= 0 for value in (final_volume_ul, target_nm, base_stock_nm, stock_nm)):
+        raise ValueError("Final volume, site target, and both stock concentrations must be finite and positive.")
+    # A single original-stock droplet's final concentration provides the same
+    # reference used by the core split calculator, independent of body targets.
+    validate_transfer_limits(minimum_transfer_nl, transfer_increment_nl)
+    reference_volume = math.ceil(minimum_transfer_nl / transfer_increment_nl) * transfer_increment_nl
+    base_droplet_nm = base_stock_nm * reference_volume / 1000 / final_volume_ul
+    fractions = replacement_fractions(reference_volume, target_nm, base_droplet_nm, base_stock_nm / stock_nm,
+                                     minimum_transfer_nl, transfer_increment_nl)
+    return dict(fractions=fractions, full_original_nl=1000 * final_volume_ul * target_nm / base_stock_nm,
+                full_replacement_nl=1000 * final_volume_ul * target_nm / stock_nm)
+
+
+def rgb_transfer_grid(base_volume, target_nm, base_target_nm=50.0, base_stock_nm=200000.0, stock_nm=200000.0, minimum_transfer_nl=25.0, transfer_increment_nl=25.0):
     """Use the same molar split and droplet limits as manual replacements."""
     for value in (base_stock_nm, stock_nm):
         if not math.isfinite(value) or value <= 0:
             raise ValueError("Stock concentrations must be finite positive numbers.")
-    options = replacement_fractions(base_volume, target_nm, base_target_nm, base_stock_nm / stock_nm)
+    options = replacement_fractions(base_volume, target_nm, base_target_nm, base_stock_nm / stock_nm, minimum_transfer_nl, transfer_increment_nl)
     if len(options) < 2 or not math.isclose(options[0], 0.0) or not math.isclose(options[-1], 1.0):
         raise ValueError("RGB requires both 0% and 100% replacement for binary barcodes. "
-                         "The plate default and base transfer volume do not permit both in 25 nL increments; "
-                         "increase the base transfer volume or adjust the plate default.")
-    steps = len(options) - 1
-    if any(not math.isclose(value, index / steps, abs_tol=1e-9) for index, value in enumerate(options)):
-        raise ValueError("RGB replacement options must form a uniform droplet grid.")
+                         "The RGB target and synthesis settings do not permit both under the configured transfer limits; "
+                         "increase the synthesis volume or adjust the RGB target or stock concentrations.")
+    # Optimization uses a uniform search grid; admissible fractions may have gaps
+    # when the minimum exceeds the increment. Final assignments are projected.
+    steps = math.lcm(*(Fraction(value).limit_denominator(1000000).denominator for value in options))
     original = base_volume * target_nm / base_target_nm
-    return dict(fraction_steps=steps, full_original_nl=original,
+    return dict(fraction_steps=steps, allowed_fractions=options, minimum_transfer_nl=minimum_transfer_nl,
+                transfer_increment_nl=transfer_increment_nl, full_original_nl=original,
                 full_replacement_nl=original * base_stock_nm / stock_nm)
 
 
@@ -635,18 +663,22 @@ def transfer_fraction_steps(design, site):
 
 
 def set_site_fraction(design, site, fraction):
+    if design.get("allowed_fractions"):
+        fraction = min(design["allowed_fractions"], key=lambda value: (abs(value-fraction), -value))
+    increment = design.get("transfer_increment_nl", 25)
     total = site["replacement_nl"] + site["original_nl"]
     original = design.get("full_original_nl", total)
     replacement = design.get("full_replacement_nl", total)
     site.update(replacement_fraction=float(fraction),
-                replacement_nl=round(replacement * fraction / 25) * 25,
-                original_nl=round(original * (1 - fraction) / 25) * 25)
+                replacement_nl=round(replacement * fraction / increment) * increment,
+                original_nl=round(original * (1 - fraction) / increment) * increment)
     design["site_fractions"][site["name"]] = float(fraction)
 
 
 def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, rotation_degrees=0, linear_light=False, *,
                     plate_defaults_nm=None, base_desired_concentration_nm=50.0,
-                    base_concentration_nm=200000.0, source_concentrations_nm=None, plate_relative_transfers=False, active_image_columns=None, barcode_schema=None):
+                    base_concentration_nm=200000.0, source_concentrations_nm=None, plate_relative_transfers=False, active_image_columns=None, barcode_schema=None,
+                    minimum_transfer_nl=25.0, transfer_increment_nl=25.0):
     """Deinterleave each RGB channel using the selected barcode codebook."""
     scheme = encoding_scheme(scheme_id)
     bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema)
@@ -664,7 +696,7 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
     info = geometry(scheme_id,rotation_degrees,columns,barcode_schema)
     from color_light import srgb_to_linear
     intensity_lut = srgb_to_linear([v/255 for v in range(256)]) if linear_light else [v/255 for v in range(256)]
-    replacement_fractions(base_volume)  # Validate the shared base droplet volume independently.
+    replacement_fractions(base_volume, minimum_transfer_nl=minimum_transfer_nl, transfer_increment_nl=transfer_increment_nl)  # Validate the shared base droplet volume independently.
     designs = []
     for color, channel in CHANNELS.items():
         # Explicit plate defaults are authoritative; multipliers are legacy-only.
@@ -672,8 +704,7 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
         target = base_desired_concentration_nm * multiplier if plate_defaults_nm is None else plate_defaults_nm[color]
         stock = (source_concentrations_nm or {}).get(color, 200000.0)
         reference_target = target if plate_relative_transfers else base_desired_concentration_nm
-        grid = rgb_transfer_grid(base_volume, target, reference_target, base_concentration_nm, stock)
-        steps = grid["fraction_steps"]
+        grid = rgb_transfer_grid(base_volume, target, reference_target, base_concentration_nm, stock, minimum_transfer_nl, transfer_increment_nl)
         concentrations = {} if plate_defaults_nm is None else dict(
             plate_default_nm=target, desired_concentration_nm=target,
             base_desired_concentration_nm=reference_target, plate_relative_transfers=plate_relative_transfers,
@@ -694,8 +725,7 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
                             x = len(columns)*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
                             y = 8*sum(scheme.y_counts[:position["quadrant_y"]]) + row_index*position["local_y_states"] + position["local_y_shift"]
                         value = pixels[y][x][channel]
-                        droplets = math.floor(float(intensity_lut[value]) * steps + 0.5)
-                        fraction = droplets / steps
+                        fraction = min(grid["allowed_fractions"], key=lambda f: (abs(f-float(intensity_lut[value])), -f))
                         name = site_name(row, column)
                         fractions[name] = fraction
                         display_x, display_y = rotate_point(x, y, width - 1, height - 1, rotation_degrees)
@@ -709,8 +739,8 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
                             "pixel_x": x, "pixel_y": y, "rgb": pixels[y][x][:],
                             "x_nm": x_nm, "y_nm": y_nm,
                             "channel_value": value, "replacement_fraction": fraction,
-                            "replacement_nl": round(grid["full_replacement_nl"] * fraction / 25) * 25,
-                            "original_nl": round(grid["full_original_nl"] * (1 - fraction) / 25) * 25,
+                            "replacement_nl": round(grid["full_replacement_nl"] * fraction / transfer_increment_nl) * transfer_increment_nl,
+                            "original_nl": round(grid["full_original_nl"] * (1 - fraction) / transfer_increment_nl) * transfer_increment_nl,
                         })
                 suffix = "" if scheme_id == DEFAULT_SCHEME else "_{}x{}".format(scheme.x_states,scheme.y_states)
                 design_name = ("{}{}_Q{}_X{}_Y{}".format(color.replace(" ","_"),suffix,position["quadrant"],position["local_x_shift"],position["local_y_shift"])
@@ -764,7 +794,7 @@ def selection_panel(design):
     }
 
 
-def prepare_runs(designs, base_path, sources, available_wells, settings, mixing, source_concentrations_nm=None):
+def prepare_runs(designs, base_path, sources, available_wells, settings, mixing, source_concentrations_nm=None, biotin_source=None, biotin_target_nm=None):
     """Allocate separate wells and validate every recipe before returning any runs."""
     source_concentrations_nm = source_concentrations_nm or {}
     remaining = list(available_wells)
@@ -773,11 +803,26 @@ def prepare_runs(designs, base_path, sources, available_wells, settings, mixing,
     if len(remaining) < len(designs):
         raise ValueError("This batch needs at least {} destination wells; only {} are available on the selected plate.".format(len(designs),len(remaining)))
     runs = []
+    biotin_rows = []
+    if biotin_source is not None:
+        if biotin_target_nm is not None and (not math.isfinite(biotin_target_nm) or biotin_target_nm <= 0):
+            raise ValueError("Biotin target must be a finite, positive concentration in nM.")
+        biotin_path, biotin_plate, biotin_stock = biotin_source
+        biotin_rows, _ = parse_source2(Path(biotin_path))
+        expected = {"D-Biotin_{}-{}".format(row, column) for row in ("H01", "H15") for column in ("01", "05", "08", "12")}
+        if len(biotin_rows) != 8 or {row["Name"] for row in biotin_rows} != expected:
+            raise ValueError("D-Biotin source must contain all eight PAINT P1 D-Biotin staples exactly once.")
+        if len({row["Well"] for row in biotin_rows}) != 8 or len({row["Replace Well"] for row in biotin_rows}) != 8:
+            raise ValueError("D-Biotin source wells and logical replacement sites must be unique.")
     settings = dict(settings)
     settings.setdefault("base_concentration_nm", mixing["staple"][0])
     settings.setdefault("base_desired_concentration_nm", mixing["desired"][1])
+    base_rows, base_plate = parse_source1(Path(base_path), settings["hinge_type"])
+    source_rows = {}
     for design in designs:
         source_path, source_plate = sources[design["color"]]
+        if source_path not in source_rows:
+            source_rows[source_path] = parse_source2(Path(source_path))[0]
         run_settings = dict(settings)
         run_mixing = {key: list(value) for key, value in mixing.items()}
         if design.get("plate_relative_transfers"):
@@ -802,15 +847,55 @@ def prepare_runs(designs, base_path, sources, available_wells, settings, mixing,
                                          concentration_nm=design.get("source_concentration_nm", source_concentrations_nm.get(design["color"], 200000.0)),
                                          site_fractions=design["site_fractions"])
         try:
-            picklist = generate_picklist(Path(base_path), [selection], remaining,
+            selections = [selection]
+            if biotin_rows:
+                biotin_target = run_settings["base_desired_concentration_nm"] if biotin_target_nm is None else biotin_target_nm
+                selections.append(ReplacementSelection(Path(biotin_path), [row["Name"] for row in biotin_rows],
+                    biotin_plate, desired_concentration_nm=biotin_target,
+                    concentration_nm=biotin_stock))
+            picklist = generate_picklist(Path(base_path), selections, remaining,
                                         transfer_volume_nl=design["base_volume_nl"], **run_settings)
+            paint_rows = [row for row in source_rows[source_path] if row["Name"] in design["site_fractions"]]
+            paint_sites = {row["Replace Well"]: row["Name"] for row in paint_rows}
+            site_locations = {site_name(helix, f"{row:02d}"): f"{helix}, {row:02d}"
+                              for helix in ROWS for row in range(1, 13)}
+            site_types = {site["name"]: "image site" for site in design["image_sites"]}
+            site_types.update({site_name(*site): "barcode site"
+                               for group in design["barcode_sites"] for site in group})
+            site_types.update({site_name(*site): "fiducial site"
+                               for site in design.get("always_on_sites", [])})
+            def paint_function(role, name):
+                if role == "PAINT extension":
+                    return "{} ({}; {})".format(role, site_locations[name], site_types[name])
+                return "{} ({})".format(role, site_locations[name])
+            roles = {(base_plate, row["Well"]): paint_function("body-PAINT competitor", paint_sites[row["Replacement Well"]]) for row in base_rows
+                     if row["Replacement Well"] in paint_sites}
+            roles.update({(source_plate, row["Well"]): paint_function("PAINT extension", row["Name"]) for row in paint_rows})
+            if biotin_rows:
+                roles.update({(biotin_plate, row["Well"]): "biotin" for row in biotin_rows})
+            # Use logical replacement keys, never relocated physical source wells,
+            # to locate retained body staples on the PAINT grid.
+            locations_by_key = {}
+            for row in source_rows[source_path] + biotin_rows:
+                match = re.search(r"(H\d{2})-(\d{2})", row["Name"])
+                if match:
+                    locations_by_key[row["Replace Well"]] = list(match.groups())
+            source_locations = {(base_plate, row["Well"]): locations_by_key[row["Replacement Well"]]
+                                for row in base_rows if row["Replacement Well"] in locations_by_key}
+            for plate, rows in ((source_plate, paint_rows), (biotin_plate if biotin_rows else "", biotin_rows)):
+                for row in rows:
+                    if row["Replace Well"] in locations_by_key:
+                        source_locations[plate, row["Well"]] = locations_by_key[row["Replace Well"]]
+            for transfer in picklist:
+                transfer["site_location"] = source_locations.get((transfer["Source Plate Name"], transfer["Source Well"]))
+                transfer["function"] = roles.get((transfer["Source Plate Name"], transfer["Source Well"]), "standard body")
             occupied = list(dict.fromkeys(row["Destination Well"] for row in picklist))
             remaining = [well for well in remaining if well not in occupied]
             total = sum(row["Transfer Volume"] for row in picklist)
             effective_staples = total / (design["base_volume_nl"] * settings["transfers_per_source"])
             recipe = calculate_mixing_volumes(number_of_staples=effective_staples, **run_mixing)
             if recipe[0]["Volume_uL"] > total / 1000 + 1e-9:
-                raise ValueError("Requested staple mix exceeds the available picklist volume; adjust Run & Mixing Settings.")
+                raise ValueError("Requested staple mix exceeds the available picklist volume; adjust RGB mixing settings.")
         except ValueError as exc:
             raise ValueError("{}: {}".format(design["name"], exc)) from exc
         runs.append({"run_name": design["name"], "design_names": [name for name, fraction in design["site_fractions"].items() if fraction > 0],
@@ -818,4 +903,15 @@ def prepare_runs(designs, base_path, sources, available_wells, settings, mixing,
                      "destination_plate_name": settings["destination_plate_name"], "destination_wells": occupied,
                      "transfer_count": len(picklist), "picklist": picklist, "mixing_recipe": recipe,
                      "image_design": design})
+        if biotin_rows:
+            runs[-1]["design_names"].extend(row["Name"] for row in biotin_rows)
+            positions = [(row, column) for row in ("H01", "H15") for column in ("12", "08", "05", "01")]
+            runs[-1]["selection_panels"].append({"group": "D-Biotin", "label": "D-Biotin — {:g} nM target".format(biotin_target),
+                "rows": ["H01", "H15"], "columns": ["12", "08", "05", "01"],
+                "active": positions, "selected": positions, "selected_names": [row["Name"] for row in biotin_rows],
+                "site_fractions": {row["Name"]: 1.0 for row in biotin_rows},
+                "site_concentrations_nm": {row["Name"]: biotin_target for row in biotin_rows}})
+            runs[-1]["d_biotin"] = {"source_path": str(biotin_path), "source_plate": biotin_plate,
+                "stock_nm": biotin_stock, "target_nm": biotin_target,
+                "staples": [dict(row) for row in biotin_rows]}
     return runs

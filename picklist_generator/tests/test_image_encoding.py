@@ -429,7 +429,7 @@ class ImageWorkflowTests(unittest.TestCase):
             self.assertEqual(self.app.plate_state, before)
             stored = load_json(view.storage_path, {})
             self.assertEqual(stored["items"][0]["image_design"]["image_sites"][0]["rgb"], [255,128,0])
-            self.app.transfer_volume.set("100")
+            self.view.final_volume.set("400")
             self.assertEqual(view.runs, [])
             self.assertEqual(str(view.export_button["state"]), "disabled")
             self.assertEqual(len(view.designs), 48)
@@ -631,7 +631,7 @@ class ImageWorkflowTests(unittest.TestCase):
                     self.assertAlmostEqual(last[2], 258)
                     self.assertAlmostEqual(last[3], 7 + 252 * 40.8 / 59.4)
             self.assertEqual(comparison.images[DEFAULT_SCHEME][0], view.pixels)
-            self.app.transfer_volume.set("25")
+            self.view.final_volume.set("100")
             expected = render_gaussian_overlay(compile_designs(view.pixels, 25, {color:5 for color in CHANNELS}, linear_light=True), linear_light=True, normalize_designs=True, compensate_area=True)
             np.testing.assert_allclose(comparison.images[DEFAULT_SCHEME][1].density, expected.density)
             comparison.use_scheme("joint_7x3")
@@ -641,10 +641,10 @@ class ImageWorkflowTests(unittest.TestCase):
             view._rotate(90)
             self.assertEqual(comparison.images["joint_7x3"][0], view.pixels)
             self.assertIn("90°", comparison.summary.get())
-            self.app.transfer_volume.set("")
+            self.view.final_volume.set("")
             self.assertEqual(comparison.images, {})
             self.assertTrue(all(not canvas.find_all() for canvases in comparison.previews.values() for canvas in canvases))
-            self.app.transfer_volume.set("50")
+            self.view.final_volume.set("200")
             self.assertEqual(len(comparison.images), len(ENCODING_SCHEMES))
             comparison.destroy()
             view._compare_schemes()
@@ -662,7 +662,7 @@ class ImageWorkflowTests(unittest.TestCase):
         view.rotation.set("90")
         view.gaussian_fwhm.set("9")
         view.gaussian_exposure.set("0.7")
-        self.app.transfer_volume.set("75")
+        self.view.final_volume.set("300")
         multipliers = dict(zip(CHANNELS, (2, 3, 4)))
         for color, multiplier in multipliers.items():
             view.color_views[color].desired_concentration_nm.set(str(50 * multiplier))
@@ -887,9 +887,31 @@ class ImageWorkflowTests(unittest.TestCase):
             self.assertTrue(view.saved)
             error.assert_called_once()
 
+    def test_inspector_shows_selected_prepared_picklist_and_clears_stale_transfers(self):
+        from picklist_core import PICKLIST_COLUMNS
+        view = self.view
+        with patch("rgb_image_view.messagebox.showerror") as error:
+            view.image_path.set(str(self.image_path))
+            view._load()
+            self.assertEqual(view.picklist_tree.get_children(), ())
+            view._prepare()
+            error.assert_not_called()
+            for run in (view.runs[0], view.runs[-1]):
+                view.design_name.set(run["run_name"])
+                view._draw_design()
+                displayed = [list(map(str, view.picklist_tree.item(item, "values")))
+                             for item in view.picklist_tree.get_children()]
+                expected = [[str(row[column]) for column in view.picklist_columns] for row in run["picklist"]]
+                self.assertEqual(displayed, expected)
+                self.assertIn(run["destination_wells"][0], view.picklist_summary.get())
+                self.assertTrue(view.site_tree.get_children())
+            view.start_well.set("B01")
+            self.assertEqual(view.picklist_tree.get_children(), ())
+            self.assertIn("Prepare runs", view.picklist_summary.get())
+
     def test_preparation_skips_existing_wells_and_detects_later_collisions(self):
         view = self.view
-        plate = self.app.destination_plate.get()
+        plate = view.destination_plate.get()
         self.app.plate_state = {"plates": {plate: {"wells": {"A01": {"volume_nL": 25}}}}}
         with patch("rgb_image_view.messagebox.showerror") as error:
             view.image_path.set(str(self.image_path))

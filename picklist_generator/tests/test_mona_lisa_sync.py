@@ -62,7 +62,7 @@ def test_rgb_gui_prepares_from_low_concentration_color_plate(tmp_path, monkeypat
     app.withdraw()
     try:
         view = app.rgb_image_view
-        app.transfer_volume.set("25")
+        app.rgb_image_view.final_volume.set("100")
         path = tmp_path / 'white.png'
         Image.new('RGB', (24, 32), 'white').save(path)
         with patch('rgb_image_view.messagebox.showerror') as error:

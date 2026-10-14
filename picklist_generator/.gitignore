@@ -8,3 +8,4 @@ generated_output/*
 config.json
 destination_plate_state.json
 storage_state.json
+barcode_registry.json

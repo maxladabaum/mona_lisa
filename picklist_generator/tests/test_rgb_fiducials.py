@@ -71,7 +71,11 @@ def test_ui_picklists_metadata_and_canvas_guard(tmp_path, monkeypatch):
     app = picklist_app.PicklistApp(); app.withdraw()
     try:
         view = app.rgb_image_view
-        app.base_plate_picker.current(1)
+        view.base_plate_picker.current(1)
+        view.final_volume.set('20')
+        view.base_target.set('25')
+        for source in view.color_views.values():
+            source.desired_concentration_nm.set('25')
         view.tile_count.set('1'); view._tile_count_changed()
         previous = deepcopy(view.barcode_schema)
         with pytest.raises(ValueError,match='active analog canvas'):

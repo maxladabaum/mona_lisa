@@ -53,9 +53,12 @@ class ReportSettings:
     base_desired_concentration_nm: float = 50.0
     base_concentration_nm: float = 200000.0
     source_concentrations_nm: dict | None = None
+    minimum_transfer_nl: float = 25.0
+    transfer_increment_nl: float = 25.0
 
     def concentration_options(self):
-        return dict(plate_defaults_nm=self.plate_defaults_nm,
+        return dict(minimum_transfer_nl=self.minimum_transfer_nl, transfer_increment_nl=self.transfer_increment_nl,
+                    plate_defaults_nm=self.plate_defaults_nm,
                     active_image_columns=self.active_image_columns,
                     barcode_schema=self.barcode_schema,
                     plate_relative_transfers=self.plate_relative_transfers,
@@ -80,7 +83,8 @@ class ReportSettings:
             target = (self.base_desired_concentration_nm * self.multipliers[color]
                       if self.plate_defaults_nm is None else self.plate_defaults_nm[color])
             rgb_transfer_grid(self.base_volume, target, target if self.plate_relative_transfers else self.base_desired_concentration_nm,
-                              self.base_concentration_nm, (self.source_concentrations_nm or {}).get(color, 200000.0))
+                              self.base_concentration_nm, (self.source_concentrations_nm or {}).get(color, 200000.0),
+                              self.minimum_transfer_nl, self.transfer_increment_nl)
 
     def light_options(self):
         return dict(linear_light=self.linear_light, normalize_designs=self.normalize_designs,

@@ -10,8 +10,12 @@ def test_mapping_and_logical_keys():
     with PATH.open() as f:
         next(f)
         rows = list(csv.DictReader(f))
+    assert len(rows) == 260
+    assert len({r['Well Position'] for r in rows}) == 260
+    additions = [r for r in rows if r['Usage'] == 'Supplemental']
+    assert {r['Well Position'] for r in additions} == {f'P{i}' for i in range(17,25)}
+    rows = [r for r in rows if r['Usage'] != 'Supplemental']
     assert len(rows) == 252
-    assert len({r['Well Position'] for r in rows}) == 252
     assert len({r['Original Well Position'] for r in rows}) == 252
     assert sum(r['Hinge Type'] == 'balanced_rigid' for r in rows) == 18
     for r in rows:
@@ -61,6 +65,11 @@ def test_selector_uses_interleaved_plate_and_ordered_hinges(tmp_path, monkeypatc
         view = app.rgb_image_view
         view.auto_export_templates.set(False)
         app.base_plate.set('LowConc base plate — 20 µM (interleaved)')
+        view.base_plate.set('LowConc base plate — 20 µM (interleaved)')
+        view.final_volume.set('20')
+        view.base_target.set('25')
+        for source in view.color_views.values():
+            source.desired_concentration_nm.set('25')
         assert app.base_path.get() == str(PATH)
         assert app._selected_hinge_type() == 'balanced_rigid'
         assert app.base_stock_concentration_nm() == 20000

@@ -23,9 +23,9 @@ ERROR_SAMPLES = 32
 
 @dataclass(frozen=True)
 class AlignmentSettings:
-    translation_x_nm: float = 1.0
-    translation_y_nm: float = 1.0
-    rotation_deg: float = 1.0
+    translation_x_nm: float = 3.0
+    translation_y_nm: float = 3.0
+    rotation_deg: float = 3.0
     origami_per_design: int = 20
     center_x_nm: float = DEFAULT_CENTER_X
     center_y_nm: float = DEFAULT_CENTER_Y
@@ -124,9 +124,9 @@ class AlignmentModel:
         signature = [[(d['name'], [(s['name'],s['x_nm'],s['y_nm']) for s in d['image_sites']]) for d in group] for group in groups]
         if signature != self.signature:
             raise ValueError('Design geometry differs from the alignment model.')
-        weights = np.array([[s['replacement_fraction'] for d in group for s in d['image_sites']] for group in groups]).T
-        if not np.all(np.isfinite(weights)) or np.any((weights<0)|(weights>1)):
-            raise ValueError('Replacement fractions must be in [0,1].')
+        weights = np.array([[s.get('effective_brightness', s['replacement_fraction']) for d in group for s in d['image_sites']] for group in groups]).T
+        if not np.all(np.isfinite(weights)) or np.any(weights<0) or any(s["replacement_fraction"] < 0 or s["replacement_fraction"] > 1 for d in designs for s in d["image_sites"]):
+            raise ValueError('Replacement fractions must be in [0,1]; effective brightness must be finite and nonnegative.')
         return weights
 
     def result(self, local, kind, **extra):
@@ -167,7 +167,7 @@ class AlignmentModel:
         local = np.zeros((self.height,self.width,3))
         n = self.settings.origami_per_design
         for design in designs:
-            weights = np.array([s['replacement_fraction'] for s in design['image_sites']]) * quadrant_weight(design,self.normalize_designs)
+            weights = np.array([s.get('effective_brightness', s['replacement_fraction']) for s in design['image_sites']]) * quadrant_weight(design,self.normalize_designs)
             errors = rng.normal(size=(n,3))*[self.settings.translation_x_nm,self.settings.translation_y_nm,self.settings.rotation_deg]
             if not np.any(weights):
                 continue

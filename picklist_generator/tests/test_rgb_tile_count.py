@@ -36,7 +36,7 @@ def test_controls_rebuild_prepare_invalidate_and_restore(tmp_path, monkeypatch):
     app.withdraw()
     try:
         # Use two original-stock droplets for this workflow check.
-        app.transfer_volume.set('50')
+        app.rgb_image_view.final_volume.set('200')
         view = app.rgb_image_view
         view.tile_count.set('4')
         view._tile_count_changed()
@@ -123,7 +123,7 @@ def test_tile_boundaries_survive_invalid_transfers_and_rotation(tmp_path, monkey
                 assert len({tuple(b) for b in bounds}) == 16
                 assert all(b[2] > b[0] and b[3] > b[1] for b in bounds)
                 assert view.pixel_canvases[1].find_withtag('preview_error')
-            view.color_views['R1 R'].desired_concentration_nm.set('25')
+            view.color_views['R1 R'].desired_concentration_nm.set('50')
             assert len(view.designs) == 48
             assert len(view.pixel_canvases[0].find_withtag('tile_grid')) == 32
             assert view.pixel_canvases[0].find_withtag('design_pixels')

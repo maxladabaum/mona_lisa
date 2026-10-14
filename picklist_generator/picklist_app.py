@@ -47,7 +47,7 @@ from picklist_core import (
     valid_well_list,
     write_csv,
 )
-from image_encoding import BIT_SITES, COLOR_BITS, SHIFT_STATES
+from image_encoding import BIT_SITES, COLOR_BITS, SHIFT_STATES, synthesis_base_volume_nl
 from rgb_image_view import RGBImageView
 from selection_report import write_replacement_selection_pdf, write_stored_runs_selection_pdf
 from template_generator import (
@@ -157,6 +157,8 @@ class SetView:
         self.site_fractions: Dict[str, float] = {}
         self.site_concentrations_nm: Dict[str, float] = {}
         self.new_selection_concentration = tk.StringVar(value="")
+        self.minimum_transfer_nl = 25.0
+        self.transfer_increment_nl = 25.0
         self.transfer_volume_nl = 25
         self.replacement_error = tk.StringVar()
         self.excess_multiplier = tk.StringVar(value="5" if title in ACTIVE_REPLACEMENT_TABS else "1")
@@ -183,14 +185,21 @@ class SetView:
         toolbar.pack(fill="x", padx=10, pady=(8, 2))
         ttk.Label(toolbar, text="{} replacement sheet".format(title)).pack(side="left")
         ttk.Label(toolbar, text="  Stock: {:g} µM".format(self.concentration_nm / 1000)).pack(side="left")
-        ttk.Entry(toolbar, textvariable=self.path_var).pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(toolbar, text="Browse…", command=self._browse).pack(side="left")
+        self.sheet_path_entry = ttk.Entry(toolbar, textvariable=self.path_var)
+        self.sheet_path_entry.pack(side="left", fill="x", expand=True, padx=8)
+        self.sheet_browse_button = ttk.Button(toolbar, text="Browse…", command=self._browse)
+        self.sheet_browse_button.pack(side="left")
+        self.biotin_sheet_path = tk.StringVar(value=str(SHEET_DIR / "lowconc_D_biotin_additions.csv"))
+        self.source_plate_label = tk.StringVar(value=plate_name)
+        ttk.Label(toolbar, textvariable=self.source_plate_label).pack(side="left", padx=5)
         ttk.Button(toolbar, text="Clear set", command=self.clear).pack(side="left", padx=(8, 0))
+        if title == "LowConc PAINT R1":
+            ttk.Label(scroll.inner, text="D-Biotin: LowConc base plate SourcePlate8[8], wells P17–P24, stock 20 µM. "
+                      "Uses the plate default or a per-site concentration override.").pack(anchor="w", padx=12)
         volume_bar = ttk.Frame(scroll.inner)
         volume_bar.pack(fill="x", padx=12, pady=4)
-        ttk.Label(volume_bar, text="Base transfer volume (nL, all tabs)").pack(side="left")
-        ttk.Spinbox(volume_bar, from_=25, to=100000, increment=25,
-                    textvariable=self.base_transfer_volume, width=8).pack(side="left", padx=8)
+        ttk.Label(volume_bar, text="Calculated base transfer (nL/staple, all manual tabs)").pack(side="left")
+        ttk.Entry(volume_bar, textvariable=self.base_transfer_volume, state="readonly", width=8).pack(side="left", padx=8)
         concentration_bar = ttk.Frame(scroll.inner)
         concentration_bar.pack(fill="x", padx=12, pady=4)
         ttk.Label(concentration_bar, text="Plate default (nM)").pack(side="left")
@@ -202,7 +211,9 @@ class SetView:
             concentration_bar, textvariable=self.replacement_percentage, width=12, state="readonly")
         self.percentage_picker.pack(side="left", padx=8)
         ttk.Label(scroll.inner, text="Selected sites keep their percentage and concentration override. Deselect and reselect to change or reset them.").pack(anchor="w", padx=12)
-        ttk.Label(scroll.inner, textvariable=self.replacement_error, foreground="#a40000").pack(anchor="w", padx=12)
+        self.available_levels = tk.StringVar()
+        ttk.Label(scroll.inner, textvariable=self.available_levels, wraplength=1000).pack(anchor="w", padx=12)
+        ttk.Label(scroll.inner, textvariable=self.replacement_error, foreground="#a40000", wraplength=1000).pack(anchor="w", padx=12)
         if self.title in COLOR_BITS:
             encoding_bar = ttk.Frame(scroll.inner)
             encoding_bar.pack(fill="x", padx=12, pady=4)
@@ -297,23 +308,30 @@ class SetView:
                 float(volume), float(self.new_selection_concentration.get().strip() or self.desired_concentration_nm.get()),
                 self.base_desired_concentration_nm,
                 self.base_concentration_nm / self.concentration_nm,
+                self.minimum_transfer_nl, self.transfer_increment_nl,
             )
             self.replacement_error.set("")
         except ValueError as exc:
-            fractions = [1.0]
-            self.replacement_error.set("Partial replacement unavailable: {}".format(exc))
+            fractions = []
+            self.replacement_error.set("No available replacement levels: {}".format(exc))
         self._fraction_options = {"{:.10g}%".format(f * 100): f for f in fractions}
         self.percentage_picker.configure(values=list(self._fraction_options))
         if self.replacement_percentage.get() not in self._fraction_options:
-            self.replacement_percentage.set(next(reversed(self._fraction_options)))
+            self.replacement_percentage.set(next(reversed(self._fraction_options), ""))
+        displayed_levels = list(self._fraction_options)
+        if len(displayed_levels) > 16:
+            displayed_levels = displayed_levels[:5] + ["…"] + displayed_levels[-5:]
+        self.available_levels.set("Available replacement levels: {} ({} levels). Minimum {:g} nL; increment {:g} nL.".format(
+            ", ".join(displayed_levels) if displayed_levels else "none", len(self._fraction_options), self.minimum_transfer_nl, self.transfer_increment_nl))
         for name, fraction in self.site_fractions.items():
             try:
                 options = replacement_fractions(float(volume), self.site_target(name),
-                    self.base_desired_concentration_nm, self.base_concentration_nm / self.concentration_nm)
+                    self.base_desired_concentration_nm, self.base_concentration_nm / self.concentration_nm,
+                    self.minimum_transfer_nl, self.transfer_increment_nl)
                 if not any(math.isclose(fraction, option, rel_tol=0, abs_tol=1e-9) for option in options):
-                    raise ValueError
-            except ValueError:
-                self.replacement_error.set("Some selected targets/percentages do not fit this volume. Adjust settings or reselect those sites.")
+                    raise ValueError("Choose one of {}.".format(", ".join("{:g}%".format(100*f) for f in options)))
+            except ValueError as exc:
+                self.replacement_error.set("{}: selected target/percentage is not feasible ({:g}%). {} Reselect this site or adjust synthesis settings.".format(name,100*fraction,exc))
                 break
 
     def site_target(self, name: str) -> float:
@@ -355,10 +373,23 @@ class SetView:
         self._show_panel()
 
     def _browse(self) -> None:
+        if self.title == "LowConc PAINT R1" and self.panel_var.get() == "D-Biotin":
+            return
         path = filedialog.askopenfilename(title="Choose replacement CSV", filetypes=[("CSV files", "*.csv")])
         if path:
             self.path_var.set(path)
             self.refresh()
+
+    def replacement_sources(self, names):
+        """Route the LowConc D-Biotin panel to its physical 20 µM base plate."""
+        biotin = [name for name in names if self.title == "LowConc PAINT R1" and name.startswith("D-Biotin_")]
+        primary = [name for name in names if name not in biotin]
+        sources = []
+        if primary:
+            sources.append((Path(self.path_var.get()), self.plate_name, self.concentration_nm, primary))
+        if biotin:
+            sources.append((SHEET_DIR / "lowconc_D_biotin_additions.csv", "SourcePlate8[8]", 20000.0, biotin))
+        return sources
 
     def refresh(self) -> None:
         self._clear_panel_cache()
@@ -372,6 +403,8 @@ class SetView:
         self.conflicts.clear()
         try:
             self.available = replacement_names(Path(self.path_var.get()))
+            if self.title == "LowConc PAINT R1":
+                self.available.update(replacement_names(SHEET_DIR / "lowconc_D_biotin_additions.csv"))
         except Exception as exc:
             self.available = set()
             for child in self.panel_host.winfo_children():
@@ -400,6 +433,11 @@ class SetView:
         for child in self.panel_host.winfo_children():
             child.pack_forget()
         panel = self._current_panel()
+        biotin = self.title == "LowConc PAINT R1" and panel["label"] == "D-Biotin"
+        self.sheet_path_entry.configure(textvariable=self.biotin_sheet_path if biotin else self.path_var,
+                                        state="readonly" if biotin else "normal")
+        self.sheet_browse_button.configure(state="disabled" if biotin else "normal")
+        self.source_plate_label.set("SourcePlate8[8]" if biotin else self.plate_name)
         pitch = "{:.4g} nm columns; {:.4g} nm rows".format(
             EXTENSION_COLUMN_SPACING_NM,
             EXTENSION_ROW_SPACING_NM,
@@ -635,6 +673,10 @@ class SetView:
 
     def _on_square_toggled(self, name: str) -> None:
         if self.variables[name].get():
+            if self.replacement_percentage.get() not in self._fraction_options:
+                self.variables[name].set(False)
+                self._paint_square(name)
+                return
             override = self.new_selection_concentration.get().strip()
             try:
                 target = float(override or self.desired_concentration_nm.get())
@@ -888,6 +930,7 @@ def panel_definitions() -> List[Tuple[str, str, str, List[Dict[str, object]]]]:
 
     _, filename, plate_name, panels = next(item for item in definitions if item[0] == "LowConc PAINT R1")
     definitions.extend((title, filename, plate_name, deepcopy(panels)) for title in R1_SELECTION_COLORS)
+    panels.append(dense_panel("D-Biotin", set_e))
     return definitions
 
 
@@ -2047,23 +2090,7 @@ class PicklistApp(tk.Tk):
             view.path_var.trace_add("write", lambda *_args: self._selections_changed())
         self._build_settings(settings_page, main_tabs, preview_page)
         self.base_plate.trace_add("write", self._base_plate_changed)
-        def update_percentage_options(*_args):
-            try:
-                base_concentration = parse_vector(self.staple.get(), 4, "Base staple")[0]
-            except ValueError:
-                base_concentration = float("nan")
-            try:
-                base_target = parse_vector(self.desired.get(), 6, "Desired")[1]
-            except ValueError:
-                base_target = float("nan")
-            for view in self.set_views:
-                view.base_concentration_nm = base_concentration
-                view.base_desired_concentration_nm = base_target
-                view.update_percentage_options(self.transfer_volume.get())
-        self.transfer_volume.trace_add("write", update_percentage_options)
-        self.staple.trace_add("write", update_percentage_options)
-        self.desired.trace_add("write", update_percentage_options)
-        update_percentage_options()
+        self._build_manual_synthesis(replacement_page, set_tabs)
         plate_actions = ttk.Frame(plate_page, padding=(12, 10, 12, 0))
         plate_actions.pack(fill="x")
         ttk.Button(plate_actions, text="Start fresh plate", command=self._start_fresh_plate).pack(side="left")
@@ -2082,6 +2109,14 @@ class PicklistApp(tk.Tk):
         image_scroll.pack(fill="both", expand=True)
         self.rgb_image_view = RGBImageView(image_scroll.inner, self, APP_DIR, STORAGE_STATE_PATH, PLATE_STATE_PATH)
         self.rgb_image_view.pack(fill="both", expand=True)
+        from barcode_guard_view import BarcodeGuard
+        self.barcode_guard = BarcodeGuard(replacement_page, self, STORAGE_STATE_PATH.with_name("barcode_registry.json"))
+        self.barcode_guard.pack(side="top", fill="x", padx=12, before=hinge_controls)
+        barcode_pool = ttk.Frame(self.rgb_image_view)
+        barcode_pool.pack(fill="x", before=self.rgb_image_view.winfo_children()[0])
+        ttk.Label(barcode_pool, text="Barcode experiment / pool (shared with Replacements)").pack(side="left")
+        ttk.Entry(barcode_pool, textvariable=self.barcode_guard.experiment, width=24).pack(side="left", padx=6)
+        ttk.Button(barcode_pool, text="Barcode registry…", command=self.barcode_guard.show_registry).pack(side="left")
         self._bind_config_updates()
         self._bind_preview_updates()
         self._refresh_plate_view()
@@ -2224,6 +2259,8 @@ class PicklistApp(tk.Tk):
 
     def _selections_changed(self) -> None:
         self._invalidate_preview()
+        if hasattr(self, "barcode_guard"):
+            self.barcode_guard.refresh()
         self._lock_run_settings()
         for view in self.set_views:
             view.mark_conflicts(set())
@@ -2244,6 +2281,11 @@ class PicklistApp(tk.Tk):
             self.compatibility_status.configure(text="No replacements selected", foreground="#a40000")
             self._set_clash_text("Select at least one replacement, then click Make Picklist.")
             return
+        try:
+            self.barcode_guard.check_manual()
+        except ValueError as exc:
+            messagebox.showerror("Barcode check failed", str(exc), parent=self)
+            return
         self.main_tabs.tab(self.settings_page, state="normal")
         self.main_tabs.select(self.settings_page)
 
@@ -2256,7 +2298,8 @@ class PicklistApp(tk.Tk):
                 selected_names = set(view.selected())
                 if not selected_names:
                     continue
-                rows, _plate_name = parse_source2(Path(view.path_var.get()))
+                rows = [row for path, _plate, _stock, _names in SetView.replacement_sources(view, selected_names)
+                        for row in parse_source2(path)[0]]
                 missing = selected_names - {row["Name"] for row in rows}
                 if missing:
                     raise ValueError("{}: selected replacements are missing from the CSV: {}".format(
@@ -2330,6 +2373,88 @@ class PicklistApp(tk.Tk):
     def base_stock_concentration_nm(self):
         return BASE_PLATES[self.base_plate.get()][1]
 
+    def _build_manual_synthesis(self, parent, before):
+        self._syncing_manual = False
+        saved = self.config.get("manual_transfer_limits", {})
+        self.manual_minimum_transfer = tk.StringVar(value=str(saved.get("minimum_transfer_nl",25)))
+        self.manual_transfer_increment = tk.StringVar(value=str(saved.get("transfer_increment_nl",25)))
+        parts = self.desired.get().split(",")
+        self.manual_final_volume = tk.StringVar(value=parts[0] if len(parts)==6 else "100")
+        self.manual_base_target = tk.StringVar(value=parts[1] if len(parts)==6 else "50")
+        self.manual_scaffold_target = tk.StringVar(value=parts[2] if len(parts)==6 else "10")
+        self.manual_synthesis_status = tk.StringVar()
+        self.manual_stock_label = tk.StringVar()
+        frame = ttk.LabelFrame(parent,text="Manual synthesis per run",padding=5)
+        frame.pack(side="top",fill="x",padx=12,before=before)
+        ttk.Label(frame,text="Book-base plate").grid(row=0,column=0,sticky="w")
+        ttk.Combobox(frame,textvariable=self.base_plate,values=tuple(BASE_PLATES),state="readonly",width=43).grid(row=0,column=1,columnspan=3,sticky="w",padx=5)
+        ttk.Label(frame,textvariable=self.manual_stock_label).grid(row=0,column=4,columnspan=4,sticky="w")
+        fields=(("Final volume (µL)",self.manual_final_volume),("Book-base target (nM)",self.manual_base_target),
+                ("Scaffold target (nM)",self.manual_scaffold_target),("Minimum transfer (nL)",self.manual_minimum_transfer),
+                ("Transfer increment (nL)",self.manual_transfer_increment))
+        for index,(label,variable) in enumerate(fields):
+            row,col=1+index//3,(index%3)*2
+            ttk.Label(frame,text=label).grid(row=row,column=col,sticky="w",padx=4)
+            ttk.Entry(frame,textvariable=variable,width=9).grid(row=row,column=col+1,sticky="w",padx=4)
+        ttk.Label(frame,textvariable=self.base_path,wraplength=1000).grid(row=3,column=0,columnspan=8,sticky="w")
+        ttk.Label(frame,textvariable=self.manual_synthesis_status,wraplength=1000).grid(row=4,column=0,columnspan=8,sticky="w")
+        for variable in (self.manual_final_volume,self.manual_base_target,self.manual_scaffold_target):
+            variable.trace_add("write",self._manual_synthesis_changed)
+        for variable in (self.desired,self.staple,self.manual_minimum_transfer,self.manual_transfer_increment):
+            variable.trace_add("write",self._update_manual_concentrations)
+        self._update_manual_concentrations()
+
+    def _manual_transfer_limits(self):
+        return dict(minimum_transfer_nl=float(self.manual_minimum_transfer.get()),
+                    transfer_increment_nl=float(self.manual_transfer_increment.get()))
+
+    def _manual_base_transfer(self):
+        desired=parse_vector(self.desired.get(),6,"Desired")
+        stock=parse_vector(self.staple.get(),4,"Base staple")[0]
+        return synthesis_base_volume_nl(desired[0],desired[1],stock,**self._manual_transfer_limits())
+
+    def _manual_synthesis_changed(self,*_args):
+        if self._syncing_manual:return
+        parts=self.desired.get().split(",")
+        if len(parts)!=6:
+            self.manual_synthesis_status.set("Correct the Desired mixing vector in Run & Mixing Settings first.")
+            return
+        self.desired.set(",".join([self.manual_final_volume.get(),self.manual_base_target.get(),self.manual_scaffold_target.get(),*parts[3:]]))
+
+    def _update_manual_concentrations(self,*_args):
+        if self._syncing_manual:return
+        self._syncing_manual=True
+        try:
+            parts=self.desired.get().split(",")
+            if len(parts)==6:
+                for variable,value in zip((self.manual_final_volume,self.manual_base_target,self.manual_scaffold_target),parts):
+                    if variable.get()!=value:variable.set(value)
+            try:
+                stock=parse_vector(self.staple.get(),4,"Base staple")[0]
+                target=parse_vector(self.desired.get(),6,"Desired")[1]
+                limits=self._manual_transfer_limits()
+                self.manual_stock_label.set("Base stock: {:g} µM".format(stock/1000))
+                volume=self._manual_base_transfer()
+                self.transfer_volume.set("{:g}".format(volume))
+                self.manual_synthesis_status.set("Calculated base transfer: {:g} nL per standard body staple. Each replacement/competitor follows its own target; all nonzero transfers obey the minimum and increment.".format(volume))
+            except ValueError as exc:
+                self.transfer_volume.set("")
+                self.manual_synthesis_status.set(str(exc))
+            for view in self.set_views:
+                try:
+                    view.base_concentration_nm=parse_vector(self.staple.get(),4,"Base staple")[0]
+                    view.base_desired_concentration_nm=parse_vector(self.desired.get(),6,"Desired")[1]
+                    view.minimum_transfer_nl=float(self.manual_minimum_transfer.get())
+                    view.transfer_increment_nl=float(self.manual_transfer_increment.get())
+                except ValueError:
+                    view.base_desired_concentration_nm=float('nan')
+                view.update_percentage_options(self.transfer_volume.get())
+            self.config["manual_desired_mix"]=self.desired.get()
+            self.config["manual_transfer_limits"]={"minimum_transfer_nl":self.manual_minimum_transfer.get(),"transfer_increment_nl":self.manual_transfer_increment.get()}
+            self._schedule_config_save()
+            if hasattr(self,"pick_tree"):self._invalidate_preview()
+        finally:self._syncing_manual=False
+
     def _base_plate_changed(self, *_args):
         filename, stock = BASE_PLATES[self.base_plate.get()]
         self.base_path.set(str(SHEET_DIR / filename))
@@ -2350,7 +2475,7 @@ class PicklistApp(tk.Tk):
             self.transfers_per_source,
             self.transfer_volume,
             self.max_volume,
-            self.hinge_type,
+            self.hinge_type, self.staple, self.scaffold, self.te_10x, self.magnesium, self.sodium, self.desired,
         )
         for variable in variables:
             variable.trace_add("write", lambda *_args: self._schedule_config_save())
@@ -2406,6 +2531,7 @@ class PicklistApp(tk.Tk):
                 self.config[key] = converter(variable.get())
             except ValueError:
                 pass
+        self.config["manual_mixing_settings"] = {key:getattr(self,key).get() for key in ("staple","scaffold","te_10x","magnesium","sodium")}
         save_json(CONFIG_PATH, self.config)
         self._refresh_plate_view()
 
@@ -2499,9 +2625,10 @@ class PicklistApp(tk.Tk):
         default_wells = next_unused_wells(self.plate_state, configured_plate, len(recent) or len(pending) or 3)
         self.base_path = self._field(pick, 0, "Base Source1", str(SHEET_DIR / BASE_PLATES[self.base_plate.get()][0]))
         self.destination_wells = self._field(pick, 1, "Destination wells", ",".join(default_wells))
-        self.transfers_per_source = self._field(pick, 2, "Transfers/source", str(self.config.get("transfers_per_source", 1)))
-        ttk.Label(pick, text="Base transfer volume (nL)").grid(row=3, column=0, sticky="e", padx=6, pady=4)
-        ttk.Spinbox(pick, from_=25, to=100000, increment=25, textvariable=self.transfer_volume, width=58).grid(
+        self.transfers_per_source = tk.StringVar(value="1")
+        ttk.Label(pick, text="One synthesis per prepared run; all collected staples enter its mixing recipe.").grid(row=2, column=0, columnspan=2, sticky="w")
+        ttk.Label(pick, text="Calculated base transfer volume (nL)").grid(row=3, column=0, sticky="e", padx=6, pady=4)
+        ttk.Entry(pick, textvariable=self.transfer_volume, state="readonly", width=58).grid(
             row=3, column=1, sticky="ew", padx=6, pady=4)
         self.max_volume = self._field(pick, 4, "Max destination volume (µL)", str(self.config.get("max_destination_volume_uL", 12.5)))
         self.destination_plate = self._field(pick, 5, "Destination plate", configured_plate)
@@ -2518,21 +2645,46 @@ class PicklistApp(tk.Tk):
         mix.grid(row=1, column=0, sticky="new", padx=14, pady=6)
         mix.columnconfigure(1, weight=1)
         self.mix_path = self._field(mix, 0, "Latest recipe path", str(self._restore_path("save_recipe_path", OUTPUT_DIR / "mixing_recipe.csv")))
-        self.staple = self._field(mix, 1, "Base staple [nM, xTE, Mg, Na]", "{:g},1,0,0".format(self.base_stock_concentration_nm()))
-        self.scaffold = self._field(mix, 2, "Scaffold [nM, xTE, Mg, Na]", "400,0.1,0,0")
-        self.te_10x = self._field(mix, 3, "10X TE [nM, xTE, Mg, Na]", "0,10,0,0")
-        self.magnesium = self._field(mix, 4, "Mg [nM, xTE, mM, Na]", "0,0,100,0")
-        self.sodium = self._field(mix, 5, "Na [nM, xTE, Mg, mM]", "0,0,0,100")
-        self.desired = self._field(mix, 6, "Desired [µL, base staple nM, scaffold nM, xTE, Mg mM, Na mM]", "100,50,10,1,12,5")
-        targets = ttk.LabelFrame(mix, text="Desired replacement staple concentrations (nM)", padding=8)
-        targets.grid(row=7, column=0, columnspan=3, sticky="ew", pady=6)
-        ttk.Label(targets, text="Enter a positive final concentration per staple for each plate.\n"
-                  "Replacement % splits the target between replacement and original staples.").grid(
+        manual_mix = self.config.get("manual_mixing_settings", {})
+        self.staple = self._field(mix, 1, "Base staple stock [nM, shared ×TE, Mg mM, Na mM]", str(manual_mix.get("staple", "{:g},1,0,0".format(self.base_stock_concentration_nm()))))
+        self.scaffold = self._field(mix, 2, "Scaffold stock [nM, ×TE, Mg mM, Na mM]", str(manual_mix.get("scaffold", "400,0.1,0,0")))
+        self.te_10x = self._field(mix, 3, "10X TE [nM, xTE, Mg, Na]", str(manual_mix.get("te_10x", "0,10,0,0")))
+        self.magnesium = self._field(mix, 4, "Mg [nM, xTE, mM, Na]", str(manual_mix.get("magnesium", "0,0,100,0")))
+        self.sodium = self._field(mix, 5, "Na [nM, xTE, Mg, mM]", str(manual_mix.get("sodium", "0,0,0,100")))
+        self.desired = tk.StringVar(value=str(self.config.get("manual_desired_mix", "100,50,10,1,12,5")))
+        self.manual_recipe_target_summary = tk.StringVar()
+        ttk.Label(mix, text="Final synthesis targets (from Replacements)").grid(row=6,column=0,sticky="e",padx=6,pady=4)
+        ttk.Label(mix,textvariable=self.manual_recipe_target_summary).grid(row=6,column=1,sticky="w",padx=6)
+        self.manual_final_buffer = self._field(mix,7,"Final buffer target [×TE, Mg mM, Na mM]", ",".join(self.desired.get().split(",")[3:]))
+        syncing_buffer = [False]
+        def sync_recipe_targets(*_args):
+            if syncing_buffer[0]:return
+            parts=self.desired.get().split(",")
+            syncing_buffer[0]=True
+            try:
+                if len(parts)==6:
+                    self.manual_recipe_target_summary.set("{} µL · book-base {} nM · scaffold {} nM".format(*parts[:3]))
+                    self.manual_final_buffer.set(",".join(parts[3:]))
+                else:
+                    self.manual_recipe_target_summary.set("Invalid synthesis settings; edit in Replacements.")
+            finally:syncing_buffer[0]=False
+        def update_buffer_target(*_args):
+            if syncing_buffer[0]:return
+            parts=self.desired.get().split(",")
+            self.desired.set(",".join(parts[:3])+","+self.manual_final_buffer.get())
+        self.desired.trace_add("write",sync_recipe_targets)
+        self.manual_final_buffer.trace_add("write",update_buffer_target)
+        sync_recipe_targets()
+        ttk.Label(mix,text="The fields above describe stock solutions and buffer targets. Synthesis volume and DNA targets are set in Replacements.",wraplength=800).grid(row=8,column=0,columnspan=3,sticky="w",pady=5)
+        targets = ttk.LabelFrame(mix, text="Replacement-site targets (from Replacements)", padding=8)
+        targets.grid(row=9, column=0, columnspan=3, sticky="ew", pady=6)
+        ttk.Label(targets, text="Read-only defaults. Per-site overrides and replacement percentages remain as selected in Replacements.",wraplength=800).grid(
                       row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         for index, view in enumerate(self.set_views, 1):
-            ttk.Label(targets, text="{} (stock: {:g} µM)".format(view.title, view.concentration_nm / 1000)).grid(row=index, column=0, sticky="w", padx=(0, 12))
-            ttk.Entry(targets, textvariable=view.desired_concentration_nm, width=12).grid(
-                row=index, column=1, sticky="w", pady=2)
+            ttk.Label(targets, text="{} (nM; stock {:g} µM)".format(view.title, view.concentration_nm / 1000)).grid(row=index, column=0, sticky="w", padx=(0, 12))
+            ttk.Label(targets, textvariable=view.desired_concentration_nm).grid(row=index, column=1, sticky="w", pady=2)
+        ttk.Button(targets,text="Edit synthesis / replacement targets…",command=lambda:self.main_tabs.select(self.replacement_page)).grid(
+            row=len(self.set_views)+1,column=0,columnspan=2,sticky="w",pady=5)
 
         action = ttk.Frame(page, padding=14)
         action.grid(row=2, column=0, sticky="ew")
@@ -2685,6 +2837,11 @@ class PicklistApp(tk.Tk):
                 "Already stored", "This preview is already in storage.", parent=self
             )
             return
+        try:
+            self.barcode_guard.check_preview()
+        except ValueError as exc:
+            messagebox.showerror("Barcode check failed", str(exc), parent=self)
+            return
         destination_wells = list(
             dict.fromkeys(str(row["Destination Well"]) for row in self.last_picklist)
         )
@@ -2732,6 +2889,12 @@ class PicklistApp(tk.Tk):
             "picklist": [dict(row) for row in self.last_picklist],
             "mixing_recipe": [dict(row) for row in self.last_mix],
         }
+        try:
+            self.barcode_guard.reserve_manual(run_name)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Cannot reserve barcode", str(exc), parent=self)
+            return
+        item["barcode_record"] = deepcopy(getattr(self, "last_barcode_record", None))
         self._storage_items().append(item)
         self.storage_state["version"] = 2
         self.storage_state["updated_utc"] = item["created_utc"]
@@ -2800,6 +2963,7 @@ class PicklistApp(tk.Tk):
             messagebox.showinfo("Already saved", "This preview has already been saved.", parent=self)
             return
         try:
+            self.barcode_guard.reserve_manual()
             output_root = Path(self.output_root.get()).expanduser()
             if not output_root.is_absolute():
                 output_root = APP_DIR / output_root
@@ -2988,6 +3152,8 @@ class PicklistApp(tk.Tk):
                 self.status.set("Generation stopped — resolve selection clashes")
                 tabs.select(self.replacement_page)
                 return
+            guard = getattr(self, "barcode_guard", None)
+            barcode_entry = guard.check_manual() if guard else None
             selections = []
             design_names = []
             desired = parse_vector(self.desired.get(), 6, "Desired")
@@ -3000,19 +3166,21 @@ class PicklistApp(tk.Tk):
                         desired_concentration_ratio(desired_concentration, desired[1])
                     except ValueError:
                         raise ValueError("{}: desired base and replacement concentrations must be finite positive numbers.".format(view.title))
-                    selections.append(ReplacementSelection(
-                        Path(view.path_var.get()), names, view.plate_name,
-                        site_fractions={name: view.site_fractions.get(name, 1.0) for name in names},
-                        concentration_nm=view.concentration_nm,
-                        desired_concentration_nm=desired_concentration,
-                        site_concentrations_nm={name: view.site_concentrations_nm[name]
-                                                for name in names if name in view.site_concentrations_nm},
-                    ))
+                    for path, plate, stock, source_names in SetView.replacement_sources(view, names):
+                        selections.append(ReplacementSelection(
+                            path, source_names, plate,
+                            site_fractions={name: view.site_fractions.get(name, 1.0) for name in source_names},
+                            concentration_nm=stock,
+                            desired_concentration_nm=desired_concentration,
+                            site_concentrations_nm={name: view.site_concentrations_nm[name]
+                                                    for name in source_names if name in view.site_concentrations_nm},
+                        ))
                     design_names.extend(names)
             if not selections:
                 raise ValueError("Select at least one replacement.")
-            transfer_volume = int(self.transfer_volume.get())
-            transfers_per_source = int(self.transfers_per_source.get())
+            transfer_volume = self._manual_base_transfer() if hasattr(self,"_manual_base_transfer") else float(self.transfer_volume.get())
+            transfers_per_source = 1 if hasattr(self,"_manual_base_transfer") else int(self.transfers_per_source.get())
+            transfer_limits = self._manual_transfer_limits() if hasattr(self,"_manual_transfer_limits") else {}
             destination_wells = valid_well_list(self.destination_wells.get())
             staple = parse_vector(self.staple.get(), 4, "Base staple")
             self.destination_wells.set(",".join(destination_wells))
@@ -3023,6 +3191,7 @@ class PicklistApp(tk.Tk):
                 hinge_type=self._selected_hinge_type(),
                 base_concentration_nm=staple[0],
                 base_desired_concentration_nm=desired[1],
+                **transfer_limits,
             )
             unique_sources = {(str(row["Source Plate Name"]), str(row["Source Well"])) for row in picklist}
             total_volume_nl = sum(float(row["Transfer Volume"]) for row in picklist)
@@ -3046,6 +3215,10 @@ class PicklistApp(tk.Tk):
             self.last_hinge_type = self._selected_hinge_type()
             self.last_selection_panels = self._replacement_selection_panels()
             self.last_run_id = uuid4().hex
+            self.last_barcode_record = barcode_entry
+            if barcode_entry:
+                barcode_entry.update(id=self.last_run_id, destination_plate_name=self.destination_plate.get().strip(),
+                                     destination_wells=list(dict.fromkeys(row["Destination Well"] for row in picklist)))
             self.last_run_committed = False
             self.last_run_saved = False
             self.last_run_stored = False

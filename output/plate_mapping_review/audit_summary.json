@@ -1,5 +1,90 @@
 {
   "ordered_staples": 252,
+  "supplemental_d_biotin_staples": 8,
+  "total_interleaved_stocked_wells": 260,
+  "d_biotin_stock_uM": 20,
+  "d_biotin_mapping": [
+    {
+      "name": "D-Biotin_H01-01",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P17",
+      "stock_uM": 20,
+      "paint_p1_well": "B2",
+      "logical_replacement_key": "J08",
+      "replaced_body_physical_well": "D08",
+      "sequence": "/5Biosg/GATAGTTGCAGAGCCACCACCCTCCCGGAATA"
+    },
+    {
+      "name": "D-Biotin_H01-05",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P18",
+      "stock_uM": 20,
+      "paint_p1_well": "B4",
+      "logical_replacement_key": "J04",
+      "replaced_body_physical_well": "D04",
+      "sequence": "/5Biosg/AAGGAATTGCGTAACGATCTAAAGCCTATTAT"
+    },
+    {
+      "name": "D-Biotin_H01-08",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P19",
+      "stock_uM": 20,
+      "paint_p1_well": "B6",
+      "logical_replacement_key": "J10",
+      "replaced_body_physical_well": "D10",
+      "sequence": "/5Biosg/AAACGAAAACCCTCGTTTACCACTTCAAAG"
+    },
+    {
+      "name": "D-Biotin_H01-12",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P20",
+      "stock_uM": 20,
+      "paint_p1_well": "B8",
+      "logical_replacement_key": "J14",
+      "replaced_body_physical_well": "D14",
+      "sequence": "/5Biosg/ACGAGTAGTAAATATTCATTGAATACGAGAAT"
+    },
+    {
+      "name": "D-Biotin_H15-01",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P21",
+      "stock_uM": 20,
+      "paint_p1_well": "B3",
+      "logical_replacement_key": "I08",
+      "replaced_body_physical_well": "G22",
+      "sequence": "/5Biosg/TATCAGATAGTATTAACACCGCCTAACTGATAGCCCTAAAACATCGCC"
+    },
+    {
+      "name": "D-Biotin_H15-05",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P22",
+      "stock_uM": 20,
+      "paint_p1_well": "B5",
+      "logical_replacement_key": "I04",
+      "replaced_body_physical_well": "B04",
+      "sequence": "/5Biosg/CAATTCGACAGTTGAAAGGAATTGCCAGTCACACGACCAG"
+    },
+    {
+      "name": "D-Biotin_H15-08",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P23",
+      "stock_uM": 20,
+      "paint_p1_well": "B7",
+      "logical_replacement_key": "I10",
+      "replaced_body_physical_well": "B10",
+      "sequence": "/5Biosg/ACGTCAATTGACGGGGAAAGCCGAGTCTGTCCATCAC"
+    },
+    {
+      "name": "D-Biotin_H15-12",
+      "source_plate": "SourcePlate8[8]",
+      "source_well": "P24",
+      "stock_uM": 20,
+      "paint_p1_well": "B9",
+      "logical_replacement_key": "I14",
+      "replaced_body_physical_well": "G24",
+      "sequence": "/5Biosg/AAATCCTGCGCCGCTACAGGGCGCACGTGCTT"
+    }
+  ],
   "plate_counts": {
     "1": 86,
     "2": 62,

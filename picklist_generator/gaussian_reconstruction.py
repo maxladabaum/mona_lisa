@@ -64,8 +64,8 @@ def render_gaussian_overlay(designs, fwhm_nm=DEFAULT_FWHM_NM, exposure=DEFAULT_E
         if channel not in (0, 1, 2):
             raise ValueError("Each design must specify an RGB channel.")
         for site in design["image_sites"]:
-            fraction, x, y = site["replacement_fraction"], site["x_nm"], site["y_nm"]
-            if not all(math.isfinite(value) for value in (fraction, x, y)) or not 0 <= fraction <= 1:
+            fraction, x, y = site.get("effective_brightness", site["replacement_fraction"]), site["x_nm"], site["y_nm"]
+            if not all(math.isfinite(value) for value in (fraction, x, y)) or not 0 <= fraction or ("effective_brightness" not in site and fraction > 1):
                 raise ValueError("Image-site coordinates and replacement fractions must be finite and valid.")
             if fraction > 0:
                 sites.append((x, y, channel, fraction * quadrant_weight(design, normalize_designs)))

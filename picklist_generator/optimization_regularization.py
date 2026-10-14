@@ -1,7 +1,7 @@
 """Scale-independent shrinkage toward direct, quantized image assignments."""
 import math
 
-DEFAULT_REGULARIZATION = 0.01
+DEFAULT_REGULARIZATION = 0.05
 
 
 def validate_regularization(value):

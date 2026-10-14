@@ -103,6 +103,7 @@ def test_prepare_auto_export_and_saved_batch(tmp_path,monkeypatch):
             assert str(view.open_templates_button['state'])=='disabled'
             assert directory.exists()
             view.auto_export_templates.set(False); view._save_template_export_preference()
+            app.barcode_guard.experiment.set('Separate template test batch')
             view._prepare()
             assert view.runs and view.alignment_template_directory is None
             error.assert_not_called()

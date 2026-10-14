@@ -10,32 +10,46 @@ PDF exports, and similarity ranking/optimization.
 
 Synced with the standard local repository at `bb38c05` (2026-10-11).
 Manual replacements now use final concentration targets and per-site percentages.
-PAINT P1 and PAINT R1 default to 250 nM. R1 R/B/G and LowConc PAINT R1
-default to 25 nM; the RGB barcode bits remain binary. RGB Image uses its editable per-color target directly, with no extra
-excess multiplier, and retains 25 nL quantization. RGB uses the selected base plate stock and each color’s plate target, independently
+PAINT P1 and PAINT R1 default to 250 nM. LowConc PAINT R1 defaults to 25 nM.
+New RGB configurations default to 50 nM for book-base staples and R/G/B sites; the RGB barcode bits remain binary. RGB Image uses its editable per-color target directly, with no extra
+excess multiplier, and defaults to a 25 nL minimum and increment. RGB uses the selected base plate stock and each color’s plate target, independently
 of the manual Run & Mixing concentration fields, and validates both transfers.
 Existing configuration, destination usage, and stored runs are retained.
 
 ## Start the app
+
+Every newly prepared **RGB Image** run includes all eight PAINT P1 D-Biotin
+extensions from **LowConc base plate, SourcePlate8[8], P17–P24**, at the
+independent **Biotin target (nM)** beside the book-base target. Load these wells at **20 µM** before executing new
+picklists. Existing unmodified staples remain in the inventory but are omitted
+from RGB transfers at those eight logical sites. RGB targets and barcodes are
+unchanged. See the [D-Biotin loading map](replacement_sheets/book_base_20uM_interleaved.README.md#d-biotin-loading-map)
+for the exact PAINT P1-to-LowConc mapping. The source map and stock are editable
+under **Sources & mixing…**; all eight are mandatory in RGB. Previously saved
+picklists are unchanged: prepare a new batch to include these additions.
 
 **LowConc PAINT R1** uses the same `PAINT_R1_replace.csv` layout, sequences,
 and replacement targets as PAINT R1, with a separate source plate label
 `SourcePlate7[7]`. Its stock is **20 µM (20,000 nM)**. **R1 R, R1 G, and R1 B** also use
 this low-concentration plate (`SourcePlate7[7]`) and stock, including RGB Image
 batches. Other replacement tabs use **200 µM (200,000 nM)**.
-The **Base plate stock** selector in **Run & Mixing Settings** and **RGB Image**
-is synchronized and remembered across launches. Choose **Base plate — 200 µM**
+The **Base plate stock** selectors in **Run & Mixing Settings** and **RGB Image**
+are independent and each is remembered across launches. Choose **Base plate — 200 µM**
 (`book_base.csv`, `SourcePlate1[1]`) or **LowConc base plate — 20 µM**
 (`book_base_20uM.csv`, `SourcePlate8[8]`). The new plate definition preserves all
 base wells, sequences, replacement mappings, and hinge variants; its 20 µM value
-is nominal, not a measurement. Selection updates the source CSV and manual
-base-stock field, and rebuilds RGB previews and invalidates prepared runs.
+is nominal, not a measurement. Selection updates the source CSV and stock field
+in that workflow. RGB selection rebuilds RGB previews and invalidates prepared runs.
 With the 20 µM base and 20 µM R1 stocks, full replacement uses the same transfer
 volume as the original staple (25 nL at the default base transfer).
-RGB takes final concentration targets from its own target fields, independently of
-the manual mixing fields. Its recipe volume is capped by available dispensed
-material: at a 25 nL base transfer and 25 nM target, the 20 µM base supports a
-20 µL final recipe rather than the usual 100 µL.
+RGB asks for **Final volume (µL) per design** and **Scaffold target (nM)**.
+**Book-base staple target (nM)** is editable. The base transfer is calculated
+from that target, stock concentration, and final volume. **Minimum transfer (nL)**
+and **Transfer increment (nL)** are independent settings, both defaulting to 25.
+A 5 nM base target from 20 µM stock requires 25 nL at 100 µL or 50 nL at 200 µL;
+a 50 nL base transfer still permits 25 nL PAINT/competitor steps.
+The requested final volume is preserved; incompatible droplets or recipes fail
+with an explanation instead of silently reducing the synthesis volume.
 
 Final concentration targets are used directly, so the
 replacement portion requires 10× the volume of the 200 µM stock. Original-staple
@@ -80,17 +94,18 @@ and recipe preserve these different final concentrations.
 
 For partial replacements, the percentage splits the plate's target between
 replacement and original staples: a 40% split of a 50 nM target gives 20 nM
-replacement and 30 nM original. Transfers must fit whole 25 nL droplets; increase
-the base transfer volume or adjust the target/percentage if needed. Editing any
+replacement and 30 nM original. Transfers must satisfy the configured minimum and increment; adjust
+the final synthesis volume, target, or percentage if needed. Editing any
 target invalidates the previous preview so exports require recalculation.
 
 Changing a target or transfer volume does not overwrite stored percentages;
 incompatible splits must be resolved before generating a preview. Mixing recipes
 include both portions. Stored runs and selection PDFs preserve each percentage.
 
-Each tab has an editable **Base transfer volume (nL, all tabs)** field, shared
-with **Run & Mixing Settings**. Base and replacement transfers must use 25 nL
-increments. Manual tabs split each site's final target according to its retained
+Each manual tab shows a read-only **Calculated base transfer** shared with
+**Run & Mixing Settings**, derived from the manual final volume and book-base target.
+RGB uses independent synthesis settings. Both workflows have separate minimum
+transfer and increment settings, defaulting to 25 nL. Manual tabs split each site's final target according to its retained
 percentage and account for the two stock concentrations. Color highlight opacity
 shows each site's replacement percentage; barcode sites stay fully on or off.
 
@@ -287,10 +302,24 @@ The mixing fields retain the notebook's comma-separated vector format. The
 **Base staple** concentration applies to the base source plate; replacement
 stock concentrations are defined separately per tab. The staple buffer values
 (xTE, Mg, Na) remain shared across staple stocks; LowConc uses the same buffer
-composition as the other plates. The
-water balance fixes a notebook arithmetic omission by subtracting sodium along
-with the other reagent volumes, so the recipe sums to the requested final
-volume.
+composition as the other plates.
+
+**RGB Image and Run & Mixing Settings use the same mixing calculator.** It fixes
+the staple/scaffold volumes, then jointly balances TE, Mg, and Na using the
+composition entered for every stock. This includes salts carried by DNA stocks
+and TE/salts carried by other buffer stocks. Non-1× TE targets are supported.
+Water fills the remainder to the requested final volume.
+
+Preparation rejects nonfinite/negative inputs, missing stocks required for a
+nonzero target, DNA/buffer volumes exceeding the final volume, carried components
+already exceeding a target, and stock combinations that cannot reach all three
+buffer targets with nonnegative additions. Zero buffer/scaffold targets are valid
+when stock carryover permits them. Redundant stock compositions are supported;
+when multiple recipes work, the calculator chooses the least added stock volume.
+Existing checks also enforce available staple-pool volume and Echo transfer/well
+constraints. Mg/Na/TE stocks must contain 0 nM DNA. The shared staple-buffer
+composition must describe all staple sources; separate buffers per staple plate
+are not represented by the current inputs.
 
 ## Repository contents
 
@@ -514,22 +543,47 @@ By default, sRGB values are decoded to linear-light intensity and rounded to the
 nearest achievable replacement fraction. A display value of 128 corresponds to
 about 21.6% intensity, not 50%. **R1 R, R1 G, and R1 B target (nM)** fields
 in RGB Image control the RGB targets; there is no additional RGB excess control.
+Each target now shows its available replacement percentages, recalculated live
+from final synthesis volume and both original/replacement stock concentrations.
+Only splits with both transfers on the 25 nL grid are listed. For 100 µL and
+20 µM stocks on both sides: 5 nM allows 0%/100%, 10 nM allows 0%/50%/100%, and
+25 nM allows 0%/20%/40%/60%/80%/100%. With a 200 µM original stock, 5 nM instead
+allows only 100% replacement (the 0% original transfer would be 2.5 nL), so RGB
+reports that both binary endpoints are unavailable. Image quantization uses the
+same stock-aware droplet constraints.
 Changing a color's plate default immediately rebuilds its image assignments,
 previews, and open comparisons, and invalidates prepared runs. Manual per-site
 percentage/concentration overrides do not replace the image assignments.
 
-RGB uses its color plate target as the concentration reference; the manual
-Run & Mixing base target is ignored. For base transfer `V` and replacement fraction `f`:
+RGB calculates each source volume independently. For final volume `Vfinal` in µL,
+book-base target `Cbase`, and base stock `Sbase` in nM:
 
-- Original transfer: `V × (1 − f)`.
-- Replacement transfer: `V × f × selected base stock / replacement stock`.
+- Base transfer: `1000 × Vfinal × Cbase / Sbase` nL.
+- Original competitor: `1000 × Vfinal × Crgb × (1 − f) / Sbase` nL.
+- PAINT replacement: `1000 × Vfinal × Crgb × f / Srgb` nL.
 
-Both transfers must be multiples of 25 nL. With the 20 µM R1 source and a
-25 nL base transfer, 0% uses 25 nL original and 100% uses 250 nL replacement.
-Both barcode states are valid at a 25 nM plate target. Increasing the base
-transfer to 50 nL also permits 50% (25 nL original + 250 nL replacement).
-The color plate target determines the final concentration in that color's recipe.
-The total liquid volume can vary with intensity because the stocks differ.
+Every nonzero transfer must meet the configured minimum and be a multiple of the
+configured increment; zero means no transfer. These constraints apply to both
+sides of a replacement, standard body staples, and biotin. They also apply to
+optimized assignments and reports. Increasing synthesis volume preserves targets
+and can create more replacement levels. If minimum exceeds increment, available
+levels can have gaps; assignments use only feasible levels.
+
+**Biotin target (nM)** independently controls all eight D-Biotin staples. It is saved
+with RGB settings and initially inherits the previously saved book-base target
+(or 50 nM for new configurations). Changes to final volume or base stock do not change the biotin target. Its
+transfer is `1000 × Vfinal × Cbiotin / Sbiotin` nL, using the separate 20 µM
+D-Biotin stock by default. Increased volume is included in well allocation and
+mixing feasibility checks. Changing the target requires preparing runs again.
+
+Base volume is read-only; **Transfers per source** is no longer an RGB input.
+The calculated volume includes all droplets in one transfer per source/site.
+Both portions must satisfy the configured minimum and increment. The app reports incompatible settings
+rather than silently rounding targets. Image intensities still round to the
+nearest achievable replacement fraction. At 200 µL, a 50 nM RGB site can split
+50/50 into 25 nL original from 200 µM stock plus 250 nL replacement from 20 µM stock.
+Scaffold volume is calculated from the requested final volume, scaffold target,
+and scaffold stock (editable under **Sources & mixing…**).
 
 Barcode sites use the same plate target but always encode 0% or 100%, independently
 of image intensity. By default, all six bits use three-extension groups; the barcode schema can change these sites. Other base
@@ -568,9 +622,46 @@ background, localization counts, or alignment errors separately.
 
 Inspect the binned image and Gaussian reconstruction side by side, then choose
 any design to see its barcode and per-site RGB values,
-replacement percentages, and original/replacement transfer volumes. The image
+replacement percentages, and original/replacement transfer volumes. After preparing
+runs, the inspector's **Prepared picklist** tab shows every actual transfer for the
+selected design, including source and destination plates/wells, sample comments,
+and volume in nL. Its **function** column identifies `standard body`, `biotin`,
+`PAINT extension`, or `body-PAINT competitor`. Competitors are retained original
+staples at the design's PAINT sites, including 0% replacement sites. Classification
+uses logical replacement keys and actual source wells, including relocated bases.
+PAINT extensions and body-PAINT competitors also show their origami helix and row
+in the function column, for example `PAINT extension (H13, 02; image site)`. PAINT extensions identify
+whether each location is an image site, barcode site, or fiducial site. The **Image sites** table uses the same helix and row locations.
+Selecting a row in **Image sites** or a located transfer in **Prepared picklist**
+highlights that helix and row with a cyan square on the design. The highlight
+follows the displayed rotation. Standard body and biotin transfers use the source
+sheets’ logical replacement keys to locate their sites, including relocated base
+wells. Body staples without a mapped grid location show `Location unavailable for
+this staple` instead of a highlight.
+The adjacent **Prepared mixing recipe** tab shows the selected design's reagent
+volumes in µL, explicitly identifying the required pooled staple-mix volume.
+A second table sums actual picklist transfers into each destination well and
+shows its collected staple-mix volume in µL. Pool these wells for that design;
+the displayed recipe applies once to the pooled design, not once per well.
+The summary compares required and collected staple mix and shows final synthesis
+volume. Both tables follow the design selector and clear when preparation is invalidated.
+Changing run settings clears this table until runs are prepared
+again. The image
 workflow creates independent runs rather than combining the three color tabs
 into a single origami mixture. Manual designs remain available separately.
+
+**RGB run settings** are saved independently of **Run & Mixing Settings**; manual
+settings are never imported into RGB. Destination plate, maximum well volume
+(default **12.5 µL**) and synthesis inputs are visible directly in RGB.
+**Sources & mixing…** exposes the base/RGB source CSVs and stocks, RGB source plate
+name, source plate type, hinges, mixing stocks and desired recipe, and output folder.
+Calculated base volume and per-color targets remain above these controls; **Start at well**
+remains beside **Prepare runs**. All are saved for the next launch. The maximum
+well volume limits picklist transfers, excluding reagents added afterward.
+Each recipe uses all dispensed staples at the requested final synthesis volume.
+Changing RGB settings clears prepared
+runs; editing manual settings leaves them intact. Both workflows still share
+plate usage records and stored runs to avoid assigning occupied wells.
 
 **Prepare N runs** automatically exports PAINT Analysis alignment templates when
 **Automatically export PAINT alignment templates when preparing runs** is checked
@@ -598,10 +689,10 @@ exporting templates does not commit plate usage. Export errors leave prepared
 runs available; saving the image batch retries template export. The automatic
 export preference is remembered across launches.
 
-Use **Run & Mixing Settings** to configure the base plate, hinge type,
-destination plate, capacity, and repeat transfers. RGB ignores the manual mixing
-fields: its recipe uses each color plate's target with the standard 100 µL,
-10 nM scaffold, 1× TE, 12 mM Mg, and 5 mM Na formulation. **Prepare N runs**
+Use the controls in **RGB Image** to configure the base plate, hinge type,
+destination plate, capacity, synthesis volume, and concentration targets. RGB ignores all manual run and
+mixing fields. Its editable recipe defaults to 100 µL, 10 nM scaffold, 1× TE,
+12 mM Mg, and 5 mM Na, with independent book-base and RGB targets. **Prepare N runs**
 allocates unused wells at or after the indicated starting well, skipping wells
 already recorded or reserved by stored runs. A design can span multiple wells;
 no well is shared between designs. Well counts depend on the 25 nL base transfer
@@ -611,7 +702,16 @@ or plate usage.
 Changing image, fit, volumes, source sheets, or run settings invalidates a
 prepared batch and requires preparation again.
 
-**Save image batch** creates a new dated folder containing:
+**Save image batch** creates a dated folder with the complete batch.
+
+For recipes alone, use **Save mixing recipe batch…** beside **Save image batch…**
+after preparing runs. It creates a dated folder with one `mixing_recipe.csv` per
+design and a `mixing_recipe_batch.csv` listing all recipes with their design names,
+destination plates, and wells. Recipes remain separate; the batch CSV does not
+pool reagents across designs. This export does not reserve wells or mark the
+image batch saved, and remains available after saving the full image batch.
+
+The full image batch contains:
 
 - A combined Echo picklist, plus one picklist and mixing recipe per design.
 - `pixel_assignments.csv` with every pixel/channel/site/shift and its volumes.
@@ -959,7 +1059,7 @@ scheme, rotation, assignments, and main FWHM are unchanged.
 
 **Regularization strength** in the RGB Image tab controls how strongly optimized
 replacement fractions stay near the direct, quantized image assignments. The
-initial strength is **0.01**; **0** restores unregularized optimization. Increase
+initial strength is **0.05**; **0** restores unregularized optimization. Increase
 it to make corrections more conservative. This starting value is adjustable,
 not a measured optimum for your experiment.
 
@@ -1118,3 +1218,93 @@ PNG metadata, sidecar JSON, and reusable group JSON preserve `dark_groups`, with
 an `id`, one-based `physical_sites`, and positive `mask_radius_nm` for each group.
 Alignment-only templates with bright and dark groups can be exported without
 any digital bits. Reload the template in PAINT Analysis and rerun Steps 1–4.
+
+The RGB image tab starts with **Simulate alignment uncertainty** enabled (X and Y
+error SD **3 nm**, angle SD **3°**) and **Optimize replacement percentages**
+enabled. Regularization defaults to **0.05**, with saved custom strengths retained.
+
+In **Replacements → LowConc PAINT R1**, the **D-Biotin** panel selects the eight
+20 µM extensions on **SourcePlate8[8], P17–P24**. R1 selections still use
+SourcePlate7[7]. The panel uses the LowConc plate default and supports per-site
+concentration/percentage overrides. Selecting the same biotin replacement in
+PAINT P1 and LowConc is reported as a clash.
+
+The LowConc replacement-sheet path and source-plate label follow the active panel:
+**U-Apt R1** shows `PAINT_R1_replace.csv` / SourcePlate7[7]; **D-Biotin** shows
+`lowconc_D_biotin_additions.csv` / SourcePlate8[8]. The D-Biotin map is read-only
+in this tab so the displayed source matches the inventory-backed selection.
+
+## Shared barcode registry for RGB and manual runs
+
+**Replacements → Barcode collision protection** loads a barcode/fiducial schema
+with **Load schema…** (RGB schema JSON or template logical-bit JSON) or **Use RGB
+schema**. Choose the matching six- or nine-bit family. The **Experiment / pool**
+name is shared with RGB Image; use the same name for all designs that will be
+pooled or decoded together. Changing destination wells does not make a barcode
+unique.
+
+The status displays the manual selection’s bit string and **Available**, **Already
+used**, or an invalid-bit/fiducial message. All sites within a bit must be fully
+ON or fully OFF; schema fiducials must be fully ON. Checks include PAINT selections
+across all replacement tabs. **Select an unused code + fiducials** applies a free
+code to the chosen source tab, replacing only schema-controlled selections and
+preserving other image-site selections. Six bits provide 64 combinations; nine
+provide 512. Exhaustion is reported rather than reusing a reserved code.
+
+RGB preparation and manual picklist generation reject reserved codes. Saving or
+storing either workflow rechecks and reserves its codes; recipe-only export does
+not reserve codes. Codes from existing RGB storage are registered automatically
+on startup in their saved experiment (or `Default` for older runs). Old manual
+runs without barcode metadata cannot be reconstructed automatically; import a
+complete log for those runs before assuming their codes are free.
+
+**Import used codes…** accepts `image_manifest.json` and exported registry JSON,
+adding their active records to the currently named experiment. RGB manifests
+include source run identities, schema, bits, and destinations. Reimporting the
+same runs does not duplicate reservations. Imports record existing usage, even
+if it contains collisions; subsequent checks report those reservations.
+
+**Registry…** lists reservations with run, code, destination plate/wells, origin,
+and release state. **Export registry…** writes a portable log. **Release selected
+reservation…** explicitly permits reuse after confirmation and retains an audit
+event. Deleting a stored run or starting a fresh destination plate does not release
+its barcode. Local reservations and release history persist in
+`barcode_registry.json` beside `storage_state.json`.
+
+The comparison uses physical bit-site groups and ON sites, not schema names or
+integer code labels. Renaming/reordering bits or changing fiducials cannot hide
+a duplicate. Different physical bit layouts in the same experiment are blocked
+as incompatible, because uniqueness across different decoders is not established.
+Use separate experiment names only for samples that are actually kept separate.
+
+## Manual replacement synthesis settings
+
+The **Replacements** tab now exposes **Manual synthesis per run**: book-base plate,
+actual base-stock concentration and source CSV, final volume, book-base target,
+scaffold target, minimum transfer, and transfer increment. **Calculated base
+transfer** is read-only in every manual tab and in Run & Mixing Settings. The
+synthesis fields and mixing-vector fields synchronize in both directions. Manual
+settings are persisted separately from RGB settings.
+
+The same calculation used for RGB determines each manual source volume:
+`1000 × final volume (µL) × target (nM) / stock (nM)`. The plate target is split
+between replacement and original competitor according to the selected percentage.
+Minimum and increment both default to 25 nL and apply independently to each
+nonzero body, PAINT, competitor, or biotin transfer. A 50 nL calculated base volume
+does not change the 25 nL increment. The manual repeat multiplier is retired;
+one prepared run collects the staples for one complete synthesis recipe.
+
+For 20 µM base and R1 stocks, 100 µL final volume, 5 nM book-base target, and 20 nM
+R1 site target: base transfers are 25 nL, full R1-site transfer is 100 nL, and
+replacement levels are 0%, 25%, 50%, 75%, and 100%. At 200 µL the base transfer
+becomes 50 nL and the R1 levels use 12.5% steps, still dispensing 25 nL increments.
+Existing selections retain their percentages and overrides; warnings identify
+sites that become infeasible instead of silently rounding their targets. If no
+levels are possible, the percentage selector is empty and new selection is blocked.
+The shared mixing solver validates the final recipe and uses all collected staples.
+
+Run & Mixing Settings shows synthesis volume, book-base/scaffold targets, and
+replacement-site defaults as read-only summaries from Replacements. Use **Edit
+synthesis / replacement targets…** to return to their controls. Stock-solution
+concentrations and **Final buffer target [×TE, Mg mM, Na mM]** remain editable in
+Run & Mixing Settings; editing the buffer preserves the DNA targets and volume.
