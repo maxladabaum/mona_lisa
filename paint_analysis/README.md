@@ -1,0 +1,1351 @@
+# DNA PAINT Picasso-Style ROI Analyzer
+
+Mona Lisa edition, synced with the standard local repository at `a0c23d0`
+(2026-10-11). Retains composite reconstruction, vertical template mirroring,
+0°/180° orientation checks and ambiguity exclusion, and coarse-detection overlays.
+These coexist with standard session archives, tiled checkpoints, classification
+compute backends, horizontal mirroring, calibrated brightness, and explicit dark
+groups. Vertical mirroring also reflects dark groups; tiled results retain the
+Mona Lisa orientation diagnostics.
+
+## Optional classification acceleration
+
+The CPU and optional CUDA optimizations from `paint_analysis_dongsung` are
+available in the normal application. Normal launches use the optimized **CPU**
+backend and do not require CuPy. The current dark-group alignment checks,
+180° retry, separate bright/dark display switches, and cached dark-mask drawing
+remain available.
+
+Set `PAINT_CLASSIFICATION_COMPUTE` before launching:
+
+| Value | Behavior |
+| --- | --- |
+| `cpu` (default) | Vectorized site measurements, cached template trees, and reused centroids. |
+| `auto` | Use CUDA where supported; retry on CPU if initialization or a GPU operation fails. |
+| `gpu` | Require CUDA for GPU-eligible operations; report failures instead of silently falling back. |
+| `reference` | Use the original numerical paths for comparisons against optimized processing. |
+
+GPU-eligible work includes large Step 1 Gaussian/FFT maps, Step 3 distance and
+digital-group batches, and large overlay filters. Step 2 pose selection,
+including the dark-check/180° retry, stays on CPU to preserve orientation
+choices. Step 4 uses the same classification rules; tiled runs reuse these
+operations. Values near digital ON/OFF thresholds are rechecked on CPU.
+Picasso G5M fitting and drift correction are unchanged.
+
+The CUDA backend requires a compatible NVIDIA GPU; it does not accelerate an
+Apple GPU. CPU optimizations and plotting improvements also apply on Macs.
+The plotting changes cache full-field contrast, prepare it in workers where
+possible, limit queue-processing time, avoid overlay-triggered zoom loops,
+and skip unnecessary header layouts. Sidebar wheel scrolling also works over
+canvas padding. Step 3 reports its remaining work before reaching 100%.
+
+For an optional Windows CUDA environment (separate from the normal app runtime):
+
+```powershell
+python -m venv .gpu-venv
+.\.gpu-venv\Scripts\python.exe -m pip install -r requirements-gpu.txt pytest
+```
+
+`requirements-gpu.txt` retains the fork's CUDA 13 CuPy dependency. Launch with
+**run_paint_gpu.bat** for `auto`, or **run_paint_reference.bat** for comparison.
+These launchers keep runtime state and diagnostics in `.gpu-state` and disable
+automatic development-session restoration. Existing normal launchers are unchanged.
+Set `PAINT_CLASSIFICATION_LOG` to a JSONL path to record operation timings,
+backend counts, and stack traces for workers running longer than 30 seconds.
+
+The synthetic benchmark does not read experimental data:
+
+```sh
+python benchmark_classification.py --modes reference cpu auto --output .gpu-results/cpu-benchmark.json
+```
+
+On a CUDA machine, omit `--modes` to include forced GPU tests. For strict GPU
+regression checks, set `PAINT_REQUIRE_GPU_TESTS=1` and run
+`python -m pytest tests/test_classification_compute.py -q`. GPU tests otherwise
+skip when CUDA is unavailable. The optional Windows UI regression is enabled
+with `PAINT_TEST_WINDOWS_GUI=1` and runs via
+`python -m pytest tests/test_classification_display_windows.py -q`.
+
+Benchmarks exclude warm-up, compare numerical results and classification calls,
+and report timings by stage. They supplement comparisons on experimental data;
+speedups depend on dataset size and hardware.
+
+This GUI is now map-first:
+
+1. Load a Picasso `.h5`/`.hdf5` file or a localization `.csv` file.
+2. Apply drift correction: `none`, `rcc`, or `aim`.
+3. Render the stored corrected localization table using Picasso's `picasso.render.render`.
+4. Drag a rectangle on the rendered map to select an ROI.
+5. Generate histograms from only the corrected localizations inside that ROI.
+
+All histogram analysis is performed after the selected drift correction. If correction method is `none`, the loaded coordinates are treated as the corrected table.
+
+## Start
+
+On Windows, double-click:
+
+```text
+run_paint.bat
+```
+
+The Windows launcher automatically installs a compatible per-user copy of
+Python when needed. `run_paint_gui.bat` remains available as an alias.
+
+On macOS, double-click:
+
+```text
+run_paint_gui.command
+```
+
+If macOS says the file is not executable, open Terminal in this folder once and run:
+
+```bash
+chmod +x run_paint_gui.command
+```
+
+The launcher creates a private Python environment outside the Git repository and
+installs dependencies, including `picassosr`. Its default location is:
+
+- macOS: `~/Library/Application Support/PaintAnalysis/venv`
+- Windows: `%LOCALAPPDATA%\PaintAnalysis\venv`
+
+The app's machine-specific state, such as the most recently opened data
+directory and Python's generated bytecode cache, is stored alongside that
+environment instead of in this repository.
+Set `PAINT_ANALYSIS_HOME` before launching to use a different local location.
+Both launchers safely reuse the same external environment on later runs. The
+macOS launcher requires Python 3.10 or newer. On Windows, an existing Python
+3.10 through 3.14 installation is reused when it includes the standard
+environment and GUI components. Otherwise, the launcher installs Python 3.12
+side by side for the current user using the signed installer from python.org.
+The installation is not added to `PATH`, so other installed Python versions,
+projects, and packages are not changed.
+
+Localization data (`.csv`, `.h5`, and `.hdf5`), virtual environments, Python caches, and
+editor metadata are ignored by Git. CSV exports are written only to the location
+you choose in the save dialog.
+
+CSV imports accept Picasso-style `frame`, `x`, and `y` columns as well as exports
+whose headers use `frameIndex`, `x (nm)`, and `y (nm)`. Common photon, background,
+PSF-width, localization-precision, and channel columns are imported when present.
+Nanometer coordinates and PSF widths are converted to Picasso pixel units using
+the companion YAML `Pixelsize`, or 130 nm/pixel when no metadata is available.
+Large CSV and HDF5 imports show determinate progress beneath the selected file
+name. CSV data is loaded in chunks into preallocated arrays to keep memory close
+to the final localization-table size.
+
+## Save an ROI as a localization CSV
+
+Use **Select Whole Image** in the sidebar ROI panel to select the full loaded
+image bounds in one click. For a previously cropped file, this uses its saved
+crop bounds. The selection applies to ROI analysis and exports.
+
+Drag a rectangle on the raw map immediately after loading, or on the corrected
+map after applying drift correction. In the sidebar ROI panel, choose **Save Raw
+ROI CSV** or **Save Corrected ROI CSV** and choose a new filename. Each button
+selects localizations within the rectangle using that version's coordinates,
+including points on the boundary. Coordinates stay in the original reference
+frame; the crop does not move the origin or renumber frames. Histogram filters
+and linking do not affect these exports.
+
+For CSV inputs, the export retains every original column, column order, extra
+text fields, and coordinate units. Raw exports preserve the original field
+values; corrected exports replace only coordinate fields with corrected values.
+The original CSV must remain available. Export runs in the background and streams
+rows in chunks so it does not load another full copy of a large CSV. A companion
+YAML preserves pixel size, acquisition dimensions, and the selected ROI bounds.
+Reloading the subset opens the map at those ROI bounds, and the map toolbar Home
+button returns to that region. Original coordinates stay unchanged. Older exports
+with filenames ending in `_raw_roi` or `_corrected_roi` automatically use their
+localization bounds with a small margin.
+HDF5 inputs export the loaded numeric fields as a CSV in Picasso pixel units.
+An empty selection produces a header-only CSV. The source file is protected
+against overwriting.
+
+For development restarts, completing drift correction writes an app-owned HDF5
+session cache containing the loaded numeric localization table, corrected table,
+and drift trace. The next launch automatically restores the most recent valid
+session, and manually selecting the same source with the same drift settings uses
+the cache as well. Cache entries are keyed by the source path and correction
+settings and are rejected if the source file or an external drift file changes.
+They live under the machine-specific PaintAnalysis state directory, outside this
+repository. Set `PAINT_ANALYSIS_DISABLE_DEVELOPMENT_CACHE=1` before launch to
+disable automatic restoration.
+
+## Save and reopen Origami analysis
+
+Use **Save Analysis…** and **Load Analysis…** at the bottom of the Classification
+sidebar. After completing ROI or whole-image analysis, save a `.paintanalysis`
+file. Closing the app with Origami results open prompts to save, close without
+saving, or cancel. Choosing save closes only after a successful write; canceling
+the file dialog or a failed save keeps the app open.
+
+Load it in a later session to restore classifications, aligned particles,
+digital-pixel measurements, excluded/unclassified results, and any overlays
+already built. The selected classification, plot view, gallery page, and selected
+particle are restored when available. Use the Classification and View controls
+to inspect other saved results. Completed threshold-sweep tables are preserved; older saves can regenerate them
+from saved measurements without repeating detection or classification.
+
+The archive embeds localization tables, detection/classification template images,
+digital-group schemas, mirror/brightness settings, analysis parameters, and the
+custom type-count axis order. Original source and template files are not required
+to browse the saved analysis. Plots may render again on demand, but detection,
+alignment, and classification do not rerun during loading. Overlays that had not
+been built before saving can still be built from the saved aligned localizations.
+
+Saving/loading runs in the background with a progress dialog. Loading shows a
+percentage based on archive data read and records restored, including recovery
+snapshots opened through **Resume Tiled Analysis…**. Large full-image
+archives can take time and disk space because they include the source data.
+Saves replace the destination only after writing successfully. Files use a
+versioned ZIP archive of JSON and NumPy arrays, without executable pickle data.
+This is separate from the automatic drift-correction cache described above.
+
+### Recover an interrupted tiled analysis
+
+**Analyze Whole Image as Tiles** and **Analyze N Tiles** ask for a checkpoint
+destination before starting. Choose a folder on an external drive if desired.
+The app creates a separate `paint-tiles-…` recovery folder there and displays its
+path below the tiled-analysis controls.
+
+Before processing tiles, the app saves a `run.paintanalysis` snapshot containing
+the source localization data, templates, settings, tile boundaries, and selected
+tile indices. It then saves each completed nonempty tile to its own file using
+an atomic replacement. If the app crashes, completed tile files remain usable;
+the tile that was still processing may need to run again. Empty tiles are skipped
+quickly from the saved source data.
+
+After restarting, click **Resume Tiled Analysis…** in the Classification tab and
+select that `paint-tiles-…` folder. The app restores the saved dataset and settings,
+reuses completed tiles, and processes the remaining ones. Original CSV and template
+files are not required. You can also use **Load Analysis…** to open the folder's
+`run.paintanalysis` file; it offers **View completed tiles** or **Resume analysis**.
+Individual `tile-…` files are not standalone analysis sessions.
+Current settings are replaced by the saved run settings;
+start a new run to use different thresholds or templates. If checkpoint writing
+fails, for example because the drive is full, the run stops and previously saved
+tiles are retained. Free space or copy the entire recovery folder to a larger
+drive, then resume from that folder.
+
+To inspect progress without continuing the run, click **View Completed Tiles…**
+and select the recovery folder. Only completed, readable tile checkpoints are
+combined; unfinished tiles are not analyzed or counted as unclassified. Count
+plots, galleries, aligned-density plots, and other views use this completed subset.
+Graphs display **PARTIAL ANALYSIS — completed/planned tiles** when tiles are missing
+(empty tiles require no checkpoint and count as available). This label remains
+when saving/reloading the partial analysis. Checkpoint files remain unchanged.
+Use **Resume Tiled Analysis…** with the original recovery folder when ready to
+continue; the initial saved settings are restored and missing tiles are processed.
+
+Tiled analysis now combines results sequentially on disk, including new runs,
+resumed runs, and completed-tile previews. Each tile is read or analyzed, appended
+to `.combined-cache/combined-*` inside the recovery folder, then released before
+the next tile. Combined numeric arrays (including regions, alignment images,
+site evidence, and source coordinates) are opened as memory-mapped arrays for
+viewing. Completed-tile previews open with the type-count plot.
+Small arrays are buffered together, and a bounded pool of file handles is reused
+across tiles to reduce repeated open/close overhead on external drives. Buffers
+are flushed before the combined results are opened for viewing.
+
+The combined cache requires additional space on the checkpoint drive. It is
+disposable, not a replacement for the atomic tile archives: an interrupted merge
+can be rebuilt from those archives without repeating completed analysis. Each
+merge uses a new cache directory so existing views keep valid data. You may
+remove `.combined-cache` (and older `.preview-cache` folders) while the app is
+closed; the next merge rebuilds it. Source tables, tile indexing, metadata, and
+some alignment/plot calculations still use RAM, so this is not a fully bounded
+memory pipeline.
+
+Once the run finishes, use **Save Analysis…** to save the normal analysis session.
+Recovery folders are retained until you delete them, so you can also recover from
+a crash during final aggregation or before saving the final session. Delete the
+recovery folder only after saving and checking the final analysis. Checkpoints
+protect progress but do not make the pipeline fully disk-backed: source data and
+combined results still consume RAM.
+
+## Render And Drift
+
+The map uses Picasso Render directly:
+
+```python
+picasso.render.render(...)
+```
+
+Correction methods:
+
+- `none`: use loaded coordinates.
+- `rcc`: call Picasso RCC directly, optionally after Fourier lattice suppression.
+- `aim`: call `picasso.aim.aim`.
+- `file`: load a CSV containing one x/y drift value per frame and subtract that
+  drift from every localization in the corresponding frame. Use `Load Drift CSV`,
+  then `Apply Drift Correction`. Columns such as `Frame`, `x-drift (nm)`, and
+  `y-drift (nm)` are recognized; optional z drift is applied when both files
+  contain z values. Nanometer drift is converted using the localization pixel size.
+
+After correction, click **Save Drift CSV…** in the Drift Correction panel to export
+the current trace as `Frame`, `x-drift (nm)`, `y-drift (nm)`, and optional
+`z-drift (nm)`. The export preserves frame numbers and the displacement actually
+subtracted during correction; it does not reset the trace to zero.
+
+To estimate drift from a spatial crop and apply it to the full acquisition:
+
+1. Select an ROI and use **Save Raw ROI CSV**. Keep its accompanying YAML file,
+   which preserves the acquisition frame count and pixel size.
+2. Load that cropped CSV, run RCC or AIM, then click **Save Drift CSV…**.
+3. Load the original uncropped raw localizations, choose **Load Drift CSV**, select
+   the saved trace, and click **Apply Drift Correction**.
+
+Both datasets must use the same acquisition frame numbering. The drift CSV must
+cover every target frame; missing frames are rejected rather than extrapolated.
+Drift traces restored from saved analysis sessions can also be exported.
+
+`Segmentation` is frames per drift segment. `RCC lattice pitch (nm)` locates the lattice
+directions in the summed Fourier spectrum and removes narrow notches at the fundamental
+frequency and its harmonics before RCC. The default is 700 nm. Filtering affects only the
+temporary correlation images, not the localization coordinates. Set the pitch to `0` to use
+unfiltered Picasso RCC. AIM also uses `AIM intersect (nm)` and `AIM ROI (nm)`.
+For large localization files, AIM evaluates trial shifts sequentially to bound
+memory use, using the same Picasso intersection counts and search settings.
+No localizations are sampled or discarded. This can take longer than parallel
+execution. Drift estimation carries only coordinate/precision columns; the
+returned table retains all original acquisition columns. Session caches are
+written in approximately 16 MiB batches instead of duplicating the entire table.
+The raw and corrected datasets still need to fit in memory.
+
+Drift correction and rendering are separate actions. With dynamic zoom rendering
+disabled, changing `Render pixel`, `Render blur`, or `Min blur` and pressing
+`Render Map` re-renders the current corrected localization table without
+rerunning RCC/AIM.
+
+`Dynamic zoom rendering` is enabled by default. After zooming or panning on the
+raw, corrected, linked, or filtered map, the visible viewport is rerendered after
+a short debounce. Filtered-map rerenders reuse the exact localization subset
+produced by the last applied histogram filters. The app chooses approximately one render pixel per on-screen plot
+pixel and progressively refines the data resolution as you zoom, down to a
+minimum of 1 nm/render pixel. This keeps very large full-field views responsive
+without sacrificing high-resolution ROI inspection. Disable this option to use
+the fixed `Render pixel` value instead. The `Render pixel` field is updated to
+show every automatically selected resolution. Entering a value and clicking an
+explicit Render Map button always uses that value for that render, even while
+dynamic zoom rendering remains enabled; the next zoom or pan resumes automatic
+sizing. The toolbar Home button restores the full acquisition field, even after
+a viewport-only rerender.
+
+`Min density` and `Max density` define which localization density per rendered
+super-resolution pixel maps to the low and high ends of the colormap. Enable
+`Auto density (histogram)` to derive robust contrast limits from a histogram of
+populated, finite render pixels. Its upper limit retains at least 99.9% of the
+populated brightness distribution and adds highlight headroom so the highest
+retained bin does not render as saturated white. Only the rarest 0.1% bright
+outliers may clip. Log-spaced bins are used for long-tailed images so isolated
+extreme pixels do not make the rest of the map too dark. Empty background pixels
+are excluded. The computed
+limits are written into the `Min density` and `Max density` fields after every
+map render; disable automatic density to enter fixed values manually.
+The `Density multiplier` slider scales both automatic limits from 0.1× to 10×
+and updates the current cached map immediately without rerendering localization
+data. Values above 1× raise the density ceiling and reduce highlight saturation;
+values below 1× brighten lower-density structure.
+
+## ROI Histograms
+
+After selecting an ROI on the corrected map, the following plots are generated only from corrected localizations in the ROI:
+
+- photons per localization
+- localization precision
+- frame number
+- fitted PSF sigma x/y
+- fitted local background
+- nearest-neighbor distance
+- linked binding-event length in frames or ms
+- linked localizations per event
+- linked photons per event
+
+Use `Show Corrected Map` to return to the map after viewing a histogram.
+
+## Temporal Metrics
+
+The `Temporal` tab plots a selected localization or linked-event metric over
+frame windows. Use `Vertical frame annotations` to enter a frame and arbitrary
+text such as `power 20% exposure 100ms`, then click `Add / Update`. The plot
+shows a dashed vertical line at that frame with the supplied text. Adding the
+same frame again updates its label. Select annotations in the list to edit or
+remove them, or use `Clear all`. Annotation changes update the displayed plot
+without recalculating the temporal metric and remain overlaid when the metric
+is replotted.
+
+## Linking
+
+Linking has its own settings panel. `Exposure`, `Link radius`, and `Max gap` control event linking after drift correction and ROI selection.
+
+- `Run Linking Analysis` plots a 2x2 summary of event length, event length in ms, localizations per event, and photons per event.
+- `Color By Links` draws corrected ROI localizations on the map tab, with multi-localization linked events colored by event ID and single localizations shown in gray.
+
+## Origami Overlay And Site Occupancy
+
+After drift correction, linking, and optional histogram filtering, open the
+`Origami Overlay` tab. The default source
+is `Corrected localizations`; linked events can be preferable when one
+binding event contributes one point instead of allowing repeated blinking to
+dominate a docking site. Run linking with `Whole image`, or with a selected ROI
+that contains all origamis you want to compare, before starting the overlay.
+
+The workflow is deliberately staged so identification can be inspected and
+tuned before alignment:
+
+The overlay stage is also split for performance. `Build Fast Overlay (no G5M)`
+uses the image-aligned origamis and assigns localizations directly to their
+nearest expected grid site. This is sufficient for the combined aligned-density
+image and provides immediate approximate site-count and occupancy statistics.
+`Refine Current Overlay with G5M` is optional and runs Picasso model-selection
+clustering on each already aligned origami when component-level G5M statistics
+or diagnostics are required. Whole-image tiled analysis stops at the fast
+overlay by default, so G5M is never an unavoidable part of validating or
+processing a large field.
+
+For fields too large to identify in one pass, select a representative ROI,
+enable `Use selected ROI`, load the source, and run `Identify Origami` until the
+accepted footprints look correct. `Analyze Whole Image as Tiles` then uses
+that validated ROI's width and height as both tile size and x/y step. The tile
+lattice is anchored to the validation ROI and extended across the acquisition;
+only tiles that fit completely inside the image are processed. Identification
+settings from the validated run are frozen for every tile, accepted origamis
+are aggregated, and one combined docking-site overlay/statistical analysis is
+produced. Each tile is analyzed with a template-sized halo of neighboring source
+points, but only candidates centered in that tile's non-overlapping core are
+retained; origami crossing tile boundaries are therefore neither truncated nor
+counted twice. Processing is sequential by tile to bound image-working memory, while
+source points are spatially indexed once for efficient lookup. If the selected
+source uses linked events, linking must first be run with `Whole image`.
+
+To analyze a bounded sample instead, enter `Tiles to analyze` and click
+`Analyze N Distributed Tiles`. The app deterministically spreads up to N picks
+across the complete tile lattice using farthest-point spatial sampling, so the
+sample covers the acquisition rather than taking the first N tiles from one
+corner. If N is at least the number of available complete tiles, every tile is
+analyzed. Counts and occupancy statistics from this action describe only the
+selected tiles; they are not extrapolated to the unanalyzed portion of the
+image. `Analyze Whole Image as Tiles` remains available for an exhaustive
+run.
+
+Before either tiled analysis, click `Inspect Random ROI` repeatedly to spot-check
+other complete ROI-sized tiles. Each click chooses a previously unseen random
+tile, applies the frozen source filters and identification settings from the
+validated ROI, and displays its accepted and rejected candidate footprints with
+the optional theoretical-site overlay. Random inspection does not replace the
+validated ROI, alter its settings, or build an overlay; after every available
+tile has been visited, sampling begins a new randomized cycle.
+
+The Classification tab uses a plot-first workspace. Source, Identify, and Overlay are
+stages in one collapsible left sidebar with a single scrollbar; only
+the selected stage is shown. The current stage's primary action remains pinned
+to the bottom. Identify settings are visibly divided into numbered workflow
+groups: coarse candidate detection, template and footprint, rigid alignment,
+individual site detection, final acceptance filters, and QC/display controls
+that do not filter candidates. Overlay-stage G5M, rendering, and gallery
+controls remain in their own section. The
+app-wide rendering sidebar is hidden while this tab is open. `Plot Only` hides
+the Origami workflow sidebar, `Full Screen` hides all surrounding application
+controls until Escape is pressed, and `Pop Out` opens a resizable snapshot with
+its own navigation toolbar. Hover compact controls for setting help, or use each
+stage's reset button to restore its defaults. CSV and paged-gallery PDF exports
+are available at the bottom of the Overlay stage after an overlay is built.
+
+1. Click `Load Source Data` to display the selected corrected or linked points,
+   optionally restricted to the rectangular ROI selected on a map. This preview
+   uses the same Picasso renderer and the current map `Render pixel`, `Render
+   blur`, `Min blur`, and density-limit settings, so corrected localizations
+   have the same visual appearance as the Corrected Map.
+2. Click `Identify Origami`. The app bins the coordinates onto a coarse spatial
+   grid, smooths the density by one bin, ignores bins below `Min density
+   contrast`, and connects nearby supported bins into candidate regions. This
+   stage does not require density in the center of an object. With a custom
+   template, bins along a hollow or sparse shape are joined across the configured
+   docking-site pitch, allowing the arms of an L to form one candidate without
+   filling its empty interior. It then
+   renders each candidate into a small fixed-size image and aligns those images
+   independently to a synthetic image of the configured rows, columns, and x/y
+   spacing using a multi-hypothesis rotation search plus bounded linear FFT
+   translation correlation. Polar-correlation peaks and a broad principal-axis
+   neighborhood are retained; translation is optimized for every hypothesis,
+   and translation is refined to subpixel precision without circular image
+   wraparound. For sparse origami, each pose is ranked using its strongest
+   independently supported sites, with full-template correlation used only as
+   a tie-breaker. Identification then measures localization-density
+   enrichment inside disks around the expected sites relative to the explicit
+   negative space between those disks. It also compares a nonnegative sparse
+   mixture of fixed grid-site peaks with one adaptively fitted shared site width
+   against one broad elliptical-blob model using BIC as an informational QC
+   statistic. BIC is evaluated on a
+   fixed 2 nm physical scoring grid and uses independent resolution elements,
+   so alignment-thumbnail resolution and oversampled neighboring pixels do not
+   exaggerate the result. It measures every pairwise distance between supported-site
+   centroids and rejects candidates whose largest spacing error exceeds the
+   configured limit. Sparse site prominence, row/column coverage, and site spacing
+   classify each candidate without using other
+   candidates in the ROI. No docking-site
+   clustering is performed during identification. Only points inside the aligned grid-sized footprint plus
+   `Image margin` are retained. The progress bar advances through density-map
+   preparation, per-candidate thumbnail rendering, each candidate in every
+   alignment pass, fitted-pose application, site-gap measurement, and the
+   per-candidate prominence, spacing, and ΔBIC QC calculations. Change the identification
+   settings and click `Identify Origami` repeatedly until the boxes look right.
+   If none pass, the plot and status bar report the minimum, median, and maximum
+   region point counts so the limits can be chosen from the actual data.
+
+`Pick bin` affects only the fast coarse candidate search. `Alignment pixel`
+controls the candidate-image sampling, but each thumbnail is capped at 128 by 128
+pixels; the app automatically coarsens the requested pixel size for a larger
+footprint. This bounds memory and FFT work per candidate, making thousands of
+origamis practical. `Alignment passes` defaults to 3. A later pass estimates
+and corrects residual rotation against the same fixed theoretical template;
+additional passes increase runtime linearly.
+
+The first alignment pass keeps several separated translation peaks for every
+rotation rather than trusting only the strongest whole-image match. It also
+retains coarse hypotheses across the complete 180-degree rotational range for
+the symmetric synthetic grid and the full 360-degree range for a custom image,
+so an asymmetric template preserves its directional orientation and a nearby
+object cannot remove the target orientation from consideration. Each hypothesis
+is then rigidly refined from grid-supported site centroids only.
+Pose selection rewards distributed supported sites, precise centroids, and a
+high inlier fraction; unrelated localizations do not participate in the rigid
+refit and are cropped after the winning pose is chosen.
+
+The `Alignment template` control can replace the simulated full-grid image with
+a custom barcode raster. Choose `Custom image`, then load a PNG, TIFF, or JPEG.
+Templates must use bright pixels for expected localization signal and a dark
+background; grayscale is preferred, while RGB/RGBA files are converted to
+luminance and transparency is respected. Templates exported by Picklist
+Generator embed their x/y nanometres-per-pixel calibration in the PNG and write
+the same geometry to a same-name JSON sidecar. Loading one automatically restores
+its rows, columns, site spacing, margin, and pixel calibration. The current
+Picklist Generator defaults use uniform 10.909 nm column and 5.714 nm row
+spacing, giving a 120 × 40 nm span between the outer site centers; the image
+margin is blank physical padding around those sites. For older images,
+set `Template pixel x / y (nm)` manually. Raster top remains physical top after
+loading. Calibrated Picklist Generator images are additionally reflected across
+the y-axis (left–right, `x → −x`) to reconcile column numbering: template
+columns `c1, c2, …, c12` correspond to PAINT R1 replacements `12, 11, …, 1`.
+This reverses columns while preserving row identity; the raster-to-y-up
+conversion is a separate coordinate conversion.
+The same reflection applies to fiducials, digital-group site columns, evidence
+sites, and nonuniform column offsets; bit names and ON/OFF states stay the same.
+Uncalibrated custom images retain their left–right orientation.
+After updating from the earlier convention, reload the detection template,
+Step 3 digital-group JSON, and classification templates, then rerun from Step 1.
+Avoid
+labels, scale bars, and unrelated decorations because every
+visible feature participates in correlation. Image resolution is not itself a
+physical calibration. Custom
+templates use extra thumbnail canvas so off-center signal, including an L whose
+localization median lies near its elbow, is not cropped before pose fitting.
+
+The Identify workflow has five ordered checkpoints. Step 1 contains all detection inputs:
+load a calibrated shared fiducial image with **Load Detection Template**, review
+the displayed calibration, and set the bin size, density threshold, recovery
+distance, and minimum point count. **Run Step 1** detects bounded candidates from
+the fiducials and opens their density/component map. **Clear Template · Use
+Density Detection** selects the connected-bin fallback and enables Signal gap.
+Changing the template or detection settings requires rerunning Step 1. Each connected active-bin cluster
+(the blue outline) belongs to at most one candidate. Template-guided detection
+can group disconnected fiducials into one candidate, but cannot split or reuse
+a connected cluster for several fits. It retains the whole cluster as the
+alignment input, including signal outside the initial template proposal.
+Step 2 reuses the template selected in Step 1, fits it once per candidate, locks rotation and translation, and displays every fitted pose.
+Image-template fits always require independent fiducial support at both ends:
+the template is split at the midpoint of its widest axis, and at least half
+the marks in each half (rounded up) must meet **Pose min locs / site** within
+**Pose site radius**. Each localization contributes to only its nearest mark.
+This requirement remains active when correlation and optional corner gates are off.
+Fiducial scoring also remains active when later site-measurement gates are disabled.
+Interior refinement is discarded if it loses established fiducial support or
+increases any supported mark's residual by more than 0.25 nm. Residuals use the
+closest required number of localizations, so excess brightness does not add weight.
+
+After rerunning Step 2, select a candidate and choose **Alignment stages** in
+the panel selector. It shows the initial fit, fiducial refinement, whole-lattice
+refinement, lattice-centroid refinement, and final fit on matching source-coordinate
+axes. Each panel reports supported/required marks at both ends and whether the
+proposed adjustment was retained or discarded. Older results require rerunning
+Step 2 to populate this history.
+
+**Max overlap (%)** in Step 2 sets the permitted intersection as a percentage
+of the smaller active footprint. It defaults to **0%** (reject any overlap);
+100% allows all overlaps. Both fits are rejected above the threshold, even if
+their individual correlations pass. The
+check uses the rotated rectangles and excludes image margins. Rejections remain
+in effect during classification and are labeled as overlapping footprints.
+This detects overlap between recovered fits; a superposition represented by only
+one recovered candidate can still escape this check. Rerun Step 2 and subsequent
+steps to apply the overlap check to previously fitted candidates. Step 3
+loads one standalone Picklist Generator logical-bit JSON, measures physical sites
+on the locked candidates, and converts their evidence into the shared digital
+pixel groups. Step 4 loads two or more classification template images; their JSON
+metadata supplies each class's active-bit combination, while the separately
+loaded Step 3 schema supplies the common group definitions. It then applies the
+acceptance gates and fits every digital outcome without repeating pose fitting.
+The alignment image, group JSON, and class templates must use compatible physical
+grid dimensions. The alignment pattern may also be one of the classes. Step 5
+optionally applies the validated workflow to distributed tiles or the whole image.
+Each of the five steps has its own persistent progress bar and status line. Only
+the active step advances; completed steps remain at 100% so cached workflow state
+is visible while later steps run.
+
+The minimum-point cutoff is displayed in Steps 1 and 4; both controls edit the
+same value. Step 2 similarly displays the site radius, localizations-per-site
+floor, and supported-site count used by its sparse-pose selection. Those controls
+are synchronized with their later-step copies. A Step 1 candidate map is reused while
+its pick-bin, density, connection-distance, minimum-point, source, and point-count signature is
+unchanged. The original `Identify Origami` action remains a one-click shortcut
+through classification after all three inputs have been loaded.
+Logical-bit templates retain their physical lattice only for registration and
+measurement. The Picklist Generator now starts without predefined groups: the
+user selects and names arbitrary digital-bit and alignment-only site groups.
+The metadata format supports any grid dimensions, bit names, physical-site
+groups, evidence-site subsets, and alignment-only groups. Its colored PNG is
+converted to equal-intensity grayscale for alignment, so display color cannot
+bias a group. Every logical bit contributes
+once regardless of its physical size, and a missing extension changes only a
+fraction of one bit. The logical on/off likelihood determines the winning
+template. Older templates without logical metadata use the lightweight
+physical-cell agreement score. Adaptive bright/dark agreement remains available
+as a diagnostic and optional gate, but logical templates do not repeat
+physical-cell separation after their bit probabilities have been computed.
+Image correlation remains a secondary pose/quality measurement. A footprint-scaled
+non-maximum-suppression pass then removes weaker nearby fits when one physical
+origami was split into multiple coarse candidates. During one multi-template run,
+all templates reuse spatial candidates, thumbnails, polar transforms, and
+principal-axis measurements. Connected components below the configured minimum
+point count are discarded before thumbnail rendering because footprint fitting
+can only remove points; they therefore cannot become valid candidates.
+Display-only grid-vs-blob ΔBIC fitting is deferred in this
+mode because it does not affect acceptance or classification. The per-template
+probabilities shown for decisions are normalized only over fits that passed all
+gates; diagnostics retain separate raw pre-gate probabilities. `Origami type counts`
+plots the assigned count for every template plus an unclassified count. The
+`Classification view` selector switches the identification overview to one
+template at a time; building the fast overlay from that selection produces its
+own aligned-density, gallery, site-assignment, and occupancy views. Completed
+per-template overlays are cached while switching between classified types. To
+count the complete image rather than the selected ROI, disable the source ROI
+option before loading Origami source data.
+
+Select **All templates** under Classification and **Aligned density** under View
+to compare classifications in a labeled grid, with up to four panels per row.
+Each panel shows the template name, assigned count, and mean density per origami
+with its own color scale. Display overlay toggles apply to each panel using that
+template's group definitions. Uncheck **Show legends** in the display controls
+to hide legends without hiding overlays or color scales. This preference is saved
+with the analysis and also applies to other Classification plots.
+Panels follow the type-count x-axis order; empty
+classifications show “No assigned origami”. Missing overlays build one at a time
+from saved aligned localizations, including in loaded analysis sessions.
+
+Choose **Open vs closed** for a stacked percentage bar per bit scheme. Templates
+ending in `_open` and `_closed` are paired by their shared prefix, for example
+`bit1_open` and `bit1_closed`. Matching ignores case and differences between spaces,
+hyphens, and underscores. `_on` also means open; `_off` and `_close` mean closed,
+so `bit2_open` pairs with `bit2_off`. Alias use is noted in the plot and status.
+Multiple templates for the same scheme/state contribute their combined counts.
+Each percentage uses that pair's assigned counts:
+open / (open + closed) and closed / (open + closed). The total sample count appears
+above each bar. Unclassified particles, unrecognized suffixes, and schemes
+without both states are excluded. Pairs with zero assignments show “no data”.
+**Type-count x-axis order…** also controls scheme order, using the first occurrence
+of either state. The view works with loaded analysis sessions.
+
+With a custom image, that raster drives rotation, translation, and the reported
+correlation, including dark barcode locations as negative-space evidence. Each
+separate bright component in the image also defines a theoretical docking site
+for localization counts, prominence, detected-site assignment, coverage, and
+spacing checks. The configured rows, columns, spacing, and margin define the
+physical scale and outer crop rather than adding unmarked sites to the overlay.
+Keep the correlation gate enabled to reject candidates that do not resemble the
+uploaded barcode. The Template and Overlay panels in the individual match
+inspector display the exact resampled raster and extracted sites used for scoring.
+
+`Correlation threshold` is the normalized image similarity to the complete
+synthetic grid template and defaults to `0.30`. `Use correlation acceptance
+gate` is enabled by default, so candidates below that value are rejected.
+Correlation remains visible as a QC metric and the gate can be disabled when
+full-grid similarity should not affect acceptance. `Site mask radius` defines
+positive disks around theoretical sites.
+Each site is supported when it has at least `Min locs / site` and exceeds `Min
+site prominence`. Starting at the expected grid location, the algorithm finds a
+nearby local maximum in a Gaussian-smoothed localization-density estimate. Site
+prominence is the fractional density drop from that peak to the high-density end
+of a surrounding boundary. A dim but isolated peak can therefore pass even when
+other sites are much brighter, while a shoulder or arbitrary grid location in a
+smooth broad blob has low prominence. The localization-count floor remains an
+independent safeguard against interpreting one-point fluctuations as sites.
+The default gate
+requires at least five supported sites spanning two rows and two columns; the
+other seven sites may be empty without reducing that support score. `Max
+spacing error` defaults to `8 nm` and requires every pair of supported-site
+centroids to retain its corresponding theoretical grid distance within that
+tolerance. This checks grid geometry without treating unoccupied sites as
+failures. Site-gap contrast is calculated as an informational comparison of
+localizations inside the site disks with those in the intervening space. It is
+not an acceptance gate because broad but distinguishable sites can place valid
+signal outside those disks. Grid-vs-blob ΔBIC is displayed for QC only because
+its strength depends on localization count and on how closely sites follow its
+shared-width Gaussian model. Site prominence, grid coverage, spacing, and the
+optional correlation gate determine acceptance instead. The
+preview shows one canonical set of hollow docking-site markers for custom
+templates and rectangular crop boundaries for simulated grids. The custom
+raster's Gaussian contours are not drawn a second time over those sites.
+Labels report correlation, supported-site
+count, site-gap contrast, ΔBIC, rotation, and point count. In the
+overview, every rejected candidate also receives a bold red `FAIL:` line that
+lists each missed gate and its threshold; disabled gates are omitted. In the
+identified-template view, click a footprint to inspect its exact correlation
+contributions plus lime supported sites, gray unsupported sites, and amber
+penalized negative-space regions. The theoretical grid overlay is the only
+identification overlay enabled by default and can still be toggled with `Show
+theoretical overlay`. Detected sites and text statistics start disabled. A
+rejected fit remains visible in Step 2–3 inspection previews when overlays are
+enabled, including digital-group ON/OFF and expected dark space. A notice
+distinguishes these from accepted fits; enable `Show text statistics` for
+individual failure reasons. Final classification views still hide rejected
+fits unless diagnostic text or corner support is enabled. A
+separate `Show detected sites overlay` control draws filled lime markers only at grid
+locations that pass both `Min locs / site` and `Min site prominence` for that
+individual origami. Filled markers are placed at the measured assigned-site
+centroids rather than at the ideal coordinates; thin lime segments connect them
+to their hollow theoretical grid targets. `Show site decision labels` adds the
+assigned-localization count and peak-prominence value at every expected site.
+Passing sites are lime; orange means too few assigned localizations, magenta
+means insufficient prominence, and red means both tests failed. Each failed
+label includes the measured value and active threshold. On crowded overviews,
+failed sites remain marked with colored crosses and the text appears after
+zooming to 12 or fewer candidate footprints. It can be displayed with or without
+the hollow full-grid overlay. `Show prominence sampling` exposes the exact
+measurement geometry: cyan diamonds mark the locally selected density peaks,
+dashed cyan rings show the 32-point boundary used for comparison, and magenta
+squares mark the boundary samples nearest the 90th-percentile reference. The
+magenta line connects each selected peak to that reference sample. Because this
+overlay is detailed, it appears only when 12 or fewer candidates are visible.
+Per-site counts, prominence geometry, decisions, and measured centroids are
+cached in the identification result; toggling these displays does not recompute
+the KDE measurements on the GUI thread.
+Left/Right arrow keys and the bottom
+arrow buttons navigate ROI-sized validation/inspection windows rather than
+individual template matches; previously inspected windows are retained for
+backward navigation. `Validation ROI` returns to the original validated window.
+The same ROI navigation is available in `Coarse identification density`, where
+each window displays its own cached picker density and connected components.
+Zooming or panning either the loaded-source preview or the identified-template
+view rerenders the visible density from the exact filtered or linked source
+localizations. Its sampling follows
+the displayed viewport down to 1 nm/pixel, while the cached fitted footprints
+and theoretical-site overlays are redrawn over the new image. Every viewport
+render also recalculates its display-density limits from the populated pixels,
+so zoomed regions do not retain the full-ROI contrast range. The Origami toolbar
+Home button restores the original validation/inspection extent and immediately
+rerenders that complete viewport rather than stretching the last zoom tile.
+Loading source data likewise rerenders once the Classification tab is visible, so its
+initial resolution is based on the Origami canvas rather than the map tab where
+the ROI was selected.
+The plot toolbar's Home, Back, and Forward actions trigger the same rerender
+after restoring their saved viewport.
+`Show text statistics` independently hides or displays the candidate ID, point
+count, fitted angle, and correlation annotation beside every visible footprint,
+regardless of how many candidates are present in the ROI window.
+Rejected candidates are included so their failure can be inspected rather than
+hidden. `Show theoretical
+overlay` draws the expected docking-site grid at every fitted candidate pose in
+the overview and can be toggled without rerunning identification.
+3. Click `Build Fast Overlay (no G5M)` to reuse the cached image-aligned
+   coordinates. No rectangle refit or rotational search is repeated. The fast
+   overlay reuses identification's `Site mask radius`, `Min locs / site`, and
+   `Min site prominence`: only supported sites are occupied, and points
+   are assigned to their nearest supported expected site. A lone background
+   localization can therefore no longer create an occupied site.
+   Optionally click `Refine Current Overlay with G5M` afterward to replace those
+   direct assignments with per-origami Picasso G5M components. Because a
+   rectangular grid has an unavoidable 180°
+   ambiguity, every physical origami contributes both its selected pose and its
+   180° counterpart at half weight. This makes density, mean counts, occupancy,
+   completeness, galleries, and CSV statistics invariant to arbitrary 180°
+   choices without doubling the reported origami count. Per-site occupancy
+   weights are therefore `0`, `0.5`, or `1` for an individual origami.
+4. Choose a result from the `View` menu above the plot. Cached results redraw
+   immediately without a separate render button. The viewer displays one
+   selected result at a time. After identification, `View Coarse
+   Density Map` (also available as `Coarse identification density` in the Plot menu)
+   shows the Gaussian-smoothed picker bins beside the thresholded bins colored
+   by connected candidate region, making the effects of `Pick bin`, `Min
+   density`, and `Connect` directly visible. The other choices include the cached identification with a dynamically rerendered template-match density preview,
+   preview, paged individual aligned origamis, per-origami site assignments,
+   a selected-origami detail view, aligned density, integrated density per site, mean site counts,
+   or site occupancy. `Integrated density per site`
+   sums the displayed, blurred aligned-density pixels within `Site radius` of
+   every expected position. It includes unmatched source points and provides a
+   direct diagnostic for distinguishing spatial broadening from G5M assignment
+   effects. The individual-origami gallery labels every accepted origami
+   with the same ID used by the CSV export and its source-point count. Each
+   gallery tile is brightness-normalized independently so lower-count origamis
+   remain visible. Both individual gallery views show only the single cached
+   orientation used for that origami's assignment, making their tiles directly
+   comparable. Equal-weight 0°/180° duplication is applied only to population
+   density and statistics. Switching between `Identified origami template matches` and the
+   overlay/statistics choices only redraws cached results; it does not rerun
+   identification, image alignment, G5M, or alignment.
+
+For large populations, the individual and site-assignment galleries render only
+the current page (64 origamis by default) instead of allocating one enormous
+mosaic. Page sizes of 25, 64, 100, and 256 are available. Galleries can be
+sorted by source position, localization count, alignment RMS, grid match, or
+occupied-site count and filtered by minimum grid-match percentage and maximum
+alignment RMS. `QC sample` deterministically selects representative values
+across all of those quality distributions. Click a tile for a full-resolution
+single-origami detail view, then use `Back to Gallery` to return.
+`Export Paged Gallery PDF` writes the current gallery type, sort, and quality
+selection one page at a time, avoiding a full-population mosaic in memory.
+
+Gallery filtering never changes population statistics or CSV exports. Aligned
+density uses all accepted origamis with bounded-memory chunked accumulation and
+is cached for reuse by `Integrated density per site`. Mean counts, occupancy,
+and completeness likewise use the complete accepted population. On the
+identified-footprint preview, at most 500 visible outlines are drawn at once;
+zooming or panning dynamically replaces them with footprints in the current
+view. Text labels follow the `Show text statistics` checkbox without an
+additional candidate-count cutoff.
+
+Changing the source, active histogram filters, or ROI does not silently replace
+the displayed points; click `Load Source Data` again to refresh them.
+
+For a 3-by-4 design, set rows to `3`, columns to `4`, and enter the actual
+x/y docking-site spacing. `Pick bin size` controls the coarse detection grid.
+`Connect distance` controls how far to recover localizations around bright bins.
+With a calibrated **shared alignment template** loaded in Step 1, detection searches
+for the template's bright fiducials at different positions and rotations. Each
+connected coarse cluster can contribute to only one candidate. Interior darkness is neutral, so full and
+empty-center origami use the same detection geometry. Nearby objects are not
+joined by a chain of bright bins. The coarse search requires support near at
+least 70% of the fiducial sites; later alignment and classification still apply.
+Load the shared fiducial template and rerun Step 1 after changing it.
+
+Without a shared alignment template, `Signal gap` joins connected bright bins
+before the minimum candidate-point filter. Large values can merge neighboring
+origami, so this fallback is unsuitable when inter-object gaps are smaller than
+an empty interior. Both distance controls default to 20 nm. `Signal gap` is
+ignored by shared-fiducial detection. Both detection modes apply to Step 1,
+shared multi-template candidates, and tiled analysis, and retain the minimum
+density and total candidate-point limits. During overlay,
+Picasso G5M is run separately on every accepted origami. This is Picasso's
+Gaussian Mixture Modeling with Modifications for Molecular Mapping method; the
+installed Picasso package does not contain a separate algorithm named D5M.
+G5M searches the number of Gaussian components using BIC, initializes with
+KMeans++, enforces component-resolution and minimum-localization checks, and
+constrains component widths with `G5M sigma min/max`. `G5M min locs` is the
+minimum number of localizations per retained component. `G5M BIC patience` is
+the number of consecutive component counts without improvement before the
+search stops. `Site match radius` is the maximum distance from a fitted G5M
+component center to an expected grid position. A site is occupied only when a
+matched G5M component is present. G5M assigns every localization to a retained
+component rather than producing a DBSCAN-style noise class; components outside
+the site-match radius are excluded from occupancy. Site counts are the numbers
+of source points assigned to matched components.
+
+The initial origami settings match the example corrected-localization workflow:
+corrected localizations, selected ROI enabled, 5 nm pick bins, 20 nm connection
+distance, 0.10 minimum density contrast, 100–1,000 points, a 3-by-4 grid with
+20 nm x/y spacing, a 20 nm image margin, 7.5 nm site-mask radius, 1 nm
+alignment pixels, three alignment passes, minimum
+site prominence 0.10, three localizations per supported site, five supported sites
+spanning at least two rows and two columns, and a 0.30
+correlation threshold with its acceptance gate enabled. Supported-site spacing
+must match the theoretical grid within 6 nm. Overlay refinement uses
+1–8 nm G5M sigma bounds, 20
+minimum localizations per G5M component, BIC patience 3, 7.5 nm site-match
+radius, and mirrored picks disabled. This produces a 100 × 80 nm analysis
+footprint for the default grid.
+
+The Identify panel exposes the alignment image margin, requested alignment pixel
+size, maximum alignment-image diagonal (128 pixels by default), and alignment
+passes. The effective alignment pixel size is the larger of the requested value
+and the footprint diagonal divided by the maximum alignment pixels; the plot
+title reports that effective value. Increasing the maximum permits finer
+alignment at the cost of memory and processing time.
+
+`Min density contrast` is normalized from `0` to `1` using the same linear
+automatic contrast convention used for map display (`1` is the bright end of
+the scale). Only bins at or above this value seed origami identification. Raise
+it to suppress sparse background bridges; lower it if dim real origamis vanish.
+The cyan contour in the identification preview shows this cutoff. Original
+coordinates near each dense object—not the binned coordinates—are retained for
+alignment and site counting. The default is `0.10`; tune it for each dataset's
+contrast.
+
+All origamis accepted in the identification preview are included in the
+overlay. Alignment RMS and grid-match fraction are reported as quality
+diagnostics and exported to CSV; they do not silently discard visually approved
+origamis. Cross-correlation establishes their shared rotation before any G5M
+site model is evaluated.
+
+Overlay rendering has dedicated controls and does not inherit the map's render
+pixel setting. `Overlay pixel` requests the density-image pixel size,
+`Overlay padding` extends the view beyond the expected outer docking sites, and
+`Overlay blur sigma` applies Gaussian smoothing in nanometers. The display
+range is derived from the configured grid plus padding, so distant background
+points cannot make the overlay coarse. The plot title reports the actual x/y
+pixel size, blur, and number of aligned points inside the displayed range. Site
+statistics still use the aligned coordinates directly and are not changed by
+these display settings. The defaults are 0.5 nm pixels, 20 nm padding, and a
+1 nm Gaussian blur sigma.
+
+`Export Site CSVs` creates one table with per-origami site counts and another
+with site-level means, standard deviations, and occupancy fractions. Because a
+symmetric grid has no intrinsic top-left marker, its absolute 180-degree
+orientation is arbitrary. The template alignment keeps a shared missing-site
+pattern consistent, but assigning that pattern to a physical corner requires a
+fiducial or another asymmetric feature. Enable mirrored picks only if origamis
+can genuinely appear face-up and face-down in the experiment.
+
+### Corner support diagnostics
+
+Enable **Show corner support diagnostics** in the Origami plot's **QC and display**
+bar after fitting alignment. In the candidate overview, zoom to 12 or fewer
+candidates to see the required corner marks and their exact counting circles.
+Green marks pass and red marks fail. A label such as `C2: 2/3 FAIL` means two
+localizations were counted where at least three are required. The overlay uses
+saved fit settings and the same cropped aligned points as the acceptance test.
+It also appears in the candidate-image and overlay panels of individual fit
+inspection. Overview diagnostics reveal rejected candidates even when **Show
+text statistics** is off; toggling diagnostics does not rerun fitting or change
+acceptance. The All templates overview shows diagnostics for its displayed
+assigned fits; select a template to inspect its rejected fits.
+
+### Mirror all Origami templates
+
+In **Origami → Identify → Step 1**, enable **Mirror all templates left–right**
+when the template orientation is reflected relative to your localization image.
+This global setting reflects the detection/alignment image, digital-pixel JSON
+site groups, and all classification templates together, including asymmetric
+column offsets and alignment marks. Group IDs, ON/OFF patterns, and brightness
+factors remain attached to their groups. The default is off.
+
+Rerun **Steps 1–4** after changing the setting. Existing results keep the
+orientation used when they were computed; cached alignment and digital
+measurements are not reused across different mirror settings. Tiled analysis
+uses the orientation of its saved identification run. Original template files
+are unchanged, and turning the option off restores their normal loaded
+orientation. The separate **Allow mirrored orientations** overlay setting
+continues to control orientation fitting.
+
+### Per-group brightness calibration
+
+Picklist Generator supports a positive `brightness_factor` on each entry in
+`logical_bits`. In its group editor, set **Brightness factor**, click **Update
+group**, then save the schema JSON. The default is `1`; older JSON files without
+this field retain their previous behavior. The factor also travels in exported
+PNG template metadata and JSON sidecars.
+
+Step 3 computes `adjusted support = weighted localizations / (group positions ×
+brightness_factor)`. A factor of `2` requires twice the usual signal, while
+`0.2` permits one-fifth. For example, at a support floor of 3, their raw weighted
+support floors per position are 6 and 0.6 respectively. The probability and
+prominence checks still apply, using the adjusted evidence. Factors do not
+change localization coordinates, site radius, or alignment requirements.
+
+Load the updated JSON with **Load Digital Pixel Groups JSON…**, then rerun
+Steps 3 and 4. The loaded Step 3 schema supplies the factors for classification
+regardless of factors embedded in older classification templates. Inspection
+statistics show adjusted support and the factor when it differs from 1; saved
+group support and downstream QC use this same adjusted scale.
+
+### Exact digital-pixel classification
+
+Step 4 matches the complete ON/OFF pattern measured in Step 3 to the classification
+templates by digital-pixel ID. Candidates rejected by Step 2 alignment (including
+its correlation, point-count, fiducial, corner, and overlap gates) are excluded
+before lookup. They do not contribute to class counts, unclassified counts or
+galleries, or digital-group audit denominators. Saved candidate IDs remain
+available for alignment inspection, with an explicit excluded-alignment status.
+Rerun Step 4 to update previously saved lookup results. ON uses the same probability, minimum support,
+and minimum prominence thresholds as the displayed digital-group decisions.
+Every expected ON and OFF pixel must match. A unique matching template receives
+the object, subject to the existing fit-quality gates. Unknown patterns and
+ambiguous patterns matching multiple eligible templates remain unclassified.
+A single loaded template also requires an exact match; there is no closest-match
+fallback. Missing or nonfinite measurements cannot establish a match.
+
+Probability and cell-pattern-correlation acceptance controls apply only to legacy
+image-only classification, not to digital-pixel lookup. Digital-pixel probabilities
+still describe the ON/OFF measurement, rather than confidence in a nearest
+classification. Rerun Step 4 to replace existing classifications with exact
+lookup results. Rerun Step 3 first if you change digital-pixel detection thresholds.
+
+To allow alignment fits with missing corners, uncheck **Require corner support**
+in **Step 2 · Fit and Inspect**, then rerun Step 2 and subsequent steps. This
+removes the corner requirement from both alignment and final acceptance. Other
+fit criteria still apply. **Show corner support diagnostics** remains independent;
+its labels say `gate off` when corner counts are only informational. The corner
+requirement is disabled by default.
+
+In Picklist Generator, choose the **Dark (alignment)** role to define expected
+empty regions. Select physical lattice sites and set **Dark mask radius (nm)**;
+the union of those circles is the negative-space mask. Dark groups are always
+alignment constraints, not barcode bits, and are stored in the PNG metadata,
+sidecar JSON, and reusable group JSON without adding bright spots to the raster.
+They cannot occupy the same physical sites as bright groups.
+
+Load the newly exported detection/alignment template in Step 1. Steps 1 and 2
+find poses using bright fiducials. At the end of Step 2, the fitted pose must pass
+a dark check: localization density in the union of dark masks divided by the
+median density of supported bright sites must not exceed **Max dark / bright
+(%)**. The initial default is 25%; this is a starting setting, not a calibrated
+threshold for every dataset.
+
+If the original pose passes, it is retained without a reversal search. If it
+fails, Step 2 searches around a 180° flip, allowing ±10° rotation and ±10 nm in
+each translation axis. This retry optimizes bright alignment only. The resulting
+bright fit must then pass the dark check and existing bright-fit requirements.
+If neither pose passes, the candidate is rejected; the original pose remains
+visible for inspection. Darkness never steers the bright-fitting objective.
+If the alignment template has no dark groups, explicit dark groups in the loaded
+Digital Pixel Groups JSON are used instead. Templates without dark groups retain
+bright-only alignment: spaces between digital pixels are no longer inferred.
+
+Enable **Show theoretical overlay dark** to display the authored dark masks as blue
+shading with diagonal hatching on fitted candidates, aligned densities, and gallery
+tiles. **Alignment stages** shows the dark/bright ratio and threshold for the
+original dark check and any reversed-pose check. Rerun **Steps 1–4** after changing dark groups, radius, or calibration.
+
+The bright and dark overlays have separate display switches. After Step 2 both
+are enabled by default; after Step 4 classification only bright is enabled.
+These switches do not change alignment or classification.
+
+After exact lookup, **Show theoretical overlay bright** also draws unclassified objects
+as grey hollow site markers at their locked fitted poses. These markers represent
+the measured ON digital groups plus alignment sites, rather than an arbitrarily
+chosen classification template. They appear with text statistics off, in both
+All templates and individual-template overviews. Grey × markers still mark the
+unclassified centers. Overview drawing is limited to 500 visible unclassified
+objects and refreshes when zooming or panning. Rerun Step 4 for previously computed
+results to populate the saved overlay geometry.
+
+Whole-image tiling, limited-tile analysis, and random ROI inspection use saved
+ROI-file bounds rather than the original acquisition dimensions. Tile positions
+retain the validation ROI's grid alignment and absolute coordinates. Whole-image
+analysis clips partial edge tiles to the saved region; limited and random runs
+use only fully fitting tiles. Older default-named ROI exports use the same
+inferred bounds as their initial map view. Empty tiles inside the saved region
+can still occur and are skipped.
+
+### Classification QC audits
+
+After Step 4, choose **Digital-group threshold audit** or **Unmatched-pattern
+audit** in the View menu. These use the saved shared-candidate measurements;
+changing controls alone does not change the audit. Rerun the relevant measurement
+and classification steps to audit new thresholds.
+
+- **Digital-group threshold audit** compares final ON fractions with the reference
+  for the sample mixture (code3 at twice the concentration of other templates). It counts support, ON-score, and
+  relative-prominence failures separately, including support-pass/prominence-fail
+  cases. Failures can overlap. Invalid candidates are excluded from denominators.
+- **Unmatched-pattern audit** shows the 20 most frequent unmatched bit patterns,
+  their distance in differing groups to the nearest templates, and all nearest
+  ties. The all-ON template comparison lists the groups whose absence would
+  produce each other template's pattern. This tests possible full-template
+  dropout; it does not establish the true origin of those candidates.
+- **Export Classification Audits** saves a ZIP of CSVs: candidates and their saved
+  assignments/QC measurements; per-candidate group evidence, thresholds and gate
+  decisions; group summaries by cohort; distances to every template with missing
+  and extra groups; all unmatched patterns; and all-ON dropout comparisons.
+  `metadata.json` records group order and thresholds. Candidate IDs are one-based
+  indices in the saved shared candidate list. Join tables by `candidate_id` for
+  spatial or count-dependent QC using the exported coordinates and fit metrics.
+
+Audits do not change assignments, infer truth from nearest patterns, or enforce
+equal prevalence. The mixture expectation is only a reference. They require
+consistent shared measurements across templates and cannot measure objects
+missed during coarse detection; detection bias still needs independent labeled
+or simulated controls. Support-only scores are diagnostic scores, not calibrated
+class probabilities.
+
+Choose **Unclassified** in the Classification selector to inspect candidates that
+were not assigned to any template, including QC rejections and unmatched patterns.
+The selection supports the footprint overview, individual galleries and details,
+aligned density, site summaries, and digital-pixel spatial heatmap. It uses the
+saved shared alignment and a separate display overlay; class assignments and counts
+are unchanged. Reference sites in these plots are not a winning template. Only
+unclassified footprints are shown, including when text statistics is enabled.
+
+Expected plots use relative template concentrations **1:1:1:2:1:1** for
+`align_fid`, `code1`, `code2`, `code3`, `code4`, and `full`. Template names
+are matched without regard to case, spaces, underscores, or hyphens. Weights
+are normalized over loaded templates. The group bias heatmap and threshold
+audit recompute expected ON fractions from the template patterns; template-count
+markers use the total assigned plus unclassified count as the denominator.
+Audit metadata records the normalized fractions. These references do not alter
+classification scores, gates, or assignments.
+
+Classification galleries and aligned-density ON rates use the saved Step 3/4
+measurements. They do not remeasure group calls on a separately adjusted gallery
+pose. Classification overlays preserve the saved translation and orientation,
+including during G5M site clustering. Individual detail views show the saved
+candidate ID and classification/rejection reason; gallery text statistics also
+show that reason. Missing or stale measurement mappings are labeled unavailable
+rather than replaced by newly measured calls. Restart the app and rebuild older
+classification overlays to remove their previous display-only translations.
+
+### Investigating unclassified origami
+
+After classification, choose **Unclassified** and open the individual gallery.
+The **Unclassified investigation** section provides a **Gallery rejection group**
+selector: exact-pattern QC rejections, correlation/overlap/point-limit subgroups,
+unmatched patterns grouped by number of differing groups, ambiguous matches,
+invalid measurements, and near-full candidates with one or two groups OFF.
+These filters only change the displayed subset. Thumbnail captions include the
+saved candidate ID and a short disposition; text statistics adds the full reason.
+
+Click a thumbnail, then **Digital bit derivation** to see the original aligned
+localizations, site measurement regions, saved group calls, support/score/prominence
+values alongside their thresholds, groups missing from a full match, and other
+failed QC gates. It does not reinterpret a nearest template as the true type.
+
+Choose **Unclassified evidence distributions** from View to inspect continuous
+support and prominence distributions. Red lines mark the saved thresholds.
+Support uses a symmetric-log x axis to show small values and long tails together;
+the linear region includes the support threshold. These distributions include
+groups that are legitimately OFF, so below-threshold values alone do not prove
+signal dropout.
+
+For **Threshold sensitivity**, select support or prominence in the investigation
+section, optionally enter comma-separated threshold values, and click **Run
+threshold sweep**. Blank values produce nine automatic settings around the saved
+threshold; the saved setting is always included. Each run varies only one digital
+threshold, using the same measurements and fixed non-digital QC eligibility.
+The plots show predicted class counts, recoveries, lost assignments, and switches
+relative to the saved assignments. No settings or assignments are applied.
+
+A sweep must reproduce the saved classification at its baseline before it runs.
+If older results lack QC eligibility, rerun classification/whole-image analysis
+as prompted. This also avoids presenting guesses about missing gate records.
+**Export Classification Audits** includes review groups and, after a successful
+sweep, `threshold_transitions.csv` (every candidate at every tested threshold)
+and `threshold_counts.csv`. Join the transition table to `candidates.csv` by
+`candidate_id` to locate individual changed candidates. Recoveries are proposed
+assignments, not verified correct classifications; mixture ratios are not used
+to optimize the sweep.
+
+### Picklist template image orientation
+
+New Picklist Generator exports display descending columns, matching PAINT R1.
+Both PNG embedded calibration and the JSON sidecar record `image_mirrored_x`:
+`true` means the horizontal reflection is already in the raster; `false` means
+analysis must reflect it. Calibrated legacy files without this flag retain the
+previous reflection behavior. Uncalibrated images are unchanged. Logical site
+IDs and column offsets remain canonical C1..Cn in exported metadata and are
+converted independently, so pre-mirroring the image does not move group labels
+to different physical sites.
+
+### Reconstruct an image from decoded origami
+
+In **Origami → Identify**, open **6 · Reconstruct Composite Image…**. This uses
+barcode classification to place the *measured image-side localizations* into
+RGB channels. Barcode and image signal must be in the same loaded coordinate
+system. Run the existing detection, alignment, digital-pixel measurement and
+classification steps first; tiled classification results are also supported.
+
+1. Load calibrated barcode images with **Load Classification Templates…** in
+   Step 4, or **Load barcode templates…** in the reconstruction window. The
+   templates still need the usual calibration and digital-group metadata.
+2. Assign each included template **Red**, **Green**, or **Blue**, and enter its
+   **X shift (nm)** and **Y shift (nm)**. A separate settings file is optional.
+   The template identifies the code; the editable code field can record its
+   binary value or your own label. Duplicate nonempty codes are rejected.
+3. Alternatively, load the Picklist Generator's `image_manifest.json` using
+   **Load image encoding settings…**. This contains the codebook and geometry.
+   Select the matching binary code for each template to prefill its color and
+   physical shifts. The fields remain editable. Assignments are explicit so
+   arbitrary logical-group names cannot silently change barcode bit order.
+   Tile placement is included in the imported physical shifts. Save and reload
+   assignments and rendering settings with **Save mappings… / Load mappings…**;
+   mappings are matched to template names.
+4. Check **Preview image region**. The rectangle uses the centered alignment
+   frame: X points right and Y points up. Set its left X, top Y, width and height
+   to enclose only the image side. Manual defaults propose the right half of
+   the physical lattice. Encoding settings supply the standard 6 × 8 image-side
+   geometry and clockwise display rotation; review these against the loaded
+   template. The preview shows an accepted example when one is available.
+5. **Build composite** transforms source localizations with each accepted
+   origami's locked pose, extracts the image rectangle, converts Y to downward,
+   and applies the decoded XY shift. Positive shifts move right/down. Extraction
+   reads the source data, including signal outside the barcode classification
+   crop. Known barcode-group sites and alignment fiducials are excluded within
+   the editable marker radius. Source localizations inside multiple accepted
+   image regions are excluded from every contribution to avoid double counting.
+6. By default, signal is averaged over accepted origami *within each species*,
+   including copies with no image-side localizations. Disable that option for
+   summed signal. Set output pixel size, Gaussian smoothing sigma, and rotation
+   as needed. RGB channels share one brightness reference. This is localization
+   density, not calibrated molecular occupancy or a fit to the original image.
+7. Inspect the RGB composite, individual channels, contribution counts and
+   **Coverage**. Coverage counts observed species' extraction rectangles; it
+   does not claim that every theoretical image site was measured. Missing
+   loaded species and encoding codes with no observed species are recorded in
+   the report. Exclude templates with the table checkboxes to inspect selected
+   species separately. Unclassified and rejected origami never contribute.
+8. **Export PNG + densities + report…** saves the displayed composite, a same-name
+   NPZ containing unclipped floating-point RGB density, coverage and pixel size,
+   and a JSON report containing all mappings, geometry, per-species counts and
+   per-candidate image localization counts. The NPZ is in the final display
+   orientation. The report retains the pre-rotation origin and clockwise
+   rotation and display mirrors. Mapping or extraction edits require rebuilding before export.
+
+The reconstruction window keeps its mapping configuration when closed within
+one app session; save a mappings JSON to reuse it after restarting. Templates
+without a mapping, incompatible encoding pitch, nonfinite shifts, and excessively
+large output rasters produce actionable errors. Reconstruction runs in a worker
+thread and does not alter the saved barcode classifications.
+
+### Automatic 0° / 180° orientation check
+
+Step 2 now has **Check 0° / 180° orientation**, enabled by default for custom
+fiducial templates, and **Min 180° score gap**, initially `0.05`. Restart PAINT
+and rerun **Steps 2, 3 and 4** to apply this to existing detections. Changing
+these controls invalidates the alignment cache. Simulated grids retain their
+existing alignment behavior.
+
+After the initial pose search and refinement, the check independently fits the
+saved orientation and its half-turn using the same uncropped candidate signal.
+Both fits allow up to ±4° angular correction and a small translation (half the
+site radius, bounded to 0.5–4 nm). The final decision uses a 0–1 fiducial contrast
+score that averages:
+
+- Support at all expected fiducial sites.
+- Support at the fiducial sites that differ under a half-turn.
+- Absence of signal at the half-turned counterparts of those distinguishing
+  sites, where the reference fiducial pattern is dark.
+
+Support is a Gaussian proximity score, capped using the configured minimum
+localizations per site. Extra brightness at a common corner cannot outweigh a
+missing distinguishing site simply by adding many more localizations. The score
+is a geometric comparison, **not a calibrated probability**; expected dark
+counterparts should not contain unrelated designed signal.
+
+A half-turn is applied only when its score wins by more than the configured gap.
+If the scores are too close, the pose is marked **orientation ambiguous** and
+excluded from classification, even when its barcode would match a known class.
+A perfectly symmetric fiducial is always ambiguous with this check enabled.
+Lowering the gap accepts weaker orientation evidence; disabling the check
+restores the previous behavior. Neither option recovers missing orientation
+information.
+
+Corrected angles, footprint corners, localization coordinates, alignment images
+and correlations are updated together before barcode measurement. The result
+summary and candidate inspection report corrections and ambiguity. Classification
+audit exports include both refined fiducial scores, both raster correlations,
+the score gap, and corrected/ambiguous flags, including tiled results. The paired
+columns `0` and `180` refer to the pose **before** this final check. Raster
+correlations are diagnostics; full-image brightness does not decide the winner.
+The existing **180° orientation check** view remains a separate, read-only
+comparison around the final saved pose.
+
+
+### Mirror the fiducial vertically
+
+**Mirror fiducial vertically (top ↔ bottom)** appears in both Step 1 (coarse
+candidate detection) and Step 2 (fit alignment template). The two checkboxes
+share one setting, off by default. Enable it when the experimental reference
+needs a vertical reflection relative to the imported fiducial. It is a global
+reference choice, not a per-origami mirror search; the 0°/180° check still runs
+against the selected reference.
+
+The setting flips the loaded fiducial raster and detection sites, along with
+classification-template rasters, digital-group physical/evidence sites and
+alignment-group sites. Column order is unchanged: C12 remains left and C1 right
+for calibrated 12-column generator templates. Logical bit IDs and ON/OFF states
+are preserved. Source localization coordinates and PNG/JSON files are unchanged.
+
+After changing the setting, rerun **Steps 1–4**. Candidate and alignment caches
+cannot reuse the previous reference orientation. Tiled runs use the same saved
+setting. Composite reconstruction undoes this local vertical reflection before
+applying decoded color/XY placement, and records it in the reconstruction report.
+
+
+### Composite display orientation and mapping validation
+
+Each barcode row has **Rotate CW (°)** (0, 90, 180, or 270), **Mirror ↔**
+(left/right), and **Mirror ↕** (top/bottom). These transform only that barcode's
+image section. The section rotates first, then mirrors in its rotated axes;
+its transformed upper-left corner is placed at the row's XY shift. A 90° or
+270° turn exchanges the section's width and height. Change these settings and
+click **Build composite** to update the preview and exports. Saved mappings and
+reports include the per-barcode settings; older mappings default to no section
+rotation or mirroring. The table scrolls horizontally when needed.
+
+Each barcode also has a **Brightness ×** multiplier: `1` keeps its contribution,
+`0.5` halves it, `2` doubles it, and `0` removes its signal from the composite.
+Use **Build composite** after editing. Multipliers apply after species averaging
+and smoothing, before adding the sections together, including sections sharing
+a color. PNG previews and exports use the weighted signal; NPZ density arrays
+also contain weighted signal, while coverage and localization counts remain
+unchanged. Mappings and reports record brightness; older mappings default to
+`1`. RGB uses one shared maximum, so these controls adjust relative contributions;
+scaling every section equally does not change the auto-scaled RGB image.
+
+The **Whole image** controls include **Rotate left 90°**, **Rotate right 90°**,
+**Mirror left ↔ right**, **Mirror top ↔ bottom**, and **Reset orientation**.
+These controls update a built composite immediately, without repeating origami
+extraction. Quarter-turns and reflections preserve the numerical density values;
+RGB channels and coverage receive the same transformation. PNG and NPZ exports
+use the displayed orientation, and saved mappings/JSON reports record the
+rotation and mirror settings. Display mirrors apply after rotation, in the
+current display axes. Rotation buttons turn the displayed image in the named
+direction even when a mirror is enabled. These controls are separate from the
+fiducial-mirroring option in identification.
+
+The mapping table now expands to show small template collections and supports
+mouse-wheel scrolling for larger ones. A visible summary lists templates needing
+attention. Build checks included mappings before starting reconstruction, names
+every incomplete template, and scrolls to the first affected row. Choose a color
+and finite XY shifts for that row, or uncheck **Include**. A blank code field is
+valid when assigning color and shifts manually.
+
+### Reconstruct from a saved RGB picklist batch
+
+In **Reconstruct Composite Image**, load the classification templates, then use
+**Load saved RGB picklist batch…** and select `image_manifest.json` from the
+Picklist Generator's **Save image batch** folder. The manifest supplies barcode,
+RGB channel, XY placement, active image columns, and whole-image rotation.
+A plain Echo transfer CSV does not contain the RGB placement information.
+
+Original design names and exported `design_0001_code_048`-style template names
+are matched automatically. Unmatched templates (including manual controls) are
+excluded; renamed templates can be assigned a code from the imported codebook
+and explicitly included. Check **Preview image region**, then **Build composite**.
+The five-column active canvas is supported. **Save mappings** preserves the
+resolved mappings and geometry for later use.
+
+When importing a saved RGB batch or image encoding settings, the image extraction
+rectangle follows the left–right and top–bottom identification mirrors saved
+with the analysis. Reconstruction restores design orientation before applying
+per-design placement. Per-design and whole-image display mirrors operate after
+extraction and do not reposition that rectangle. After updating from an older
+version, reload the batch/encoding settings to replace manually adjusted rectangle
+coordinates, preview the image region, and rebuild the composite.
+
+ROI selection counts corrected localizations in chunks and highlights a
+reproducible sample of at most 20,000 matching raw coordinates. The preview avoids
+full-table copies and full raw-index lookup tables; selection memory is bounded
+by the 250,000-row scan chunk and preview size. Counts remain exact, and ROI
+analysis/CSV export continue to use all selected localizations. Large files still
+require a linear scan, so selection may take a moment even for a small ROI.
+
+Classification source loading selects ROI rows in bounded chunks before copying
+selected data, and constructs a contiguous nanometre coordinate array directly.
+Full selections reuse the existing localization table without a deep copy;
+classification treats that source table as read-only. Histogram filters retain
+their original dataset-wide semantics (neighbor/event filters can still be
+memory intensive). Sources above one million selected rows use chunked density
+binning without blur for the load and zoom previews. Source previews are limited
+to approximately 2,000 pixels per axis. These display limits do not subsample
+classification coordinates or change analysis/export data. Full-image loading
+still needs 16 bytes per selected point for its float64 XY coordinate array;
+select a smaller ROI and enable Use ROI to reduce that cost.
