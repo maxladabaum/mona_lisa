@@ -1,0 +1,73 @@
+Run,Destination Plate,Destination Wells,Reagent,Volume_uL
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,Staple mix (from picklist),13.4
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,Scaffold,0.25
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,10X TE,8.6575
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,Mg (100 mM),12.0
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,Na (100 mM),5.0
+R1_R_2x2_Q0_X0_Y0,Destination[1],E01,DI Water,60.692499999999995
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,Staple mix (from picklist),13.4
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,Scaffold,0.25
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,10X TE,8.6575
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,Mg (100 mM),12.0
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,Na (100 mM),5.0
+R1_R_2x2_Q1_X0_Y0,Destination[1],E02,DI Water,60.692499999999995
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,Staple mix (from picklist),13.4
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,Scaffold,0.25
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,10X TE,8.6575
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,Mg (100 mM),12.0
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,Na (100 mM),5.0
+R1_R_2x2_Q2_X0_Y0,Destination[1],E03,DI Water,60.692499999999995
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,Staple mix (from picklist),13.4
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,Scaffold,0.25
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,10X TE,8.6575
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,Mg (100 mM),12.0
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,Na (100 mM),5.0
+R1_R_2x2_Q3_X0_Y0,Destination[1],E04,DI Water,60.692499999999995
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,Staple mix (from picklist),13.4
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,Scaffold,0.25
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,10X TE,8.6575
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,Mg (100 mM),12.0
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,Na (100 mM),5.0
+R1_G_2x2_Q0_X0_Y0,Destination[1],E05,DI Water,60.692499999999995
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,Staple mix (from picklist),13.4
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,Scaffold,0.25
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,10X TE,8.6575
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,Mg (100 mM),12.0
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,Na (100 mM),5.0
+R1_G_2x2_Q1_X0_Y0,Destination[1],E06,DI Water,60.692499999999995
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,Staple mix (from picklist),13.4
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,Scaffold,0.25
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,10X TE,8.6575
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,Mg (100 mM),12.0
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,Na (100 mM),5.0
+R1_G_2x2_Q2_X0_Y0,Destination[1],E07,DI Water,60.692499999999995
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,Staple mix (from picklist),13.4
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,Scaffold,0.25
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,10X TE,8.6575
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,Mg (100 mM),12.0
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,Na (100 mM),5.0
+R1_G_2x2_Q3_X0_Y0,Destination[1],E08,DI Water,60.692499999999995
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,Staple mix (from picklist),13.4
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,Scaffold,0.25
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,10X TE,8.6575
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,Mg (100 mM),12.0
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,Na (100 mM),5.0
+R1_B_2x2_Q0_X0_Y0,Destination[1],E09,DI Water,60.692499999999995
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,Staple mix (from picklist),13.4
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,Scaffold,0.25
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,10X TE,8.6575
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,Mg (100 mM),12.0
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,Na (100 mM),5.0
+R1_B_2x2_Q1_X0_Y0,Destination[1],E10,DI Water,60.692499999999995
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,Staple mix (from picklist),13.4
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,Scaffold,0.25
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,10X TE,8.6575
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,Mg (100 mM),12.0
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,Na (100 mM),5.0
+R1_B_2x2_Q2_X0_Y0,Destination[1],E11,DI Water,60.692499999999995
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,Staple mix (from picklist),13.4
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,Scaffold,0.25
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,10X TE,8.6575
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,Mg (100 mM),12.0
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,Na (100 mM),5.0
+R1_B_2x2_Q3_X0_Y0,Destination[1],E12,DI Water,60.692499999999995

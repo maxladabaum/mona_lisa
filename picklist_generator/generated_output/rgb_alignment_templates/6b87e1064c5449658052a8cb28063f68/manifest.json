@@ -1,0 +1,1162 @@
+{
+  "format": "paint-analysis-rgb-alignment-templates-v1",
+  "batch_id": "6b87e1064c5449658052a8cb28063f68",
+  "template_coordinate_frame": "Canonical origami lattice, mirrored C12 to C1 as recorded in each PNG; not the composite image rotation.",
+  "barcode_schema": {
+    "version": 1,
+    "name": "Origami Templates \u2014 6 bits",
+    "always_on_sites": [
+      "H01-01",
+      "H01-11",
+      "H01-12",
+      "H03-01",
+      "H03-11",
+      "H09-12",
+      "H11-12",
+      "H13-01",
+      "H13-12",
+      "H15-01",
+      "H15-12"
+    ],
+    "six_bit": [
+      {
+        "bit": 1,
+        "sites": [
+          "H07-10",
+          "H09-10"
+        ]
+      },
+      {
+        "bit": 2,
+        "sites": [
+          "H01-09",
+          "H03-09"
+        ]
+      },
+      {
+        "bit": 3,
+        "sites": [
+          "H07-08",
+          "H09-08"
+        ]
+      },
+      {
+        "bit": 4,
+        "sites": [
+          "H01-07",
+          "H03-07"
+        ]
+      },
+      {
+        "bit": 5,
+        "sites": [
+          "H13-09",
+          "H15-09"
+        ]
+      },
+      {
+        "bit": 6,
+        "sites": [
+          "H13-07",
+          "H15-07"
+        ]
+      }
+    ],
+    "nine_bit": [
+      {
+        "bit": 1,
+        "sites": [
+          "H01-12",
+          "H03-12"
+        ]
+      },
+      {
+        "bit": 2,
+        "sites": [
+          "H01-10",
+          "H03-10"
+        ]
+      },
+      {
+        "bit": 3,
+        "sites": [
+          "H01-08",
+          "H03-08"
+        ]
+      },
+      {
+        "bit": 4,
+        "sites": [
+          "H07-11",
+          "H09-11"
+        ]
+      },
+      {
+        "bit": 5,
+        "sites": [
+          "H07-09",
+          "H09-09"
+        ]
+      },
+      {
+        "bit": 6,
+        "sites": [
+          "H07-07",
+          "H09-07"
+        ]
+      },
+      {
+        "bit": 7,
+        "sites": [
+          "H13-12",
+          "H15-12"
+        ]
+      },
+      {
+        "bit": 8,
+        "sites": [
+          "H13-10",
+          "H15-10"
+        ]
+      },
+      {
+        "bit": 9,
+        "sites": [
+          "H13-08",
+          "H15-08"
+        ]
+      }
+    ]
+  },
+  "geometry": {
+    "origami_rotation_degrees_clockwise": 90,
+    "source_image_rotation_degrees": 0,
+    "array_coordinate_frame": "origami-local; rotate clockwise by origami_rotation_degrees_clockwise for upright image display",
+    "display_columns": 16,
+    "display_rows": 10,
+    "display_pixel_pitch_x_nm": 5.1,
+    "display_pixel_pitch_y_nm": 9.9,
+    "display_field_width_nm": 81.6,
+    "display_field_height_nm": 99.0,
+    "encoding_scheme": "tiles_2x2",
+    "encoding_label": "4 tiles \u00b7 2\u00d72 grid \u00b7 12 RGB runs",
+    "encoding_mode": "fixed_color_position_codebook",
+    "bit_count": 6,
+    "sites_per_bit": 2,
+    "parity": null,
+    "bit_order": "bit 1 is the most significant bit; bit 6 is the least significant bit",
+    "code_formula": "color_code * 16 + y_shift * x_states + x_shift",
+    "channel_indices": {
+      "R1 R": 0,
+      "R1 G": 1,
+      "R1 B": 2
+    },
+    "codebook": [
+      {
+        "code": 48,
+        "bits": [
+          1,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "color": "R1 R",
+        "x_shift": 0,
+        "y_shift": 0,
+        "quadrant": 0,
+        "quadrant_x": 0,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 49,
+        "bits": [
+          1,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "color": "R1 R",
+        "x_shift": 1,
+        "y_shift": 0,
+        "quadrant": 1,
+        "quadrant_x": 1,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 50,
+        "bits": [
+          1,
+          1,
+          0,
+          0,
+          1,
+          0
+        ],
+        "color": "R1 R",
+        "x_shift": 0,
+        "y_shift": 1,
+        "quadrant": 2,
+        "quadrant_x": 0,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 51,
+        "bits": [
+          1,
+          1,
+          0,
+          0,
+          1,
+          1
+        ],
+        "color": "R1 R",
+        "x_shift": 1,
+        "y_shift": 1,
+        "quadrant": 3,
+        "quadrant_x": 1,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 0,
+        "bits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "color": "R1 G",
+        "x_shift": 0,
+        "y_shift": 0,
+        "quadrant": 0,
+        "quadrant_x": 0,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 1,
+        "bits": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "color": "R1 G",
+        "x_shift": 1,
+        "y_shift": 0,
+        "quadrant": 1,
+        "quadrant_x": 1,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 2,
+        "bits": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "color": "R1 G",
+        "x_shift": 0,
+        "y_shift": 1,
+        "quadrant": 2,
+        "quadrant_x": 0,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 3,
+        "bits": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "color": "R1 G",
+        "x_shift": 1,
+        "y_shift": 1,
+        "quadrant": 3,
+        "quadrant_x": 1,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 32,
+        "bits": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "color": "R1 B",
+        "x_shift": 0,
+        "y_shift": 0,
+        "quadrant": 0,
+        "quadrant_x": 0,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 33,
+        "bits": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "color": "R1 B",
+        "x_shift": 1,
+        "y_shift": 0,
+        "quadrant": 1,
+        "quadrant_x": 1,
+        "quadrant_y": 0,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 0.0,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 0.0,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 34,
+        "bits": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "color": "R1 B",
+        "x_shift": 0,
+        "y_shift": 1,
+        "quadrant": 2,
+        "quadrant_x": 0,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 0.0,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 0.0,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      },
+      {
+        "code": 35,
+        "bits": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        "color": "R1 B",
+        "x_shift": 1,
+        "y_shift": 1,
+        "quadrant": 3,
+        "quadrant_x": 1,
+        "quadrant_y": 1,
+        "local_x_shift": 0,
+        "local_y_shift": 0,
+        "local_x_states": 1,
+        "local_y_states": 1,
+        "quadrant_offset_x_nm": 49.5,
+        "quadrant_offset_y_nm": 40.8,
+        "local_x_shift_nm": 0.0,
+        "local_y_shift_nm": 0.0,
+        "x_shift_nm": 49.5,
+        "y_shift_nm": 40.8,
+        "quadrant_normalization_weight": 1.0
+      }
+    ],
+    "reserved_codes": [
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63
+    ],
+    "x_states": 2,
+    "y_states": 2,
+    "design_count": 12,
+    "columns": 10,
+    "rows": 16,
+    "site_pitch_x_nm": 9.9,
+    "site_pitch_y_nm": 5.1,
+    "pixel_pitch_x_nm": 9.9,
+    "pixel_pitch_y_nm": 5.1,
+    "field_width_nm": 99.0,
+    "field_height_nm": 81.6,
+    "center_span_x_nm": 89.1,
+    "center_span_y_nm": 76.5,
+    "pixel_centers_x_nm": [
+      0.0,
+      9.9,
+      19.8,
+      29.700000000000003,
+      39.6,
+      49.5,
+      59.4,
+      69.3,
+      79.2,
+      89.1
+    ],
+    "pixel_centers_y_nm": [
+      0.0,
+      5.1,
+      10.2,
+      15.299999999999999,
+      20.4,
+      25.5,
+      30.599999999999998,
+      35.699999999999996,
+      40.8,
+      45.9,
+      51.0,
+      56.099999999999994,
+      61.199999999999996,
+      66.3,
+      71.39999999999999,
+      76.5
+    ],
+    "pixel_edges_x_nm": [
+      0.0,
+      9.9,
+      19.8,
+      29.700000000000003,
+      39.6,
+      49.5,
+      59.4,
+      69.3,
+      79.2,
+      89.1,
+      99.0
+    ],
+    "pixel_edges_y_nm": [
+      0.0,
+      5.1,
+      10.2,
+      15.299999999999999,
+      20.4,
+      25.5,
+      30.599999999999998,
+      35.699999999999996,
+      40.8,
+      45.9,
+      51.0,
+      56.099999999999994,
+      61.199999999999996,
+      66.3,
+      71.39999999999999,
+      76.5,
+      81.6
+    ],
+    "sampling_weights_x": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "sampling_weights_y": [
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "nonuniform_sampling": false,
+    "parent_scheme": "",
+    "tile_columns": 2,
+    "tile_rows": 2,
+    "tile_count": 4,
+    "image_columns_left_to_right": [
+      "06",
+      "05",
+      "04",
+      "03",
+      "02"
+    ],
+    "active_image_columns": [
+      "06",
+      "05",
+      "04",
+      "03",
+      "02"
+    ],
+    "image_sites_per_origami": 40,
+    "image_rows_top_to_bottom": [
+      "H01",
+      "H03",
+      "H05",
+      "H07",
+      "H09",
+      "H11",
+      "H13",
+      "H15"
+    ],
+    "image_origin_from_C12_H01_nm": [
+      69.4,
+      0
+    ],
+    "positive_shift_direction": "right / down",
+    "always_on_sites": [
+      [
+        "H01",
+        "01"
+      ],
+      [
+        "H01",
+        "11"
+      ],
+      [
+        "H01",
+        "12"
+      ],
+      [
+        "H03",
+        "01"
+      ],
+      [
+        "H03",
+        "11"
+      ],
+      [
+        "H09",
+        "12"
+      ],
+      [
+        "H11",
+        "12"
+      ],
+      [
+        "H13",
+        "01"
+      ],
+      [
+        "H13",
+        "12"
+      ],
+      [
+        "H15",
+        "01"
+      ],
+      [
+        "H15",
+        "12"
+      ]
+    ],
+    "barcode_bits": [
+      {
+        "bit": 1,
+        "sites": [
+          [
+            "H07",
+            "10"
+          ],
+          [
+            "H09",
+            "10"
+          ]
+        ]
+      },
+      {
+        "bit": 2,
+        "sites": [
+          [
+            "H01",
+            "09"
+          ],
+          [
+            "H03",
+            "09"
+          ]
+        ]
+      },
+      {
+        "bit": 3,
+        "sites": [
+          [
+            "H07",
+            "08"
+          ],
+          [
+            "H09",
+            "08"
+          ]
+        ]
+      },
+      {
+        "bit": 4,
+        "sites": [
+          [
+            "H01",
+            "07"
+          ],
+          [
+            "H03",
+            "07"
+          ]
+        ]
+      },
+      {
+        "bit": 5,
+        "sites": [
+          [
+            "H13",
+            "09"
+          ],
+          [
+            "H15",
+            "09"
+          ]
+        ]
+      },
+      {
+        "bit": 6,
+        "sites": [
+          [
+            "H13",
+            "07"
+          ],
+          [
+            "H15",
+            "07"
+          ]
+        ]
+      }
+    ],
+    "pixel_mapping": "Concatenate quadrant sampling grids; use pixel_centers/edges for nonuniform physical spacing.",
+    "quadrant_count": 4,
+    "tile_field_width_nm": 49.5,
+    "tile_field_height_nm": 40.8,
+    "local_x_states": 1,
+    "local_y_states": 1,
+    "quadrant_order": [
+      "top-left",
+      "top-right",
+      "bottom-left",
+      "bottom-right"
+    ],
+    "quadrant_sampling": [
+      {
+        "quadrant": 0,
+        "x_states": 1,
+        "y_states": 1,
+        "design_count": 3,
+        "pixel_pitch_x_nm": 9.9,
+        "pixel_pitch_y_nm": 5.1,
+        "normalization_weight": 1.0
+      },
+      {
+        "quadrant": 1,
+        "x_states": 1,
+        "y_states": 1,
+        "design_count": 3,
+        "pixel_pitch_x_nm": 9.9,
+        "pixel_pitch_y_nm": 5.1,
+        "normalization_weight": 1.0
+      },
+      {
+        "quadrant": 2,
+        "x_states": 1,
+        "y_states": 1,
+        "design_count": 3,
+        "pixel_pitch_x_nm": 9.9,
+        "pixel_pitch_y_nm": 5.1,
+        "normalization_weight": 1.0
+      },
+      {
+        "quadrant": 3,
+        "x_states": 1,
+        "y_states": 1,
+        "design_count": 3,
+        "pixel_pitch_x_nm": 9.9,
+        "pixel_pitch_y_nm": 5.1,
+        "normalization_weight": 1.0
+      }
+    ],
+    "bit_meaning": "Bits 1\u20132 retain the original color codes; bits 3\u20136 jointly identify tile and local XY shift.",
+    "quadrant_offset_convention": "field offset plus half the difference between this quadrant's pitch and the first quadrant's pitch",
+    "color_bits": {
+      "R1 R": [
+        true,
+        true
+      ],
+      "R1 B": [
+        true,
+        false
+      ],
+      "R1 G": [
+        false,
+        false
+      ]
+    }
+  },
+  "templates": [
+    {
+      "design_name": "R1_R_2x2_Q0_X0_Y0",
+      "color": "R1 R",
+      "barcode_code": 48,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E01"
+      ],
+      "png": "barcodes/design_0001_code_048.png",
+      "metadata": "barcodes/design_0001_code_048.json"
+    },
+    {
+      "design_name": "R1_R_2x2_Q1_X0_Y0",
+      "color": "R1 R",
+      "barcode_code": 49,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        0,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E02"
+      ],
+      "png": "barcodes/design_0002_code_049.png",
+      "metadata": "barcodes/design_0002_code_049.json"
+    },
+    {
+      "design_name": "R1_R_2x2_Q2_X0_Y0",
+      "color": "R1 R",
+      "barcode_code": 50,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        1,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E03"
+      ],
+      "png": "barcodes/design_0003_code_050.png",
+      "metadata": "barcodes/design_0003_code_050.json"
+    },
+    {
+      "design_name": "R1_R_2x2_Q3_X0_Y0",
+      "color": "R1 R",
+      "barcode_code": 51,
+      "bits": [
+        1,
+        1,
+        0,
+        0,
+        1,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E04"
+      ],
+      "png": "barcodes/design_0004_code_051.png",
+      "metadata": "barcodes/design_0004_code_051.json"
+    },
+    {
+      "design_name": "R1_G_2x2_Q0_X0_Y0",
+      "color": "R1 G",
+      "barcode_code": 0,
+      "bits": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E05"
+      ],
+      "png": "barcodes/design_0005_code_000.png",
+      "metadata": "barcodes/design_0005_code_000.json"
+    },
+    {
+      "design_name": "R1_G_2x2_Q1_X0_Y0",
+      "color": "R1 G",
+      "barcode_code": 1,
+      "bits": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E06"
+      ],
+      "png": "barcodes/design_0006_code_001.png",
+      "metadata": "barcodes/design_0006_code_001.json"
+    },
+    {
+      "design_name": "R1_G_2x2_Q2_X0_Y0",
+      "color": "R1 G",
+      "barcode_code": 2,
+      "bits": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E07"
+      ],
+      "png": "barcodes/design_0007_code_002.png",
+      "metadata": "barcodes/design_0007_code_002.json"
+    },
+    {
+      "design_name": "R1_G_2x2_Q3_X0_Y0",
+      "color": "R1 G",
+      "barcode_code": 3,
+      "bits": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E08"
+      ],
+      "png": "barcodes/design_0008_code_003.png",
+      "metadata": "barcodes/design_0008_code_003.json"
+    },
+    {
+      "design_name": "R1_B_2x2_Q0_X0_Y0",
+      "color": "R1 B",
+      "barcode_code": 32,
+      "bits": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E09"
+      ],
+      "png": "barcodes/design_0009_code_032.png",
+      "metadata": "barcodes/design_0009_code_032.json"
+    },
+    {
+      "design_name": "R1_B_2x2_Q1_X0_Y0",
+      "color": "R1 B",
+      "barcode_code": 33,
+      "bits": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 0.0,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E10"
+      ],
+      "png": "barcodes/design_0010_code_033.png",
+      "metadata": "barcodes/design_0010_code_033.json"
+    },
+    {
+      "design_name": "R1_B_2x2_Q2_X0_Y0",
+      "color": "R1 B",
+      "barcode_code": 34,
+      "bits": [
+        1,
+        0,
+        0,
+        0,
+        1,
+        0
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 0.0,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E11"
+      ],
+      "png": "barcodes/design_0011_code_034.png",
+      "metadata": "barcodes/design_0011_code_034.json"
+    },
+    {
+      "design_name": "R1_B_2x2_Q3_X0_Y0",
+      "color": "R1 B",
+      "barcode_code": 35,
+      "bits": [
+        1,
+        0,
+        0,
+        0,
+        1,
+        1
+      ],
+      "encoding_scheme": "tiles_2x2",
+      "x_shift_nm": 49.5,
+      "y_shift_nm": 40.8,
+      "origami_rotation_degrees_clockwise": 90,
+      "destination_plate_name": "Destination[1]",
+      "destination_wells": [
+        "E12"
+      ],
+      "png": "barcodes/design_0012_code_035.png",
+      "metadata": "barcodes/design_0012_code_035.json"
+    }
+  ],
+  "fiducial_templates": [
+    "fiducials/fiducials_6bit.png"
+  ],
+  "exported_count": 12,
+  "skipped_count": 0
+}
