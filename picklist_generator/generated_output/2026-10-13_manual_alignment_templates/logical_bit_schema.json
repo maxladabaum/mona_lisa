@@ -1,0 +1,243 @@
+{
+  "format": "paint-analysis-logical-bits-v1",
+  "description": "User-defined digital bit groups.",
+  "overlap_semantics": "physical-site-union",
+  "physical_rows": 8,
+  "physical_columns": 12,
+  "alignment_groups": [
+    {
+      "id": "fiducials",
+      "label": "Permanent fiducials",
+      "physical_sites": [
+        [
+          1,
+          1
+        ],
+        [
+          1,
+          11
+        ],
+        [
+          1,
+          12
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          2,
+          11
+        ],
+        [
+          5,
+          12
+        ],
+        [
+          6,
+          12
+        ],
+        [
+          7,
+          1
+        ],
+        [
+          7,
+          12
+        ],
+        [
+          8,
+          1
+        ],
+        [
+          8,
+          12
+        ]
+      ],
+      "display_color": "#00c8ff"
+    }
+  ],
+  "dark_groups": [],
+  "logical_bits": [
+    {
+      "id": "bit_1",
+      "label": "Bit 1",
+      "physical_sites": [
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ]
+      ],
+      "display_color": "#ff5a5f",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          4,
+          10
+        ],
+        [
+          5,
+          10
+        ]
+      ]
+    },
+    {
+      "id": "bit_2",
+      "label": "Bit 2",
+      "physical_sites": [
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          9
+        ]
+      ],
+      "display_color": "#55d66b",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          1,
+          9
+        ],
+        [
+          2,
+          9
+        ]
+      ]
+    },
+    {
+      "id": "bit_3",
+      "label": "Bit 3",
+      "physical_sites": [
+        [
+          4,
+          8
+        ],
+        [
+          5,
+          8
+        ]
+      ],
+      "display_color": "#ffb000",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          4,
+          8
+        ],
+        [
+          5,
+          8
+        ]
+      ]
+    },
+    {
+      "id": "bit_4",
+      "label": "Bit 4",
+      "physical_sites": [
+        [
+          1,
+          7
+        ],
+        [
+          2,
+          7
+        ]
+      ],
+      "display_color": "#b77cff",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          1,
+          7
+        ],
+        [
+          2,
+          7
+        ]
+      ]
+    },
+    {
+      "id": "bit_5",
+      "label": "Bit 5",
+      "physical_sites": [
+        [
+          7,
+          9
+        ],
+        [
+          8,
+          9
+        ]
+      ],
+      "display_color": "#ff70c8",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          7,
+          9
+        ],
+        [
+          8,
+          9
+        ]
+      ]
+    },
+    {
+      "id": "bit_6",
+      "label": "Bit 6",
+      "physical_sites": [
+        [
+          7,
+          7
+        ],
+        [
+          8,
+          7
+        ]
+      ],
+      "display_color": "#00d7b5",
+      "brightness_factor": 1.0,
+      "evidence_sites": [
+        [
+          7,
+          7
+        ],
+        [
+          8,
+          7
+        ]
+      ]
+    }
+  ],
+  "spacing_x_nm": 9.9,
+  "spacing_y_nm": 5.1,
+  "column_offsets_nm": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0
+  ],
+  "active_logical_bits": [
+    "bit_1",
+    "bit_2",
+    "bit_3",
+    "bit_4",
+    "bit_5",
+    "bit_6"
+  ]
+}

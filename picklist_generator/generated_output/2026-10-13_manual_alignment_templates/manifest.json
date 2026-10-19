@@ -1,0 +1,42 @@
+{
+  "source": "picklist_generator/barcode_registry.json",
+  "experiment": "Mona_Lisa2",
+  "templates": [
+    {
+      "run_name": "empty",
+      "bits": "000100",
+      "destination_wells": [
+        "E13"
+      ],
+      "registry_id": "619307bbee24475a810910e3f834e36e",
+      "png": "barcodes/empty_code_004.png"
+    },
+    {
+      "run_name": "full_100_percent",
+      "bits": "000101",
+      "destination_wells": [
+        "E14"
+      ],
+      "registry_id": "4d39102db7704d2db4c18f39c6f8c294",
+      "png": "barcodes/full_100_percent_code_005.png"
+    },
+    {
+      "run_name": "full_40_percent",
+      "bits": "000110",
+      "destination_wells": [
+        "E15"
+      ],
+      "registry_id": "5556dafa927c481dbca62adb576a9927",
+      "png": "barcodes/full_40_percent_code_006.png"
+    },
+    {
+      "run_name": "gradient",
+      "bits": "000111",
+      "destination_wells": [
+        "E16"
+      ],
+      "registry_id": "0b526d2c0a844d04b62b8a79d5ba602c",
+      "png": "barcodes/gradient_code_007.png"
+    }
+  ]
+}
