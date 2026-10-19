@@ -194,6 +194,19 @@ to browse the saved analysis. Plots may render again on demand, but detection,
 alignment, and classification do not rerun during loading. Overlays that had not
 been built before saving can still be built from the saved aligned localizations.
 
+To identify missing barcodes in a saved analysis, load the analysis, load the new
+barcode templates in Step 4, then click **Classify Unclassified Only** beside the
+Save/Load Analysis controls. Only previously unclassified particles are compared
+with those templates. Existing class assignments and counts are preserved, and
+new matches are added to the results; excluded particles and suppressed duplicates
+are left alone. You can load just the missing templates, without reloading the
+original classes. This uses saved alignment, digital measurements, thresholds,
+and mirror settings without repeating detection, alignment, or digital-site
+measurement. Saved tiled results are supported when they contain the full
+measurements and consistent candidate ordering. Incompatible templates or missing
+saved measurements produce an error instead of rerunning earlier steps. Save the
+updated analysis under a new name to keep the original results.
+
 Saving/loading runs in the background with a progress dialog. Loading shows a
 percentage based on archive data read and records restored, including recovery
 snapshots opened through **Resume Tiled Analysis…**. Large full-image

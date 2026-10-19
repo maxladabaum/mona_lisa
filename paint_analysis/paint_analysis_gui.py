@@ -46,6 +46,7 @@ from tile_checkpoint import TileCheckpoint, checkpoint_lock, load_checkpoint_run
 import classification_compute as compute
 from origami_analysis import iter_sparse_site_evidence
 from tiled_aggregation import StreamingTileResults, SEQUENCE_PARAMS
+from saved_reclassification import unclassified_subset, merge_unclassified_results
 
 from origami_review import (review_tables, review_filter_options, review_mask, threshold_sweep,
                            plot_evidence, plot_sweep, plot_full_detail)
@@ -163,6 +164,7 @@ ORIGAMI_TRANSIENT_PIPELINE_KEYS = (
     "_precomputed_candidates",
     "_prealigned_picks",
     "_premeasured_picks",
+    "_reuse_saved_measurements",
     "_candidate_core_bounds_nm",
     "_display_stage",
     "_alignment_accepted_mask",
@@ -1383,6 +1385,44 @@ def exact_digital_template_matches(params: dict[str, Any], candidate_count: int)
     params["classification_expected_digital_states"] = tuple(bool(v) for v in expected)
     params["classification_exact_digital_match"] = tuple(bool(v) for v in matches)
     return matches
+
+
+def saved_measurement_classification_params(picks, saved, templates):
+    """Prepare classification only; retain the saved coordinate frame and gates."""
+    if picks is None or not saved or not templates:
+        raise ValueError("Load an analysis with digital measurements and load classification templates first.")
+    reference = saved.get("digital_pixel_model") or saved.get("logical_model")
+    if not reference or saved.get("shared_alignment_template") is None:
+        raise ValueError("This analysis lacks shared alignment/digital-group metadata. Run Steps 1–3 first.")
+    params = {k: v for k, v in saved.items()
+              if k not in ORIGAMI_TRANSIENT_PIPELINE_KEYS and not k.startswith("classification_")}
+    eligible = saved.get("_alignment_accepted_mask", saved.get("classification_lookup_eligible"))
+    if eligible is None or np.asarray(eligible).shape != (len(picks.regions),):
+        raise ValueError("Saved alignment eligibility is missing. Run Steps 2–3 first.")
+    params["_alignment_accepted_mask"] = tuple(bool(v) for v in eligible)
+    prepared = []
+    fields = ("bit_ids", "bit_cells", "bit_physical_cells", "bit_brightness_factors", "physical_shape")
+    for template in templates:
+        template = dict(template)
+        if saved.get("mirror_template_y"):
+            template = mirror_origami_template_y(template)
+        if saved.get("mirror_all_templates"):
+            template = mirror_origami_template_inputs(template)
+        model = template.get("logical_model")
+        if not model or any(model.get(key) != reference.get(key) for key in fields):
+            raise ValueError("New templates must use the saved digital-bit layout and brightness factors. Run Steps 1–3 to change them.")
+        # Validate every measurement array before starting the background job.
+        exact_digital_template_matches(dict(params, logical_model=model), len(picks.regions))
+        prepared.append(template)
+    qc = np.asarray(saved.get("classification_qc_eligible", eligible), dtype=bool)
+    if qc.shape != (len(picks.regions),):
+        raise ValueError("Saved candidate acceptance is missing or stale. Run Steps 2–3 first.")
+    # Saved class results mask out other and unclassified outcomes. Restore the
+    # original candidate eligibility before competing the new classes.
+    reusable_picks = replace(picks, accepted_mask=qc.copy())
+    params.update(custom_templates=prepared, _inspection_stage=5, _display_stage=4,
+                  _premeasured_picks=reusable_picks, _reuse_saved_measurements=True)
+    return params
 
 
 def unclassified_theoretical_points(picks, params, index):
@@ -5351,6 +5391,8 @@ class PaintAnalysisApp(tk.Tk):
         analysis_files.columnconfigure((0, 1), weight=1)
         ttk.Button(analysis_files, text="Save Analysis…", command=self.save_origami_analysis).grid(row=0, column=0, sticky="ew")
         ttk.Button(analysis_files, text="Load Analysis…", command=self.load_origami_analysis).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        ttk.Button(analysis_files, text="Classify Unclassified Only",
+                   command=self.reclassify_saved_measurements).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
 
         self.origami_plot_area = ttk.Frame(self.origami_workspace, padding=(4, 4, 6, 4))
@@ -7199,6 +7241,8 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_custom_template_name.set(
             f"{len(templates)} calibrated templates: " + ", ".join(str(item["name"]) for item in templates)
         )
+        if self.__dict__.get("origami_multi_template_results"):
+            self._origami_saved_classifications = self.origami_multi_template_results
         self.origami_multi_template_results = {}
         self.origami_multi_template_counts = {}
         self.origami_multi_template_overlay_results = {}
@@ -8200,6 +8244,40 @@ class PaintAnalysisApp(tk.Tk):
             )
         )
 
+    def reclassify_saved_measurements(self) -> None:
+        """Classify the loaded candidates without detecting or measuring again."""
+        if self.origami_identification_running:
+            return
+        try:
+            previous = self.origami_multi_template_results or self.__dict__.get('_origami_saved_classifications', {})
+            original_picks = self.origami_pick_result
+            original_params = self.origami_identification_params
+            indices, subset, saved = unclassified_subset(original_picks, original_params or {}, previous)
+            params = saved_measurement_classification_params(subset, saved, self.origami_custom_templates)
+            for template in params['custom_templates']:
+                old = previous.get(template['name'])
+                if old and old['params']['logical_model']['active_bits'] != template['logical_model']['active_bits']:
+                    raise ValueError('A new barcode must have a different name from an existing class.')
+        except ValueError as exc:
+            messagebox.showerror("Cannot reuse saved measurements", str(exc))
+            return
+        self.origami_identification_generation += 1
+        params["identification_generation"] = self.origami_identification_generation
+        self.origami_pending_identification_snapshot = self._origami_identification_snapshot()
+        self.origami_identification_running = True
+        self.origami_active_step = 4
+        self.origami_identification_progress.set(0.0)
+        for button in (self.origami_identify_button, self.origami_run_candidates_button,
+                       self.origami_run_alignment_button, self.origami_run_sites_button,
+                       self.origami_run_acceptance_button, self.origami_tiled_button,
+                       self.origami_n_tiles_button, self.origami_random_roi_button):
+            button.state(["disabled"])
+        self.status.set("Classifying previously unclassified particles; existing assignments are preserved.")
+        def classify_unclassified():
+            kind, payload = self._identify_origami_worker(np.empty((0, 2)), params)
+            return kind, merge_unclassified_results(payload, indices, original_picks, original_params, previous)
+        self._run_worker(classify_unclassified)
+
     def identify_origamis(self, target_stage: int = 5, display_stage: int | None = None) -> None:
         if self.origami_identification_running:
             return
@@ -8926,7 +9004,7 @@ class PaintAnalysisApp(tk.Tk):
         candidate_image_cache: dict[tuple[object, ...], tuple[object, ...]] = {}
         emit_progress(1.0, "Building one shared candidate set...")
         shared_candidates = precomputed_candidates
-        if shared_candidates is None:
+        if shared_candidates is None and not params.get("_reuse_saved_measurements"):
             shared_candidates = pick_origami_candidates(
                 points_nm,
                 bin_size_nm=float(params["pick_bin_size_nm"]),
@@ -8944,14 +9022,14 @@ class PaintAnalysisApp(tk.Tk):
             )
         emit_progress(
             2.0,
-            f"Retained {len(shared_candidates[0]):,} candidates with at least "
+            f"Retained {len(premeasured_picks.regions) if params.get('_reuse_saved_measurements') else len(shared_candidates[0]):,} candidates with at least "
             f"{int(params['min_candidate_points']):,} source points.",
         )
         shared_alignment = params.get("shared_alignment_template")
         locked_picks: OrigamiPickResult | None = (
             premeasured_picks if isinstance(premeasured_picks, OrigamiPickResult) else None
         )
-        if locked_picks is not None:
+        if locked_picks is not None and not params.get("_reuse_saved_measurements"):
             self._measure_direct_digital_groups(locked_picks, params)
             locked_picks = self._apply_origami_acceptance_filters(locked_picks, params)
         if locked_picks is not None:
@@ -17690,6 +17768,7 @@ class PaintAnalysisApp(tk.Tk):
                 raise ValueError(f"Saved counts disagree with assignments for {name}.")
 
     def _install_origami_analysis(self, payload):
+        self.__dict__.pop("_origami_saved_classifications", None)
         # Validate the complete decoded archive before replacing the current session.
         self._validate_origami_analysis(payload)
         state = payload["state"]
