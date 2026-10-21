@@ -107,6 +107,7 @@ def test_rgb_storage_blocks_manual_duplicate_and_unused_code_stores(app,tmp_path
 
 
 def test_new_collision_after_preview_blocks_manual_store(app,tmp_path):
+    app.barcode_guard.enabled.set(True)
     view=next(v for v in app.set_views if v.title=='LowConc PAINT R1')
     view.variables['U-Apt_H09-03_R1'].set(True)
     app.destination_wells.set('B01');app.desired.set('100,50,10,1,12,5')
@@ -187,3 +188,43 @@ def test_loading_single_family_schema_selects_its_bit_count(app):
     schema=default_barcode_schema();schema.pop('nine_bit')
     guard.apply_schema(schema)
     assert guard.count.get()=='6'
+
+
+def test_manual_without_barcode_generates_and_stores_without_reservation(app):
+    guard = app.barcode_guard
+    assert not guard.enabled.get()
+    # A saved schema may require fiducials even for an ordinary replacement design.
+    schema = default_barcode_schema()
+    schema['always_on_sites'] = ['H07-12']
+    guard.apply_schema(schema, 6)
+    assert guard.enabled.get()
+    guard.enabled.set(False)
+    view = next(v for v in app.set_views if v.title == 'LowConc PAINT R1')
+    view.variables['U-Apt_H01-11_R1'].set(True)  # Only part of a barcode bit.
+    app.destination_wells.set('B01')
+    app.desired.set('100,50,10,1,12,5')
+    with patch('picklist_app.messagebox.showerror') as error, patch(
+            'picklist_app.simpledialog.askstring', return_value='No barcode'):
+        app._make_picklist()
+        assert app.main_tabs.select() == str(app.settings_page)
+        app.generate(Mock(), Mock())
+        assert app.last_picklist
+        assert app.last_barcode_record is None
+        app._add_latest_to_storage()
+        error.assert_not_called()
+    assert len(app._storage_items()) == 1
+    assert app._storage_items()[0]['barcode_record'] is None
+    assert not guard.registry.entries
+    assert app.config['manual_barcode_enabled'] is False
+    guard.enabled.set(True)
+    with pytest.raises(ValueError):
+        guard.check_manual()
+    assert not app.last_picklist  # Mode changes invalidate the previous preview.
+
+
+def test_unused_code_enables_manual_barcode_checks(app):
+    guard = app.barcode_guard
+    assert not guard.enabled.get()
+    guard.select_unused()
+    assert guard.enabled.get()
+    assert guard.check_manual()['bits'] == '000000'

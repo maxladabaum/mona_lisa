@@ -28,6 +28,10 @@ NINE_BIT_SITES = [tuple((row, column) for row in rows)
                                         (("H07", "H09"), ("11", "09", "07")),
                                         (("H13", "H15"), ("12", "10", "08")))
                   for column in columns]
+SEVEN_BIT_SITES = NINE_BIT_SITES[:7]
+BARCODE_SCHEMA_KEYS = {6: "six_bit", 7: "seven_bit", 9: "nine_bit"}
+
+
 FIT_MODES = ("Fit with black padding", "Center crop", "Stretch")
 
 
@@ -35,7 +39,7 @@ def default_barcode_schema():
     return {"version": 1, "name": "Standard barcode sites", "always_on_sites": [],
             **{key: [{"bit": i+1, "sites": ["{}-{}".format(*site) for site in sites]}
                      for i, sites in enumerate(groups)]
-               for key, groups in (("six_bit", BIT_SITES), ("nine_bit", NINE_BIT_SITES))}}
+               for key, groups in (("six_bit", BIT_SITES), ("seven_bit", SEVEN_BIT_SITES), ("nine_bit", NINE_BIT_SITES))}}
 
 
 def validate_barcode_schema(schema, bit_count=None):
@@ -46,17 +50,17 @@ def validate_barcode_schema(schema, bit_count=None):
     """
     if not isinstance(schema, dict) or type(schema.get("version")) is not int or schema["version"] != 1:
         raise ValueError("Barcode schema must be an object with version 1.")
-    if set(schema) - {"version", "name", "six_bit", "nine_bit", "always_on_sites"}:
-        raise ValueError("Unknown barcode schema field. Use version, name, six_bit, nine_bit, or always_on_sites.")
-    if not any(key in schema for key in ("six_bit", "nine_bit")):
-        raise ValueError("Provide six_bit or nine_bit site definitions.")
+    if set(schema) - {"version", "name", "six_bit", "seven_bit", "nine_bit", "always_on_sites"}:
+        raise ValueError("Unknown barcode schema field. Use version, name, six_bit, seven_bit, nine_bit, or always_on_sites.")
+    if not any(key in schema for key in ("six_bit", "seven_bit", "nine_bit")):
+        raise ValueError("Provide six_bit, seven_bit, or nine_bit site definitions.")
     name = schema.get("name", "Custom barcode sites")
     if not isinstance(name, str) or not name.strip():
         raise ValueError("Barcode schema name must be nonempty text.")
     result = default_barcode_schema()
     result["name"] = name.strip()
     valid_sites = {"{}-{:02d}".format(row, column) for row in ROWS for column in range(7, 13)}
-    for key, count in (("six_bit", 6), ("nine_bit", 9)):
+    for key, count in (("six_bit", 6), ("seven_bit", 7), ("nine_bit", 9)):
         if key not in schema:
             continue
         groups = schema[key]
@@ -73,7 +77,10 @@ def validate_barcode_schema(schema, bit_count=None):
                 raise ValueError("Each barcode bit must have at least one site.")
             for site in sites:
                 if not isinstance(site, str) or site not in valid_sites:
-                    raise ValueError("Barcode sites must use H01/H03/…/H15 and rows 12–07, for example H01-11.")
+                    raise ValueError("Barcode site {!r} is outside the supported RGB barcode region. "
+                                     "Digital bits must use template columns C7–C12 and rows R1–R8 "
+                                     "(H01/H03/…/H15, for example H01-11). Template columns C1–C6 "
+                                     "are currently reserved for image pixels.".format(site))
                 if site in used:
                     raise ValueError("Barcode site {} is assigned more than once in {}.".format(site, key))
                 used.add(site)
@@ -85,9 +92,9 @@ def validate_barcode_schema(schema, bit_count=None):
         raise ValueError("always_on_sites must list valid H01/H03/…/H15 sites on rows 01–12.")
     if len(always_on) != len(set(always_on)):
         raise ValueError("Each always-on site must appear only once.")
-    if bit_count not in (None, 6, 9):
-        raise ValueError("Barcode bit count must be 6 or 9.")
-    for key in (() if bit_count is None else ("nine_bit" if bit_count == 9 else "six_bit",)):
+    if bit_count not in (None, 6, 7, 9):
+        raise ValueError("Barcode bit count must be 6, 7, or 9.")
+    for key in (() if bit_count is None else (BARCODE_SCHEMA_KEYS[bit_count],)):
         occupied = {site for bit in result[key] for site in bit["sites"]}
         overlap = occupied.intersection(always_on)
         if overlap:
@@ -96,19 +103,19 @@ def validate_barcode_schema(schema, bit_count=None):
     return result
 
 
-def fiducial_sites(schema=None, active_image_columns=None, bit_count=None):
-    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count)
+def fiducial_sites(schema=None, active_image_columns=None, bit_count=None, *, validate_overlaps=True):
+    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count if validate_overlaps else None)
     sites = [tuple(site.split("-")) for site in value["always_on_sites"]]
     overlap = ["-".join(site) for site in sites if site[1] in active_columns(active_image_columns)]
-    if overlap:
+    if overlap and validate_overlaps:
         raise ValueError("Always-on sites overlap the active analog canvas: {}. Exclude their analog rows first.".format(", ".join(overlap)))
     return sites
 
 
-def barcode_site_groups(bit_count, schema=None):
-    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count)
+def barcode_site_groups(bit_count, schema=None, *, validate_overlaps=True):
+    value = default_barcode_schema() if schema is None else validate_barcode_schema(schema, bit_count if validate_overlaps else None)
     return [[tuple(site.split("-")) for site in bit["sites"]]
-            for bit in value["nine_bit" if bit_count == 9 else "six_bit"]]
+            for bit in value[BARCODE_SCHEMA_KEYS[bit_count]]]
 
 
 def active_columns(columns=None):
@@ -166,7 +173,7 @@ class EncodingScheme:
 
     @property
     def bit_sites(self):
-        return NINE_BIT_SITES if self.bit_count == 9 else BIT_SITES
+        return {6: BIT_SITES, 7: SEVEN_BIT_SITES, 9: NINE_BIT_SITES}[self.bit_count]
 
     @property
     def design_count(self):
@@ -231,10 +238,12 @@ for _parent in (DEFAULT_SCHEME, 'joint_6x3', 'joint_7x3', 'joint_5x4'):
                     parent_scheme=_parent, tiles_x=_nx, tiles_y=_ny)
 
 SWEEP_SCHEMES = {**TILING_SCHEMES, **JOINT_TILING_SCHEMES}
-# Direct tile-count layouts use one origami per color per tile. The four
-# position bits encode up to 16 tiles while preserving the original color bits.
+# Direct tile-count layouts use one origami per color per tile. Larger layouts
+# use the nine-bit family to preserve unique positions and the original color bits.
+MAX_TILES_PER_COLOR = 128
+MAX_SEVEN_BIT_TILES = (1 << 7) // len(CHANNELS)
 TILE_COUNT_SCHEMES = {}
-for _count in range(1, 17):
+for _count in range(1, MAX_TILES_PER_COLOR + 1):
     for _columns in range(1, _count + 1):
         if _count % _columns:
             continue
@@ -242,10 +251,46 @@ for _count in range(1, 17):
         _key = "tiles_{}x{}".format(_columns, _rows)
         TILE_COUNT_SCHEMES[_key] = EncodingScheme(
             "{} tiles · {}×{} grid · {} RGB runs".format(_count, _columns, _rows, 3 * _count),
-            _columns, _rows, joint=False, tiled=(_count > 1),
+            _columns, _rows, joint=False, bit_count=6 if _count <= 16 else 9, tiled=(_count > 1),
             tiles_x=_columns, tiles_y=_rows, position_codebook=True)
 
-SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES, **TILE_COUNT_SCHEMES}
+# Seven-bit joint codes cover all three colors without reserving color bits.
+SEVEN_BIT_TILE_SCHEMES = {
+    "seven_" + key: EncodingScheme(
+        "7-bit joint · {} tiles · {}×{} grid · {} RGB runs".format(
+            scheme.tile_count, scheme.tile_columns, scheme.tile_rows, scheme.design_count),
+        scheme.x_states, scheme.y_states, joint=True, bit_count=7,
+        tiled=scheme.tiled, tiles_x=scheme.tile_columns, tiles_y=scheme.tile_rows)
+    for key, scheme in TILE_COUNT_SCHEMES.items()
+    if scheme.tile_count <= MAX_SEVEN_BIT_TILES
+}
+
+SIX_BIT_JOINT_TILE_SCHEMES = {
+    "six_joint_" + key: EncodingScheme(
+        "6-bit joint · " + scheme.label, scheme.x_states, scheme.y_states,
+        joint=True, bit_count=6, tiled=True,
+        tiles_x=scheme.tile_columns, tiles_y=scheme.tile_rows)
+    for key, scheme in TILE_COUNT_SCHEMES.items() if 16 < scheme.tile_count <= 21
+}
+
+NINE_BIT_SMALL_TILE_SCHEMES = {
+    "nine_" + key: EncodingScheme(
+        "9-bit fixed · " + scheme.label, scheme.x_states, scheme.y_states,
+        joint=False, bit_count=9, tiled=scheme.tiled,
+        tiles_x=scheme.tile_columns, tiles_y=scheme.tile_rows, position_codebook=True)
+    for key, scheme in TILE_COUNT_SCHEMES.items() if scheme.bit_count == 6
+}
+
+SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES, **TILE_COUNT_SCHEMES, **SEVEN_BIT_TILE_SCHEMES, **NINE_BIT_SMALL_TILE_SCHEMES, **SIX_BIT_JOINT_TILE_SCHEMES}
+
+def schemes_for_bits(bit_count):
+    return {key: scheme for key, scheme in SELECTABLE_SCHEMES.items() if scheme.bit_count == bit_count}
+
+
+def direct_tile_schemes(bit_count):
+    return {key: scheme for key, scheme in schemes_for_bits(bit_count).items()
+            if scheme.x_states == scheme.tile_columns and scheme.y_states == scheme.tile_rows}
+
 
 def encoding_scheme(scheme_id=DEFAULT_SCHEME):
     try:
@@ -260,7 +305,7 @@ def barcode_bits(color, x_shift, y_shift, scheme_id=DEFAULT_SCHEME):
         raise ValueError("Color or shift is outside the selected encoding scheme.")
     if scheme.position_codebook:
         code = y_shift * scheme.x_states + x_shift
-        return list(map(int, COLOR_BITS[color])) + [(code >> bit) & 1 for bit in range(3, -1, -1)]
+        return list(map(int, COLOR_BITS[color])) + [(code >> bit) & 1 for bit in range(scheme.bit_count - 3, -1, -1)]
     if scheme.tiled and not scheme.joint:
         position = placement(scheme, x_shift, y_shift)
         bits = list(map(int, COLOR_BITS[color]))
@@ -411,11 +456,11 @@ def placement(scheme, x, y, active_image_columns=None):
             "y_shift_nm": y*EXTENSION_ROW_SPACING_NM/scheme.y_states}
 
 
-def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=None, barcode_schema=None):
+def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=None, barcode_schema=None, *, validate_overlaps=True):
     scheme = encoding_scheme(scheme_id)
-    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema)
+    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema, validate_overlaps=validate_overlaps)
     columns = active_columns(active_image_columns)
-    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count)
+    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count, validate_overlaps=validate_overlaps)
     span = canvas_span(columns)
     width, height = len(columns) * scheme.x_states, 8 * scheme.y_states
     pixel_x, pixel_y = EXTENSION_COLUMN_SPACING_NM / scheme.x_counts[0], EXTENSION_ROW_SPACING_NM / scheme.y_counts[0]
@@ -489,7 +534,7 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=
                                 "pixel_pitch_x_nm":9.9/nx,"pixel_pitch_y_nm":5.1/ny,
                                 "normalization_weight":scheme.x_states*scheme.y_states/(scheme.tile_count*nx*ny)}
                                for qy,ny in enumerate(scheme.y_counts) for qx,nx in enumerate(scheme.x_counts)],
-            bit_meaning="Joint six-bit codebook identifies color, quadrant and local XY shift." if scheme.joint else
+            bit_meaning="Joint {}-bit codebook identifies color, quadrant and local XY shift.".format(scheme.bit_count) if scheme.joint else
                         "bits 1–2 color; then tile Y ({} bits), tile X ({} bits), local X ({} bits), local Y ({} bits)".format(
                             (scheme.tile_rows-1).bit_length(), (scheme.tile_columns-1).bit_length(),
                             (scheme.x_counts[0]-1).bit_length(), (scheme.y_counts[0]-1).bit_length()),
@@ -505,8 +550,8 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=
             result["shift_state_bits"] = {str(index): list(bits) for index, bits in enumerate(SHIFT_STATES.values())}
     if scheme.position_codebook:
         result.update(encoding_mode="fixed_color_position_codebook",
-                      code_formula="color_code * 16 + y_shift * x_states + x_shift",
-                      bit_meaning="Bits 1–2 retain the original color codes; bits 3–6 jointly identify tile and local XY shift.")
+                      code_formula="color_code * {} + y_shift * x_states + x_shift".format(1 << (scheme.bit_count - 2)),
+                      bit_meaning="Bits 1–2 retain the original color codes; bits 3–{} jointly identify tile and local XY shift.".format(scheme.bit_count))
         result.pop('x_shift_bits', None)
         result.pop('y_shift_bits', None)
     return result
@@ -528,6 +573,41 @@ def bin_quadrants(fitted, scheme, rotation_degrees, linear_light):
                 result[y0:y0+8*ny,x0:x0+6*nx,c] = np.asarray(plane.resize((6*nx,8*ny),Image.Resampling.BOX))
     return np.asarray(display_rgb(result,True)).tolist() if linear_light else np.rint(result).astype(int).tolist()
 
+
+
+def usable_pixel_score(scheme_id, image_size=(1, 1), fit_mode=FIT_MODES[0], active_image_columns=None):
+    """Estimate image-bearing samples after padding, using the best orientation.
+
+    Counts RGB locations once, excluding estimated padding area. This is a
+    layout-capacity estimate, not a threshold on naturally black image content.
+    Uneven local sampling is approximated by its average density.
+    """
+    scheme = encoding_scheme(scheme_id)
+    columns = active_columns(active_image_columns)
+    samples = len(columns) * scheme.x_states * 8 * scheme.y_states
+    if fit_mode != FIT_MODES[0]:
+        return float(samples)
+    image_aspect = image_size[0] / image_size[1]
+    field_aspect = (canvas_span(columns) * EXTENSION_COLUMN_SPACING_NM * scheme.tile_columns
+                    / (8 * EXTENSION_ROW_SPACING_NM * scheme.tile_rows))
+    coverage = max(min(aspect / image_aspect, image_aspect / aspect)
+                   for aspect in (field_aspect, 1 / field_aspect))
+    return samples * coverage
+
+
+def scheme_pixel_summary(scheme_id, image_size=(1, 1), fit_mode=FIT_MODES[0], active_image_columns=None):
+    scheme = encoding_scheme(scheme_id)
+    width = len(active_columns(active_image_columns)) * scheme.x_states
+    height = 8 * scheme.y_states
+    usable = usable_pixel_score(scheme_id, image_size, fit_mode, active_image_columns)
+    return "≈{:,} usable / {:,} total RGB pixels ({}×{}) · {} runs".format(
+        round(usable), width * height, width, height, scheme.design_count)
+
+
+def ranked_schemes(scheme_ids=None, image_size=(1, 1), fit_mode=FIT_MODES[0], active_image_columns=None):
+    """Most usable image samples first; preserve existing order for ties."""
+    return sorted(SELECTABLE_SCHEMES if scheme_ids is None else scheme_ids,
+                  key=lambda key: -round(usable_pixel_score(key, image_size, fit_mode, active_image_columns), 8))
 
 
 def best_rotation(image_size, scheme_id, active_image_columns=None):
@@ -678,12 +758,12 @@ def set_site_fraction(design, site, fraction):
 def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, rotation_degrees=0, linear_light=False, *,
                     plate_defaults_nm=None, base_desired_concentration_nm=50.0,
                     base_concentration_nm=200000.0, source_concentrations_nm=None, plate_relative_transfers=False, active_image_columns=None, barcode_schema=None,
-                    minimum_transfer_nl=25.0, transfer_increment_nl=25.0):
+                    minimum_transfer_nl=25.0, transfer_increment_nl=25.0, validate_overlaps=True):
     """Deinterleave each RGB channel using the selected barcode codebook."""
     scheme = encoding_scheme(scheme_id)
-    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema)
+    bit_sites = barcode_site_groups(scheme.bit_count, barcode_schema, validate_overlaps=validate_overlaps)
     columns = active_columns(active_image_columns)
-    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count)
+    permanent_sites = fiducial_sites(barcode_schema, columns, scheme.bit_count, validate_overlaps=validate_overlaps)
     width, height = len(columns) * scheme.x_states, 8 * scheme.y_states
     pixel_x, pixel_y = EXTENSION_COLUMN_SPACING_NM / scheme.x_counts[0], EXTENSION_ROW_SPACING_NM / scheme.y_counts[0]
     if len(pixels) != height or any(len(row) != width for row in pixels):
@@ -693,7 +773,7 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
             if len(pixel) != 3 or any(not isinstance(value, int) or not 0 <= value <= 255 for value in pixel):
                 raise ValueError("Each pixel must have three integer RGB values from 0 to 255.")
     rotate_point(0, 0, 0, 0, rotation_degrees)
-    info = geometry(scheme_id,rotation_degrees,columns,barcode_schema)
+    info = geometry(scheme_id,rotation_degrees,columns,barcode_schema, validate_overlaps=validate_overlaps)
     from color_light import srgb_to_linear
     intensity_lut = srgb_to_linear([v/255 for v in range(256)]) if linear_light else [v/255 for v in range(256)]
     replacement_fractions(base_volume, minimum_transfer_nl=minimum_transfer_nl, transfer_increment_nl=transfer_increment_nl)  # Validate the shared base droplet volume independently.
@@ -796,6 +876,12 @@ def selection_panel(design):
 
 def prepare_runs(designs, base_path, sources, available_wells, settings, mixing, source_concentrations_nm=None, biotin_source=None, biotin_target_nm=None):
     """Allocate separate wells and validate every recipe before returning any runs."""
+    for design in designs:
+        permanent = {tuple(site) for site in design.get("always_on_sites", [])}
+        barcode = {tuple(site) for group in design.get("barcode_sites", []) for site in group}
+        analog = {(site["row"], site["column"]) for site in design.get("image_sites", [])}
+        if permanent & (barcode | analog):
+            raise ValueError("Always-on sites overlap barcode bits or the active analog canvas. Update the barcode layout before preparing runs.")
     source_concentrations_nm = source_concentrations_nm or {}
     remaining = list(available_wells)
     if len(set(remaining)) != len(remaining):

@@ -1,0 +1,382 @@
+{
+  "format": "paint-analysis-origami-template-v1",
+  "description": "Bright expected localization sites on a dark background.",
+  "image_mirrored_x": true,
+  "logical_site_column_order": "canonical-c1-to-cn",
+  "image_column_order": "cn-to-c1",
+  "rows": 8,
+  "columns": 12,
+  "column_offsets_nm": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0,
+    10.0
+  ],
+  "spacing_x_nm": 9.9,
+  "spacing_y_nm": 5.1,
+  "margin_nm": 20.0,
+  "spot_sigma_nm": 1.5,
+  "width_nm": 158.9,
+  "height_nm": 75.69999999999999,
+  "width_px": 500,
+  "height_px": 238,
+  "pixel_size_x_nm": 0.318436873747495,
+  "pixel_size_y_nm": 0.3194092827004219,
+  "selected_site_count": 14,
+  "selected_sites": [
+    {
+      "site": 8,
+      "row": 1,
+      "column": 8,
+      "x_nm": 59.60000000000001,
+      "y_nm_from_top": 20.0
+    },
+    {
+      "site": 10,
+      "row": 1,
+      "column": 10,
+      "x_nm": 39.8,
+      "y_nm_from_top": 20.0
+    },
+    {
+      "site": 12,
+      "row": 1,
+      "column": 12,
+      "x_nm": 20.0,
+      "y_nm_from_top": 20.0
+    },
+    {
+      "site": 20,
+      "row": 2,
+      "column": 8,
+      "x_nm": 59.60000000000001,
+      "y_nm_from_top": 25.1
+    },
+    {
+      "site": 22,
+      "row": 2,
+      "column": 10,
+      "x_nm": 39.8,
+      "y_nm_from_top": 25.1
+    },
+    {
+      "site": 24,
+      "row": 2,
+      "column": 12,
+      "x_nm": 20.0,
+      "y_nm_from_top": 25.1
+    },
+    {
+      "site": 37,
+      "row": 4,
+      "column": 1,
+      "x_nm": 138.9,
+      "y_nm_from_top": 35.3
+    },
+    {
+      "site": 45,
+      "row": 4,
+      "column": 9,
+      "x_nm": 49.7,
+      "y_nm_from_top": 35.3
+    },
+    {
+      "site": 49,
+      "row": 5,
+      "column": 1,
+      "x_nm": 138.9,
+      "y_nm_from_top": 40.4
+    },
+    {
+      "site": 57,
+      "row": 5,
+      "column": 9,
+      "x_nm": 49.7,
+      "y_nm_from_top": 40.4
+    },
+    {
+      "site": 82,
+      "row": 7,
+      "column": 10,
+      "x_nm": 39.8,
+      "y_nm_from_top": 50.599999999999994
+    },
+    {
+      "site": 84,
+      "row": 7,
+      "column": 12,
+      "x_nm": 20.0,
+      "y_nm_from_top": 50.599999999999994
+    },
+    {
+      "site": 94,
+      "row": 8,
+      "column": 10,
+      "x_nm": 39.8,
+      "y_nm_from_top": 55.699999999999996
+    },
+    {
+      "site": 96,
+      "row": 8,
+      "column": 12,
+      "x_nm": 20.0,
+      "y_nm_from_top": 55.699999999999996
+    }
+  ],
+  "logical_model": {
+    "format": "paint-analysis-logical-bits-v1",
+    "description": "User-defined digital bit groups.",
+    "overlap_semantics": "physical-site-union",
+    "physical_rows": 8,
+    "physical_columns": 12,
+    "alignment_groups": [
+      {
+        "id": "fiducials",
+        "label": "Permanent fiducials",
+        "physical_sites": [
+          [
+            1,
+            12
+          ],
+          [
+            2,
+            12
+          ],
+          [
+            4,
+            1
+          ],
+          [
+            5,
+            1
+          ],
+          [
+            7,
+            12
+          ],
+          [
+            8,
+            12
+          ]
+        ],
+        "display_color": "#00c8ff"
+      }
+    ],
+    "dark_groups": [],
+    "logical_bits": [
+      {
+        "id": "bit_1",
+        "label": "Bit 1",
+        "physical_sites": [
+          [
+            4,
+            11
+          ],
+          [
+            5,
+            11
+          ]
+        ],
+        "display_color": "#ff5a5f",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            4,
+            11
+          ],
+          [
+            5,
+            11
+          ]
+        ]
+      },
+      {
+        "id": "bit_2",
+        "label": "Bit 2",
+        "physical_sites": [
+          [
+            1,
+            10
+          ],
+          [
+            2,
+            10
+          ]
+        ],
+        "display_color": "#55d66b",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            1,
+            10
+          ],
+          [
+            2,
+            10
+          ]
+        ]
+      },
+      {
+        "id": "bit_3",
+        "label": "Bit 3",
+        "physical_sites": [
+          [
+            7,
+            10
+          ],
+          [
+            8,
+            10
+          ]
+        ],
+        "display_color": "#ffb000",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            7,
+            10
+          ],
+          [
+            8,
+            10
+          ]
+        ]
+      },
+      {
+        "id": "bit_4",
+        "label": "Bit 4",
+        "physical_sites": [
+          [
+            4,
+            9
+          ],
+          [
+            5,
+            9
+          ]
+        ],
+        "display_color": "#b77cff",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            4,
+            9
+          ],
+          [
+            5,
+            9
+          ]
+        ]
+      },
+      {
+        "id": "bit_5",
+        "label": "Bit 5",
+        "physical_sites": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ]
+        ],
+        "display_color": "#ff70c8",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ]
+        ]
+      },
+      {
+        "id": "bit_6",
+        "label": "Bit 6",
+        "physical_sites": [
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            8
+          ]
+        ],
+        "display_color": "#00d7b5",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            8
+          ]
+        ]
+      },
+      {
+        "id": "bit_7",
+        "label": "Bit 7",
+        "physical_sites": [
+          [
+            4,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ],
+        "display_color": "#d8d84a",
+        "brightness_factor": 1.0,
+        "evidence_sites": [
+          [
+            4,
+            7
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      }
+    ],
+    "spacing_x_nm": 9.9,
+    "spacing_y_nm": 5.1,
+    "column_offsets_nm": [
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0,
+      10.0
+    ],
+    "active_logical_bits": [
+      "bit_2",
+      "bit_3",
+      "bit_4",
+      "bit_5"
+    ]
+  },
+  "png_channels": "RGB group colors"
+}

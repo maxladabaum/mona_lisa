@@ -177,6 +177,15 @@ already recorded as used is rejected. The override does not change normal
 unused-well behavior on the next launch. Use **Start fresh plate** on the
 Destination Plate tab to clear all recorded usage for the currently named
 plate after confirmation. Existing output folders are retained.
+Starting fresh also releases existing stored-run destination-well reservations
+for that plate name, including in the RGB manual picker. Stored runs and export
+files remain intact; new runs on the fresh plate reserve their wells normally.
+Prepared RGB runs targeting that plate are invalidated and must be prepared again.
+Barcode reservations are separate: **Experiment / pool** in RGB run settings
+identifies samples decoded together, across plates. Use a new name for an
+independent decoding experiment. A fresh destination plate does not release
+barcode reservations or change the pool. Barcode compatibility is checked
+before the destination-well picker opens.
 
 ## Workflow
 
@@ -378,17 +387,44 @@ run or cleared; red shows bits 1 and 2, blue shows bit 1, and green shows neithe
 are included in the selection metadata saved with runs. Existing compatibility
 checks still apply to overlapping replacement sites across enabled tabs.
 
-### RGB images → selectable six-bit encoding
+### RGB images → selectable six-, seven-, and nine-bit encoding
 
-Open **7. RGB Image** and set **Tiles per color** to **1–16**. Each tile
+Open **7. RGB Image** and choose **Barcode bits** first: **6**, **7**, or **9**,
+matching the number of Digital bit groups in your schema. Encoding schemes and
+tile counts are restricted to that bit count; choosing a tile count never
+silently increases it. Applying a visual template selects its bit count.
+The saved scheme restores the matching bit count on the next launch.
+Then set **Tiles per color** (up to 21 with six bits, 42 with seven bits,
+or 128 with nine bits). Each tile
 uses one red, green, and blue design, so 4 tiles produce 12 runs and 16 tiles
-produce 48 runs. **Grid (columns × rows)** selects the rectangular arrangement.
+produce 48 runs. A 6×6 grid has 36 tiles per color and produces 108 runs. **Grid (columns × rows)** selects the rectangular arrangement.
+Each encoding choice shows estimated usable pixels, total RGB pixels, sampling
+dimensions, and run count. The selected layout repeats these counts beneath the
+controls. Each RGB pixel is counted once, not three times for its color channels.
+
+Encoding schemes and grid choices are ordered by estimated usable RGB pixel
+locations, highest first. The ranking uses the uploaded image's aspect ratio,
+the active canvas, and the best origami orientation for each layout. With black
+padding, it discounts the padded area; crop and stretch use the full sampling
+grid. Before upload, a square image is assumed. Naturally black image content
+is not discarded by this capacity estimate, and uneven sampling uses average
+density. Selecting a scheme still uses its existing automatic orientation.
+
 Changing either control rebuilds the image preview and invalidates prepared runs;
 the selected layout is remembered across launches. The original color bits are
-preserved, and the four position bits identify the tiles.
+preserved in six-bit layouts. Seven-bit schemes use a joint color/tile codebook. For 6×6, codes 0–35 are red, 36–71 green, and 72–107 blue;
+within each color, tiles run left to right, then top to bottom. All seven bits
+encode the combined identity; none are reserved as fixed color bits. Existing
+nine-bit layouts remain available and saved layouts keep their original encoding.
+For 43–128 tiles, select nine-bit barcodes first: two color bits plus seven tile
+position bits. Every rectangular factorization of the selected count is available.
+At 128 tiles per color, the default grid is 16×8 with 384 RGB runs. A 384-well
+plate can hold that batch only when each run fits in one destination well.
+A seven-bit template applied to a direct tile layout automatically switches it
+to the matching seven-bit joint scheme.
 
 To create or edit the RGB barcode **visually**, click **Edit in Origami Templates…**
-in RGB Image. This loads the current six- or nine-bit mapping into the existing
+in RGB Image. This loads the current six-, seven-, or nine-bit mapping into the existing
 Origami Templates editor. Select a group, change its selected lattice sites, and
 click **Update group**. Use **Digital bit** groups named **Bit 1**, **Bit 2**, etc.
 for barcode bits; use **Alignment-only** groups for permanent fiducials.
@@ -397,7 +433,7 @@ Click **Apply to RGB Image** in the Templates tab when ready. You can also use
 
 Keep an **8-row × 12-column** physical grid: template **R1–R8** map to
 **H01,H03,…,H15**, and **C1–C12** map directly to physical **01–12** even though
-the display mirrors the columns. Use exactly six or nine digital groups, matching
+the display mirrors the columns. Use exactly six, seven, or nine digital groups, matching
 the selected RGB scheme. Numbered Bit labels preserve ordering after edits;
 legacy schemas with entirely unnumbered labels use their logical-bit list order.
 Template bit ON/OFF checkboxes are preview choices; the RGB encoding determines
@@ -693,7 +729,8 @@ Use the controls in **RGB Image** to configure the base plate, hinge type,
 destination plate, capacity, synthesis volume, and concentration targets. RGB ignores all manual run and
 mixing fields. Its editable recipe defaults to 100 µL, 10 nM scaffold, 1× TE,
 12 mM Mg, and 5 mM Na, with independent book-base and RGB targets. **Prepare N runs**
-allocates unused wells at or after the indicated starting well, skipping wells
+opens a destination assignment popup. Choose **Assign automatically** to allocate
+unused wells at or after the indicated starting well, skipping wells
 already recorded or reserved by stored runs. A design can span multiple wells;
 no well is shared between designs. Well counts depend on the 25 nL base transfer
 default, each color’s plate target, stock concentrations, image fractions, and
@@ -701,6 +738,13 @@ capacity. Preparation validates all picklists and recipes before changing storag
 or plate usage.
 Changing image, fit, volumes, source sheets, or run settings invalidates a
 prepared batch and requires preparation again.
+Choose **Assign manually** to click wells on a 384-well destination plate. Each
+click assigns the next run well; the popup shows the run name and numbers selected
+wells in assignment order. Occupied wells are unavailable. Hover over a selected
+well to review its run, click it again to remove it, or use **Undo last** /
+**Clear selection**. Runs that span multiple wells receive a separate selection
+for each well. Click **Use selected wells** after assigning all required wells.
+Cancelling leaves any previously prepared batch intact.
 
 **Save image batch** creates a dated folder with the complete batch.
 
@@ -1236,9 +1280,16 @@ in this tab so the displayed source matches the inventory-backed selection.
 
 ## Shared barcode registry for RGB and manual runs
 
+Replacements do not require a barcode. **Use barcodes for replacements** is off
+by default and remembers your choice. Leave it off for unrestricted manual
+designs: no bit/fiducial checks or barcode reservations are applied. RGB barcode
+protection remains active independently.
+
 **Replacements → Barcode collision protection** loads a barcode/fiducial schema
 with **Load schema…** (RGB schema JSON or template logical-bit JSON) or **Use RGB
-schema**. Choose the matching six- or nine-bit family. The **Experiment / pool**
+schema**. Loading a schema, using the RGB schema, or successfully selecting an
+unused code enables manual barcode protection. You can turn it off again without
+changing your selections. Choose the matching six-, seven-, or nine-bit family. The **Experiment / pool**
 name is shared with RGB Image; use the same name for all designs that will be
 pooled or decoded together. Changing destination wells does not make a barcode
 unique.
@@ -1251,7 +1302,7 @@ code to the chosen source tab, replacing only schema-controlled selections and
 preserving other image-site selections. Six bits provide 64 combinations; nine
 provide 512. Exhaustion is reported rather than reusing a reserved code.
 
-RGB preparation and manual picklist generation reject reserved codes. Saving or
+RGB preparation and barcode-enabled manual picklist generation reject reserved codes. Saving or
 storing either workflow rechecks and reserves its codes; recipe-only export does
 not reserve codes. Codes from existing RGB storage are registered automatically
 on startup in their saved experiment (or `Default` for older runs). Old manual

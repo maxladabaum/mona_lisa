@@ -1,4 +1,5 @@
 """Persistent reservations for origami codes within a decoding experiment."""
+from image_encoding import BARCODE_SCHEMA_KEYS
 from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
@@ -22,7 +23,7 @@ def location(name):
 
 def layout(schema, count):
     schema = validate_barcode_schema(schema, count)
-    return [group['sites'] for group in schema['nine_bit' if count == 9 else 'six_bit']]
+    return [group['sites'] for group in schema[BARCODE_SCHEMA_KEYS[count]]]
 
 
 def decode(schema, count, fractions):
@@ -63,7 +64,7 @@ def from_rgb(run, experiment):
     count = len(design['barcode_sites'])
     schema = default_barcode_schema()
     schema['name'] = 'RGB design barcode schema'
-    schema['nine_bit' if count == 9 else 'six_bit'] = [
+    schema[BARCODE_SCHEMA_KEYS[count]] = [
         dict(bit=i+1, sites=['-'.join(site) for site in group]) for i, group in enumerate(design['barcode_sites'])]
     schema['always_on_sites'] = ['-'.join(site) for site in design.get('always_on_sites', [])]
     fractions = {location(name): value for name, value in design['site_fractions'].items() if location(name)}
@@ -97,7 +98,7 @@ class BarcodeRegistry:
                 continue
             description = '{} · {} {}'.format(entry['run_name'], entry['destination_plate_name'], ', '.join(entry['destination_wells']))
             if entry['layout_key'] != candidate['layout_key']:
-                raise ValueError('Incompatible barcode layouts in this experiment: {}. Use the same decoding schema; a different schema is not proof of uniqueness.'.format(description))
+                raise ValueError('Incompatible barcode layouts in experiment {!r}: {}. For a separately decoded batch, enter a new Experiment / pool name in RGB run settings. Samples pooled together must use the same decoding schema. Starting a fresh destination plate does not reset barcode reservations.'.format(candidate['experiment'], description))
             if entry['on_sites'] == candidate['on_sites']:
                 raise ValueError('Already used: code {} conflicts with {}.'.format(candidate['bits'], description))
 

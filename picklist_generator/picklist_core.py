@@ -90,7 +90,12 @@ def replacement_fractions(
                      droplets * (1-fraction) * transfer_increment_nl,
                      droplets * fraction * concentration_ratio * transfer_increment_nl))]
     if not fractions:
-        raise ValueError("Target and stock concentrations do not allow transfers with minimum {:g} nL and {:g} nL increments.".format(minimum_transfer_nl, transfer_increment_nl))
+        raise ValueError(
+            "No valid replacement split: the requested target requires {:g} nL at 0% replacement "
+            "or {:g} nL at 100% replacement. Every nonzero transfer must be at least {:g} nL "
+            "AND a multiple of {:g} nL. Adjust the final volume, site target, or stock concentration.".format(
+                droplets * transfer_increment_nl, droplets * concentration_ratio * transfer_increment_nl,
+                minimum_transfer_nl, transfer_increment_nl))
     return fractions
 
 

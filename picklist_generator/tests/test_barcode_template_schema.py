@@ -5,7 +5,7 @@ from PIL import Image
 from barcode_template_schema import from_template, to_template
 from image_encoding import default_barcode_schema, site_name
 
-@pytest.mark.parametrize('count', [6,9])
+@pytest.mark.parametrize('count', [6,7,9])
 def test_round_trip_and_coordinates(count):
     original=default_barcode_schema()
     original['always_on_sites']=['H07-12','H09-12']
@@ -16,7 +16,7 @@ def test_round_trip_and_coordinates(count):
     model['logical_bits'].reverse()
     result, actual=from_template({'logical_model':model},original)
     assert actual==count
-    for key in ('six_bit','nine_bit','always_on_sites'): assert result[key]==original[key]
+    for key in ('six_bit','seven_bit','nine_bit','always_on_sites'): assert result[key]==original[key]
 
 def test_invalid_templates():
     model=to_template(default_barcode_schema(),6)
@@ -25,7 +25,7 @@ def test_invalid_templates():
     bad=deepcopy(model); bad['logical_bits'][0]['label']='other'
     with pytest.raises(ValueError,match='Name every'): from_template(bad)
     bad=deepcopy(model); bad['logical_bits'].pop()
-    with pytest.raises(ValueError,match='exactly 6 or 9'): from_template(bad)
+    with pytest.raises(ValueError,match='exactly 6, 7, or 9'): from_template(bad)
 
 def test_visual_edit_apply_and_saved_file(tmp_path,monkeypatch):
     import picklist_app

@@ -18,7 +18,7 @@ def test_tile_count_codebook_and_image_coverage(key):
     assert len({d['barcode_code'] for d in designs}) == len(designs)
     seen = set()
     for design in designs:
-        assert len(design['bits']) == 6
+        assert len(design['bits']) == (6 if scheme.tile_count <= 16 else 9)
         assert design['bits'][:2] == list(COLOR_BITS[design['color']])
         for site in design['image_sites']:
             identity = (design['channel'], site['pixel_x'], site['pixel_y'])
@@ -26,6 +26,16 @@ def test_tile_count_codebook_and_image_coverage(key):
             seen.add(identity)
     assert len(seen) == info['columns'] * info['rows'] * 3
     assert reconstruct(designs) == pixels
+
+
+def test_six_by_six_capacity_and_barcode_metadata():
+    scheme = TILE_COUNT_SCHEMES['tiles_6x6']
+    info = geometry('tiles_6x6')
+    assert scheme.tile_count == 36
+    assert scheme.design_count == 108
+    assert scheme.bit_count == 9
+    assert max(s.tile_count for s in TILE_COUNT_SCHEMES.values()) == 128
+    assert info['code_formula'] == 'color_code * 128 + y_shift * x_states + x_shift'
 
 
 def test_controls_rebuild_prepare_invalidate_and_restore(tmp_path, monkeypatch):
@@ -49,6 +59,24 @@ def test_controls_rebuild_prepare_invalidate_and_restore(tmp_path, monkeypatch):
             assert len(view.designs) == 12
             view._prepare()
             assert len(view.runs) == 12
+            view.barcode_bit_count.set('7')
+            view._bit_count_changed()
+            view.tile_count.set('36')
+            view._tile_count_changed()
+            assert view._scheme_id() == 'seven_tiles_6x6'
+            assert len(view.designs) == 108
+            assert not view.runs
+            view._prepare()
+            assert len(view.runs) == 108
+            view.barcode_bit_count.set('9')
+            view._bit_count_changed()
+            view.tile_count.set('128')
+            view._tile_count_changed()
+            assert view._scheme_id() == 'tiles_16x8'
+            assert len(view.designs) == 384
+            assert not view.runs
+            view.barcode_bit_count.set('6')
+            view._bit_count_changed()
             view.tile_count.set('3')
             view._tile_count_changed()
             assert len(view.designs) == 9
@@ -69,6 +97,9 @@ def test_controls_rebuild_prepare_invalidate_and_restore(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('saved_scheme, count, layout, runs', [
     ('sweep_fixed_4x4_tiles_4x4', '16', '2 × 8', 48),
+    ('tiles_6x6', '36', '4 × 9', 108),
+    ('tiles_16x8', '128', '8 × 16', 384),
+    ('tiles_5x5', '25', '5 × 5', 75),
     ('quadrants_2x2', 'Use encoding scheme', '1 × 4', 48),
 ])
 def test_saved_layout_grid_dropdown_events(tmp_path, monkeypatch, saved_scheme, count, layout, runs):

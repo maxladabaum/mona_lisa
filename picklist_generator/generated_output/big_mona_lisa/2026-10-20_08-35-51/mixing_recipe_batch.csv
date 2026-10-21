@@ -1,0 +1,721 @@
+Run,Destination Plate,Destination Wells,Reagent,Volume_uL
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,Scaffold,0.25
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,10X TE,3.6875000000000004
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,Mg (100 mM),6.0
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,Na (100 mM),2.5
+R1_R_5x8_Q0_X0_Y0,Destination[1],A01,DI Water,24.4625
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,Scaffold,0.25
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,10X TE,3.6875000000000004
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,Mg (100 mM),6.0
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,Na (100 mM),2.5
+R1_R_5x8_Q1_X0_Y0,Destination[1],A03,DI Water,24.4625
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,Scaffold,0.25
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,10X TE,3.6875000000000004
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,Mg (100 mM),6.0
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,Na (100 mM),2.5
+R1_R_5x8_Q2_X0_Y0,Destination[1],A05,DI Water,24.4625
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,Scaffold,0.25
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,10X TE,3.6875000000000004
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,Mg (100 mM),6.0
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,Na (100 mM),2.5
+R1_R_5x8_Q3_X0_Y0,Destination[1],A07,DI Water,24.4625
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,Scaffold,0.25
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,10X TE,3.6875000000000004
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,Mg (100 mM),6.0
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,Na (100 mM),2.5
+R1_R_5x8_Q4_X0_Y0,Destination[1],A09,DI Water,24.4625
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,Scaffold,0.25
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,10X TE,3.6875000000000004
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,Mg (100 mM),6.0
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,Na (100 mM),2.5
+R1_R_5x8_Q5_X0_Y0,Destination[1],A11,DI Water,24.4625
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,Scaffold,0.25
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,10X TE,3.6875000000000004
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,Mg (100 mM),6.0
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,Na (100 mM),2.5
+R1_R_5x8_Q6_X0_Y0,Destination[1],A13,DI Water,24.4625
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,Scaffold,0.25
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,10X TE,3.6875000000000004
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,Mg (100 mM),6.0
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,Na (100 mM),2.5
+R1_R_5x8_Q7_X0_Y0,Destination[1],A15,DI Water,24.4625
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,Scaffold,0.25
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,10X TE,3.6875000000000004
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,Mg (100 mM),6.0
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,Na (100 mM),2.5
+R1_R_5x8_Q8_X0_Y0,Destination[1],B01,DI Water,24.4625
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,Scaffold,0.25
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,10X TE,3.6875000000000004
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,Mg (100 mM),6.0
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,Na (100 mM),2.5
+R1_R_5x8_Q9_X0_Y0,Destination[1],B03,DI Water,24.4625
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,Scaffold,0.25
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,10X TE,3.6875000000000004
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,Mg (100 mM),6.0
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,Na (100 mM),2.5
+R1_R_5x8_Q10_X0_Y0,Destination[1],B05,DI Water,24.4625
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,Scaffold,0.25
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,10X TE,3.6875000000000004
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,Mg (100 mM),6.0
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,Na (100 mM),2.5
+R1_R_5x8_Q11_X0_Y0,Destination[1],B07,DI Water,24.4625
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,Scaffold,0.25
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,10X TE,3.6875000000000004
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,Mg (100 mM),6.0
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,Na (100 mM),2.5
+R1_R_5x8_Q12_X0_Y0,Destination[1],B09,DI Water,24.4625
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,Scaffold,0.25
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,10X TE,3.6875000000000004
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,Mg (100 mM),6.0
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,Na (100 mM),2.5
+R1_R_5x8_Q13_X0_Y0,Destination[1],B11,DI Water,24.4625
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,Scaffold,0.25
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,10X TE,3.6875000000000004
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,Mg (100 mM),6.0
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,Na (100 mM),2.5
+R1_R_5x8_Q14_X0_Y0,Destination[1],B13,DI Water,24.4625
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,Scaffold,0.25
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,10X TE,3.6875000000000004
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,Mg (100 mM),6.0
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,Na (100 mM),2.5
+R1_R_5x8_Q15_X0_Y0,Destination[1],B15,DI Water,24.4625
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,Scaffold,0.25
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,10X TE,3.6875000000000004
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,Mg (100 mM),6.0
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,Na (100 mM),2.5
+R1_R_5x8_Q16_X0_Y0,Destination[1],C01,DI Water,24.4625
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,Scaffold,0.25
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,10X TE,3.6875000000000004
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,Mg (100 mM),6.0
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,Na (100 mM),2.5
+R1_R_5x8_Q17_X0_Y0,Destination[1],C03,DI Water,24.4625
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,Scaffold,0.25
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,10X TE,3.6875000000000004
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,Mg (100 mM),6.0
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,Na (100 mM),2.5
+R1_R_5x8_Q18_X0_Y0,Destination[1],C05,DI Water,24.4625
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,Scaffold,0.25
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,10X TE,3.6875000000000004
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,Mg (100 mM),6.0
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,Na (100 mM),2.5
+R1_R_5x8_Q19_X0_Y0,Destination[1],C07,DI Water,24.4625
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,Scaffold,0.25
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,10X TE,3.6875000000000004
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,Mg (100 mM),6.0
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,Na (100 mM),2.5
+R1_R_5x8_Q20_X0_Y0,Destination[1],C09,DI Water,24.4625
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,Scaffold,0.25
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,10X TE,3.6875000000000004
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,Mg (100 mM),6.0
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,Na (100 mM),2.5
+R1_R_5x8_Q21_X0_Y0,Destination[1],C11,DI Water,24.4625
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,Scaffold,0.25
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,10X TE,3.6875000000000004
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,Mg (100 mM),6.0
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,Na (100 mM),2.5
+R1_R_5x8_Q22_X0_Y0,Destination[1],C13,DI Water,24.4625
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,Scaffold,0.25
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,10X TE,3.6875000000000004
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,Mg (100 mM),6.0
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,Na (100 mM),2.5
+R1_R_5x8_Q23_X0_Y0,Destination[1],C15,DI Water,24.4625
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,Scaffold,0.25
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,10X TE,3.6875000000000004
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,Mg (100 mM),6.0
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,Na (100 mM),2.5
+R1_R_5x8_Q24_X0_Y0,Destination[1],D01,DI Water,24.4625
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,Scaffold,0.25
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,10X TE,3.6875000000000004
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,Mg (100 mM),6.0
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,Na (100 mM),2.5
+R1_R_5x8_Q25_X0_Y0,Destination[1],D03,DI Water,24.4625
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,Scaffold,0.25
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,10X TE,3.6875000000000004
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,Mg (100 mM),6.0
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,Na (100 mM),2.5
+R1_R_5x8_Q26_X0_Y0,Destination[1],D05,DI Water,24.4625
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,Scaffold,0.25
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,10X TE,3.6875000000000004
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,Mg (100 mM),6.0
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,Na (100 mM),2.5
+R1_R_5x8_Q27_X0_Y0,Destination[1],D07,DI Water,24.4625
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,Scaffold,0.25
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,10X TE,3.6875000000000004
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,Mg (100 mM),6.0
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,Na (100 mM),2.5
+R1_R_5x8_Q28_X0_Y0,Destination[1],D09,DI Water,24.4625
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,Scaffold,0.25
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,10X TE,3.6875000000000004
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,Mg (100 mM),6.0
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,Na (100 mM),2.5
+R1_R_5x8_Q29_X0_Y0,Destination[1],D11,DI Water,24.4625
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,Scaffold,0.25
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,10X TE,3.6875000000000004
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,Mg (100 mM),6.0
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,Na (100 mM),2.5
+R1_R_5x8_Q30_X0_Y0,Destination[1],D13,DI Water,24.4625
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,Scaffold,0.25
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,10X TE,3.6875000000000004
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,Mg (100 mM),6.0
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,Na (100 mM),2.5
+R1_R_5x8_Q31_X0_Y0,Destination[1],D15,DI Water,24.4625
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,Scaffold,0.25
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,10X TE,3.6875000000000004
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,Mg (100 mM),6.0
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,Na (100 mM),2.5
+R1_R_5x8_Q32_X0_Y0,Destination[1],E01,DI Water,24.4625
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,Scaffold,0.25
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,10X TE,3.6875000000000004
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,Mg (100 mM),6.0
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,Na (100 mM),2.5
+R1_R_5x8_Q33_X0_Y0,Destination[1],E03,DI Water,24.4625
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,Scaffold,0.25
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,10X TE,3.6875000000000004
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,Mg (100 mM),6.0
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,Na (100 mM),2.5
+R1_R_5x8_Q34_X0_Y0,Destination[1],E05,DI Water,24.4625
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,Scaffold,0.25
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,10X TE,3.6875000000000004
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,Mg (100 mM),6.0
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,Na (100 mM),2.5
+R1_R_5x8_Q35_X0_Y0,Destination[1],E07,DI Water,24.4625
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,Scaffold,0.25
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,10X TE,3.6875000000000004
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,Mg (100 mM),6.0
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,Na (100 mM),2.5
+R1_R_5x8_Q36_X0_Y0,Destination[1],E09,DI Water,24.4625
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,Scaffold,0.25
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,10X TE,3.6875000000000004
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,Mg (100 mM),6.0
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,Na (100 mM),2.5
+R1_R_5x8_Q37_X0_Y0,Destination[1],E11,DI Water,24.4625
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,Scaffold,0.25
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,10X TE,3.6875000000000004
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,Mg (100 mM),6.0
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,Na (100 mM),2.5
+R1_R_5x8_Q38_X0_Y0,Destination[1],E13,DI Water,24.4625
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,Staple mix (from picklist),13.100000000000001
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,Scaffold,0.25
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,10X TE,3.6875000000000004
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,Mg (100 mM),6.0
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,Na (100 mM),2.5
+R1_R_5x8_Q39_X0_Y0,Destination[1],E15,DI Water,24.4625
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,Scaffold,0.25
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,10X TE,3.6875000000000004
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,Mg (100 mM),6.0
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,Na (100 mM),2.5
+R1_G_5x8_Q0_X0_Y0,Destination[1],F01,DI Water,24.4625
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,Scaffold,0.25
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,10X TE,3.6875000000000004
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,Mg (100 mM),6.0
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,Na (100 mM),2.5
+R1_G_5x8_Q1_X0_Y0,Destination[1],F03,DI Water,24.4625
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,Scaffold,0.25
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,10X TE,3.6875000000000004
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,Mg (100 mM),6.0
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,Na (100 mM),2.5
+R1_G_5x8_Q2_X0_Y0,Destination[1],F05,DI Water,24.4625
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,Scaffold,0.25
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,10X TE,3.6875000000000004
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,Mg (100 mM),6.0
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,Na (100 mM),2.5
+R1_G_5x8_Q3_X0_Y0,Destination[1],F07,DI Water,24.4625
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,Scaffold,0.25
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,10X TE,3.6875000000000004
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,Mg (100 mM),6.0
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,Na (100 mM),2.5
+R1_G_5x8_Q4_X0_Y0,Destination[1],F09,DI Water,24.4625
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,Scaffold,0.25
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,10X TE,3.6875000000000004
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,Mg (100 mM),6.0
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,Na (100 mM),2.5
+R1_G_5x8_Q5_X0_Y0,Destination[1],F11,DI Water,24.4625
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,Scaffold,0.25
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,10X TE,3.6875000000000004
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,Mg (100 mM),6.0
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,Na (100 mM),2.5
+R1_G_5x8_Q6_X0_Y0,Destination[1],F13,DI Water,24.4625
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,Scaffold,0.25
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,10X TE,3.6875000000000004
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,Mg (100 mM),6.0
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,Na (100 mM),2.5
+R1_G_5x8_Q7_X0_Y0,Destination[1],F15,DI Water,24.4625
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,Scaffold,0.25
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,10X TE,3.6875000000000004
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,Mg (100 mM),6.0
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,Na (100 mM),2.5
+R1_G_5x8_Q8_X0_Y0,Destination[1],G01,DI Water,24.4625
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,Scaffold,0.25
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,10X TE,3.6875000000000004
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,Mg (100 mM),6.0
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,Na (100 mM),2.5
+R1_G_5x8_Q9_X0_Y0,Destination[1],G03,DI Water,24.4625
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,Scaffold,0.25
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,10X TE,3.6875000000000004
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,Mg (100 mM),6.0
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,Na (100 mM),2.5
+R1_G_5x8_Q10_X0_Y0,Destination[1],G05,DI Water,24.4625
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,Scaffold,0.25
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,10X TE,3.6875000000000004
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,Mg (100 mM),6.0
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,Na (100 mM),2.5
+R1_G_5x8_Q11_X0_Y0,Destination[1],G07,DI Water,24.4625
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,Scaffold,0.25
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,10X TE,3.6875000000000004
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,Mg (100 mM),6.0
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,Na (100 mM),2.5
+R1_G_5x8_Q12_X0_Y0,Destination[1],G09,DI Water,24.4625
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,Scaffold,0.25
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,10X TE,3.6875000000000004
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,Mg (100 mM),6.0
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,Na (100 mM),2.5
+R1_G_5x8_Q13_X0_Y0,Destination[1],G11,DI Water,24.4625
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,Scaffold,0.25
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,10X TE,3.6875000000000004
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,Mg (100 mM),6.0
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,Na (100 mM),2.5
+R1_G_5x8_Q14_X0_Y0,Destination[1],G13,DI Water,24.4625
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,Scaffold,0.25
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,10X TE,3.6875000000000004
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,Mg (100 mM),6.0
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,Na (100 mM),2.5
+R1_G_5x8_Q15_X0_Y0,Destination[1],G15,DI Water,24.4625
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,Scaffold,0.25
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,10X TE,3.6875000000000004
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,Mg (100 mM),6.0
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,Na (100 mM),2.5
+R1_G_5x8_Q16_X0_Y0,Destination[1],H01,DI Water,24.4625
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,Scaffold,0.25
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,10X TE,3.6875000000000004
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,Mg (100 mM),6.0
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,Na (100 mM),2.5
+R1_G_5x8_Q17_X0_Y0,Destination[1],H03,DI Water,24.4625
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,Scaffold,0.25
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,10X TE,3.6875000000000004
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,Mg (100 mM),6.0
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,Na (100 mM),2.5
+R1_G_5x8_Q18_X0_Y0,Destination[1],H05,DI Water,24.4625
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,Scaffold,0.25
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,10X TE,3.6875000000000004
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,Mg (100 mM),6.0
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,Na (100 mM),2.5
+R1_G_5x8_Q19_X0_Y0,Destination[1],H07,DI Water,24.4625
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,Scaffold,0.25
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,10X TE,3.6875000000000004
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,Mg (100 mM),6.0
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,Na (100 mM),2.5
+R1_G_5x8_Q20_X0_Y0,Destination[1],H09,DI Water,24.4625
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,Scaffold,0.25
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,10X TE,3.6875000000000004
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,Mg (100 mM),6.0
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,Na (100 mM),2.5
+R1_G_5x8_Q21_X0_Y0,Destination[1],H11,DI Water,24.4625
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,Scaffold,0.25
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,10X TE,3.6875000000000004
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,Mg (100 mM),6.0
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,Na (100 mM),2.5
+R1_G_5x8_Q22_X0_Y0,Destination[1],H13,DI Water,24.4625
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,Scaffold,0.25
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,10X TE,3.6875000000000004
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,Mg (100 mM),6.0
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,Na (100 mM),2.5
+R1_G_5x8_Q23_X0_Y0,Destination[1],H15,DI Water,24.4625
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,Scaffold,0.25
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,10X TE,3.6875000000000004
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,Mg (100 mM),6.0
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,Na (100 mM),2.5
+R1_G_5x8_Q24_X0_Y0,Destination[1],I01,DI Water,24.4625
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,Scaffold,0.25
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,10X TE,3.6875000000000004
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,Mg (100 mM),6.0
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,Na (100 mM),2.5
+R1_G_5x8_Q25_X0_Y0,Destination[1],I03,DI Water,24.4625
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,Scaffold,0.25
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,10X TE,3.6875000000000004
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,Mg (100 mM),6.0
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,Na (100 mM),2.5
+R1_G_5x8_Q26_X0_Y0,Destination[1],I05,DI Water,24.4625
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,Scaffold,0.25
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,10X TE,3.6875000000000004
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,Mg (100 mM),6.0
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,Na (100 mM),2.5
+R1_G_5x8_Q27_X0_Y0,Destination[1],I07,DI Water,24.4625
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,Scaffold,0.25
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,10X TE,3.6875000000000004
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,Mg (100 mM),6.0
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,Na (100 mM),2.5
+R1_G_5x8_Q28_X0_Y0,Destination[1],I09,DI Water,24.4625
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,Scaffold,0.25
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,10X TE,3.6875000000000004
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,Mg (100 mM),6.0
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,Na (100 mM),2.5
+R1_G_5x8_Q29_X0_Y0,Destination[1],I11,DI Water,24.4625
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,Scaffold,0.25
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,10X TE,3.6875000000000004
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,Mg (100 mM),6.0
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,Na (100 mM),2.5
+R1_G_5x8_Q30_X0_Y0,Destination[1],I13,DI Water,24.4625
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,Scaffold,0.25
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,10X TE,3.6875000000000004
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,Mg (100 mM),6.0
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,Na (100 mM),2.5
+R1_G_5x8_Q31_X0_Y0,Destination[1],I15,DI Water,24.4625
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,Scaffold,0.25
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,10X TE,3.6875000000000004
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,Mg (100 mM),6.0
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,Na (100 mM),2.5
+R1_G_5x8_Q32_X0_Y0,Destination[1],J01,DI Water,24.4625
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,Scaffold,0.25
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,10X TE,3.6875000000000004
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,Mg (100 mM),6.0
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,Na (100 mM),2.5
+R1_G_5x8_Q33_X0_Y0,Destination[1],J03,DI Water,24.4625
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,Scaffold,0.25
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,10X TE,3.6875000000000004
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,Mg (100 mM),6.0
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,Na (100 mM),2.5
+R1_G_5x8_Q34_X0_Y0,Destination[1],J05,DI Water,24.4625
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,Scaffold,0.25
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,10X TE,3.6875000000000004
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,Mg (100 mM),6.0
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,Na (100 mM),2.5
+R1_G_5x8_Q35_X0_Y0,Destination[1],J07,DI Water,24.4625
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,Scaffold,0.25
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,10X TE,3.6875000000000004
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,Mg (100 mM),6.0
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,Na (100 mM),2.5
+R1_G_5x8_Q36_X0_Y0,Destination[1],J09,DI Water,24.4625
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,Scaffold,0.25
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,10X TE,3.6875000000000004
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,Mg (100 mM),6.0
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,Na (100 mM),2.5
+R1_G_5x8_Q37_X0_Y0,Destination[1],J11,DI Water,24.4625
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,Scaffold,0.25
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,10X TE,3.6875000000000004
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,Mg (100 mM),6.0
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,Na (100 mM),2.5
+R1_G_5x8_Q38_X0_Y0,Destination[1],J13,DI Water,24.4625
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,Staple mix (from picklist),13.100000000000001
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,Scaffold,0.25
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,10X TE,3.6875000000000004
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,Mg (100 mM),6.0
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,Na (100 mM),2.5
+R1_G_5x8_Q39_X0_Y0,Destination[1],J15,DI Water,24.4625
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,Scaffold,0.25
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,10X TE,3.6875000000000004
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,Mg (100 mM),6.0
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,Na (100 mM),2.5
+R1_B_5x8_Q0_X0_Y0,Destination[1],K01,DI Water,24.4625
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,Scaffold,0.25
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,10X TE,3.6875000000000004
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,Mg (100 mM),6.0
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,Na (100 mM),2.5
+R1_B_5x8_Q1_X0_Y0,Destination[1],K03,DI Water,24.4625
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,Scaffold,0.25
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,10X TE,3.6875000000000004
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,Mg (100 mM),6.0
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,Na (100 mM),2.5
+R1_B_5x8_Q2_X0_Y0,Destination[1],K05,DI Water,24.4625
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,Scaffold,0.25
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,10X TE,3.6875000000000004
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,Mg (100 mM),6.0
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,Na (100 mM),2.5
+R1_B_5x8_Q3_X0_Y0,Destination[1],K07,DI Water,24.4625
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,Scaffold,0.25
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,10X TE,3.6875000000000004
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,Mg (100 mM),6.0
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,Na (100 mM),2.5
+R1_B_5x8_Q4_X0_Y0,Destination[1],K09,DI Water,24.4625
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,Scaffold,0.25
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,10X TE,3.6875000000000004
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,Mg (100 mM),6.0
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,Na (100 mM),2.5
+R1_B_5x8_Q5_X0_Y0,Destination[1],K11,DI Water,24.4625
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,Scaffold,0.25
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,10X TE,3.6875000000000004
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,Mg (100 mM),6.0
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,Na (100 mM),2.5
+R1_B_5x8_Q6_X0_Y0,Destination[1],K13,DI Water,24.4625
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,Scaffold,0.25
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,10X TE,3.6875000000000004
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,Mg (100 mM),6.0
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,Na (100 mM),2.5
+R1_B_5x8_Q7_X0_Y0,Destination[1],K15,DI Water,24.4625
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,Scaffold,0.25
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,10X TE,3.6875000000000004
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,Mg (100 mM),6.0
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,Na (100 mM),2.5
+R1_B_5x8_Q8_X0_Y0,Destination[1],L01,DI Water,24.4625
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,Scaffold,0.25
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,10X TE,3.6875000000000004
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,Mg (100 mM),6.0
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,Na (100 mM),2.5
+R1_B_5x8_Q9_X0_Y0,Destination[1],L03,DI Water,24.4625
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,Scaffold,0.25
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,10X TE,3.6875000000000004
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,Mg (100 mM),6.0
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,Na (100 mM),2.5
+R1_B_5x8_Q10_X0_Y0,Destination[1],L05,DI Water,24.4625
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,Scaffold,0.25
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,10X TE,3.6875000000000004
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,Mg (100 mM),6.0
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,Na (100 mM),2.5
+R1_B_5x8_Q11_X0_Y0,Destination[1],L07,DI Water,24.4625
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,Scaffold,0.25
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,10X TE,3.6875000000000004
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,Mg (100 mM),6.0
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,Na (100 mM),2.5
+R1_B_5x8_Q12_X0_Y0,Destination[1],L09,DI Water,24.4625
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,Scaffold,0.25
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,10X TE,3.6875000000000004
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,Mg (100 mM),6.0
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,Na (100 mM),2.5
+R1_B_5x8_Q13_X0_Y0,Destination[1],L11,DI Water,24.4625
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,Scaffold,0.25
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,10X TE,3.6875000000000004
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,Mg (100 mM),6.0
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,Na (100 mM),2.5
+R1_B_5x8_Q14_X0_Y0,Destination[1],L13,DI Water,24.4625
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,Scaffold,0.25
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,10X TE,3.6875000000000004
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,Mg (100 mM),6.0
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,Na (100 mM),2.5
+R1_B_5x8_Q15_X0_Y0,Destination[1],L15,DI Water,24.4625
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,Scaffold,0.25
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,10X TE,3.6875000000000004
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,Mg (100 mM),6.0
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,Na (100 mM),2.5
+R1_B_5x8_Q16_X0_Y0,Destination[1],M01,DI Water,24.4625
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,Scaffold,0.25
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,10X TE,3.6875000000000004
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,Mg (100 mM),6.0
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,Na (100 mM),2.5
+R1_B_5x8_Q17_X0_Y0,Destination[1],M03,DI Water,24.4625
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,Scaffold,0.25
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,10X TE,3.6875000000000004
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,Mg (100 mM),6.0
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,Na (100 mM),2.5
+R1_B_5x8_Q18_X0_Y0,Destination[1],M05,DI Water,24.4625
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,Scaffold,0.25
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,10X TE,3.6875000000000004
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,Mg (100 mM),6.0
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,Na (100 mM),2.5
+R1_B_5x8_Q19_X0_Y0,Destination[1],M07,DI Water,24.4625
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,Scaffold,0.25
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,10X TE,3.6875000000000004
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,Mg (100 mM),6.0
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,Na (100 mM),2.5
+R1_B_5x8_Q20_X0_Y0,Destination[1],M09,DI Water,24.4625
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,Scaffold,0.25
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,10X TE,3.6875000000000004
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,Mg (100 mM),6.0
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,Na (100 mM),2.5
+R1_B_5x8_Q21_X0_Y0,Destination[1],M11,DI Water,24.4625
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,Scaffold,0.25
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,10X TE,3.6875000000000004
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,Mg (100 mM),6.0
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,Na (100 mM),2.5
+R1_B_5x8_Q22_X0_Y0,Destination[1],M13,DI Water,24.4625
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,Scaffold,0.25
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,10X TE,3.6875000000000004
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,Mg (100 mM),6.0
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,Na (100 mM),2.5
+R1_B_5x8_Q23_X0_Y0,Destination[1],M15,DI Water,24.4625
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,Scaffold,0.25
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,10X TE,3.6875000000000004
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,Mg (100 mM),6.0
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,Na (100 mM),2.5
+R1_B_5x8_Q24_X0_Y0,Destination[1],N01,DI Water,24.4625
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,Scaffold,0.25
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,10X TE,3.6875000000000004
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,Mg (100 mM),6.0
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,Na (100 mM),2.5
+R1_B_5x8_Q25_X0_Y0,Destination[1],N03,DI Water,24.4625
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,Scaffold,0.25
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,10X TE,3.6875000000000004
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,Mg (100 mM),6.0
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,Na (100 mM),2.5
+R1_B_5x8_Q26_X0_Y0,Destination[1],N05,DI Water,24.4625
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,Scaffold,0.25
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,10X TE,3.6875000000000004
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,Mg (100 mM),6.0
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,Na (100 mM),2.5
+R1_B_5x8_Q27_X0_Y0,Destination[1],N07,DI Water,24.4625
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,Scaffold,0.25
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,10X TE,3.6875000000000004
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,Mg (100 mM),6.0
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,Na (100 mM),2.5
+R1_B_5x8_Q28_X0_Y0,Destination[1],N09,DI Water,24.4625
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,Scaffold,0.25
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,10X TE,3.6875000000000004
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,Mg (100 mM),6.0
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,Na (100 mM),2.5
+R1_B_5x8_Q29_X0_Y0,Destination[1],N11,DI Water,24.4625
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,Scaffold,0.25
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,10X TE,3.6875000000000004
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,Mg (100 mM),6.0
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,Na (100 mM),2.5
+R1_B_5x8_Q30_X0_Y0,Destination[1],N13,DI Water,24.4625
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,Scaffold,0.25
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,10X TE,3.6875000000000004
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,Mg (100 mM),6.0
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,Na (100 mM),2.5
+R1_B_5x8_Q31_X0_Y0,Destination[1],N15,DI Water,24.4625
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,Scaffold,0.25
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,10X TE,3.6875000000000004
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,Mg (100 mM),6.0
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,Na (100 mM),2.5
+R1_B_5x8_Q32_X0_Y0,Destination[1],O01,DI Water,24.4625
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,Scaffold,0.25
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,10X TE,3.6875000000000004
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,Mg (100 mM),6.0
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,Na (100 mM),2.5
+R1_B_5x8_Q33_X0_Y0,Destination[1],O03,DI Water,24.4625
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,Scaffold,0.25
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,10X TE,3.6875000000000004
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,Mg (100 mM),6.0
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,Na (100 mM),2.5
+R1_B_5x8_Q34_X0_Y0,Destination[1],O05,DI Water,24.4625
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,Scaffold,0.25
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,10X TE,3.6875000000000004
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,Mg (100 mM),6.0
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,Na (100 mM),2.5
+R1_B_5x8_Q35_X0_Y0,Destination[1],O07,DI Water,24.4625
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,Scaffold,0.25
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,10X TE,3.6875000000000004
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,Mg (100 mM),6.0
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,Na (100 mM),2.5
+R1_B_5x8_Q36_X0_Y0,Destination[1],O09,DI Water,24.4625
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,Scaffold,0.25
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,10X TE,3.6875000000000004
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,Mg (100 mM),6.0
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,Na (100 mM),2.5
+R1_B_5x8_Q37_X0_Y0,Destination[1],O11,DI Water,24.4625
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,Scaffold,0.25
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,10X TE,3.6875000000000004
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,Mg (100 mM),6.0
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,Na (100 mM),2.5
+R1_B_5x8_Q38_X0_Y0,Destination[1],O13,DI Water,24.4625
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,Staple mix (from picklist),13.100000000000001
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,Scaffold,0.25
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,10X TE,3.6875000000000004
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,Mg (100 mM),6.0
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,Na (100 mM),2.5
+R1_B_5x8_Q39_X0_Y0,Destination[1],O15,DI Water,24.4625

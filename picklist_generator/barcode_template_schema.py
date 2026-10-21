@@ -1,4 +1,5 @@
 """Bridge the visual Origami Templates editor and RGB barcode site schemas."""
+from image_encoding import BARCODE_SCHEMA_KEYS
 import re
 
 from image_encoding import ROWS, default_barcode_schema, validate_barcode_schema
@@ -12,8 +13,8 @@ def from_template(payload, current=None):
     model = normalize_logical_bit_schema(raw, 8, 12)
     groups = model['logical_bits']
     count = len(groups)
-    if count not in (6, 9):
-        raise ValueError('RGB needs exactly 6 or 9 Digital bit groups on an 8-row × 12-column template.')
+    if count not in (6, 7, 9):
+        raise ValueError('RGB needs exactly 6, 7, or 9 Digital bit groups on an 8-row × 12-column template.')
     # Named bits remain stable when the editor removes and re-appends an edited
     # group. Unnumbered legacy schemas retain their explicit logical_bits order.
     numbers = []
@@ -33,7 +34,7 @@ def from_template(payload, current=None):
 
     result = validate_barcode_schema(current) if current is not None else default_barcode_schema()
     result['name'] = 'Origami Templates — {} bits'.format(count)
-    result['nine_bit' if count == 9 else 'six_bit'] = sorted(
+    result[BARCODE_SCHEMA_KEYS[count]] = sorted(
         [{'bit': number, 'sites': sites(group)} for number, group in zip(numbers, groups)], key=lambda bit: bit['bit'])
     result['always_on_sites'] = list(dict.fromkeys(site for group in model['alignment_groups'] for site in sites(group)))
     return validate_barcode_schema(result, count), count
@@ -48,7 +49,7 @@ def to_template(schema, bit_count):
         return [[ROWS.index(site.split('-')[0])+1, int(site.split('-')[1])] for site in sites]
 
     result['logical_bits'] = [dict(id='bit_{}'.format(bit['bit']), label='Bit {}'.format(bit['bit']),
-        physical_sites=coordinates(bit['sites'])) for bit in value['nine_bit' if bit_count == 9 else 'six_bit']]
+        physical_sites=coordinates(bit['sites'])) for bit in value[BARCODE_SCHEMA_KEYS[bit_count]]]
     if value['always_on_sites']:
         result['alignment_groups'] = [dict(id='fiducials', label='Permanent fiducials',
             physical_sites=coordinates(value['always_on_sites']))]

@@ -77,14 +77,13 @@ def test_ui_picklists_metadata_and_canvas_guard(tmp_path, monkeypatch):
         for source in view.color_views.values():
             source.desired_concentration_nm.set('25')
         view.tile_count.set('1'); view._tile_count_changed()
-        previous = deepcopy(view.barcode_schema)
-        with pytest.raises(ValueError,match='active analog canvas'):
-            view._apply_barcode_schema(schema())
-        assert view.barcode_schema == previous
+        view._apply_barcode_schema(schema())
+        assert view.barcode_schema == schema()
         view.active_row_vars['01'].set(False); view._active_canvas_changed('01')
         view._apply_barcode_schema(schema())
         view.active_row_vars['01'].set(True); view._active_canvas_changed('01')
-        assert not view.active_row_vars['01'].get()
+        assert view.active_row_vars['01'].get()
+        view.active_row_vars['01'].set(False); view._active_canvas_changed('01')
         path = tmp_path/'black.png'; Image.new('RGB',(5,8),'black').save(path)
         with patch('rgb_image_view.messagebox.showerror') as error:
             view.image_path.set(str(path)); view._load(); view._prepare()
@@ -103,5 +102,47 @@ def test_ui_picklists_metadata_and_canvas_guard(tmp_path, monkeypatch):
             report = generate_views(settings,'tiles_1x1',0)
             assert report['geometry']['always_on_sites'] == view.designs[0]['always_on_sites']
             error.assert_not_called()
+    finally:
+        app.destroy()
+
+
+def test_six_by_six_overlap_can_preview_but_cannot_prepare():
+    from image_encoding import prepare_runs
+    value = default_barcode_schema()
+    value['always_on_sites'] = ['H01-12']  # Free in six-bit, occupied in nine-bit.
+    geometry('tiles_4x4', barcode_schema=value)
+    with pytest.raises(ValueError, match='overlap'):
+        geometry('tiles_6x6', barcode_schema=value)
+    info = geometry('tiles_6x6', barcode_schema=value, validate_overlaps=False)
+    pixels = [[[0, 0, 0] for _ in range(info['columns'])] for _ in range(info['rows'])]
+    designs = compile_designs(pixels, 25, {c: 1 for c in CHANNELS}, 'tiles_6x6',
+                              barcode_schema=value, validate_overlaps=False)
+    assert len(designs) == 108
+    assert render_gaussian_overlay(designs, 10, .5).rgb.size
+    with pytest.raises(ValueError, match='overlap'):
+        prepare_runs(designs, '', {}, [], {}, {})
+
+
+def test_ui_scheme_overlap_is_deferred_until_preparation(tmp_path, monkeypatch):
+    import picklist_app
+    from image_encoding import SELECTABLE_SCHEMES
+    for name in ('CONFIG_PATH', 'PLATE_STATE_PATH', 'STORAGE_STATE_PATH'):
+        monkeypatch.setattr(picklist_app, name, tmp_path / (name + '.json'))
+    app = picklist_app.PicklistApp()
+    app.withdraw()
+    try:
+        view = app.rgb_image_view
+        value = default_barcode_schema()
+        value['always_on_sites'] = ['H01-12']
+        view._apply_barcode_schema(value)
+        with patch('rgb_image_view.messagebox.showerror') as error:
+            view.scheme.set(SELECTABLE_SCHEMES['tiles_6x6'].label)
+            assert view._scheme_id() == 'tiles_6x6'
+            error.assert_not_called()
+            view.designs = view._compile_scheme([[[0, 0, 0] for _ in range(36)] for _ in range(48)], 'tiles_6x6')
+            view._prepare()
+            error.assert_called_once()
+            assert 'overlap' in error.call_args.args[1]
+            assert not view.runs
     finally:
         app.destroy()

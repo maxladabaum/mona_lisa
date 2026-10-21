@@ -1,4 +1,5 @@
 """Export PAINT Analysis templates from a prepared RGB batch snapshot."""
+from image_encoding import BARCODE_SCHEMA_KEYS
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -31,7 +32,7 @@ def export_alignment_templates(destination, snapshot, runs):
                 models[count] = to_template(snapshot['barcode_schema'], count)
             model = models[count]
             expected = [[list(site.split('-')) for site in group['sites']]
-                        for group in snapshot['barcode_schema']['nine_bit' if count == 9 else 'six_bit']]
+                        for group in snapshot['barcode_schema'][BARCODE_SCHEMA_KEYS[count]]]
             if design.get('barcode_sites', expected) != expected:
                 raise ValueError('Prepared barcode sites differ from the schema snapshot. Prepare runs again.')
             active = ['bit_{}'.format(i+1) for i, bit in enumerate(design['bits']) if bit]

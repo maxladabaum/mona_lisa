@@ -2585,15 +2585,24 @@ class PicklistApp(tk.Tk):
         plate_name = self.destination_plate.get().strip() or "Destination[1]"
         confirmed = messagebox.askyesno(
             "Start fresh destination plate",
-            "Clear all recorded well usage for '{}'?\n\nGenerated output folders will not be deleted.".format(plate_name),
+            "Clear all recorded well usage and release existing stored-run well reservations for '{}'?\n\nStored runs and generated output folders will not be deleted.".format(plate_name),
             icon="warning",
             parent=self,
         )
         if not confirmed:
             return
         count = self._destination_well_count()
-        clear_plate(self.plate_state, plate_name)
-        save_json(PLATE_STATE_PATH, self.plate_state)
+        updated = deepcopy(self.plate_state)
+        clear_plate(updated, plate_name, self._storage_items())
+        try:
+            save_json(PLATE_STATE_PATH, updated)
+        except OSError as exc:
+            messagebox.showerror("Could not start fresh plate", str(exc), parent=self)
+            return
+        self.plate_state = updated
+        rgb = getattr(self, "rgb_image_view", None)
+        if rgb is not None and rgb.destination_plate.get().strip() == plate_name:
+            rgb._invalidate()
         last_run = self.config.get("last_successful_generation")
         if isinstance(last_run, dict) and last_run.get("destination_plate_name") == plate_name:
             self.config.pop("last_successful_generation", None)

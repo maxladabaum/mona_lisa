@@ -14,18 +14,21 @@ class BarcodeGuard(ttk.LabelFrame):
         super().__init__(parent, text='Barcode collision protection', padding=5)
         self.app = app
         self.registry = BarcodeRegistry(registry_path)
+        self.enabled = tk.BooleanVar(value=app.config.get('manual_barcode_enabled', False))
         self.schema = validate_barcode_schema(app.config.get('manual_barcode_schema', default_barcode_schema()))
-        self.experiment = tk.StringVar(value=app.config.get('barcode_experiment', 'Default'))
+        self.experiment = app.rgb_image_view.barcode_experiment
         self.count = tk.StringVar(value=str(app.config.get('manual_barcode_bits',6)))
         self.source = tk.StringVar(value='LowConc PAINT R1')
         self._last_experiment = self.experiment.get()
         self.status = tk.StringVar()
         self.schema_name = tk.StringVar(value=self.schema['name'])
+        ttk.Checkbutton(self, text='Use barcodes for replacements',
+                        variable=self.enabled).pack(anchor='w')
         top = ttk.Frame(self); top.pack(fill='x')
         ttk.Label(top,text='Experiment / pool').pack(side='left')
         ttk.Entry(top,textvariable=self.experiment,width=18).pack(side='left',padx=4)
         ttk.Label(top,text='Bits').pack(side='left')
-        ttk.Combobox(top,textvariable=self.count,values=('6','9'),state='readonly',width=3).pack(side='left',padx=4)
+        ttk.Combobox(top,textvariable=self.count,values=('6','7','9'),state='readonly',width=3).pack(side='left',padx=4)
         ttk.Label(top,textvariable=self.schema_name,wraplength=180).pack(side='left',padx=4)
         for label, callback in [('Use RGB schema',self.use_rgb),('Load schema…',self.load_schema),
                                 ('Import used codes…',self.import_log),('Registry…',self.show_registry)]:
@@ -35,7 +38,7 @@ class BarcodeGuard(ttk.LabelFrame):
         ttk.Combobox(actions,textvariable=self.source,values=[v.title for v in app.set_views],state='readonly',width=20).pack(side='left',padx=4)
         ttk.Button(actions,text='Select an unused code + fiducials',command=self.select_unused).pack(side='left',padx=4)
         ttk.Label(actions,textvariable=self.status,wraplength=500).pack(side='left',padx=4)
-        ttk.Label(self,text='Checks manual PAINT selections across all replacement tabs. Use one experiment name for everything pooled/decoded together.').pack(anchor='w')
+        ttk.Label(self,text='Optional for replacements. When enabled, checks PAINT selections across all replacement tabs. Use one experiment name for everything pooled/decoded together.').pack(anchor='w')
         self.sync_storage()
         legacy_count=sum(not item.get('barcode_record') and not item.get('image_design') for item in app._storage_items())
         if legacy_count:
@@ -43,10 +46,12 @@ class BarcodeGuard(ttk.LabelFrame):
                       foreground='#a40000',wraplength=1000).pack(anchor='w')
         self.experiment.trace_add('write',self.changed)
         self.count.trace_add('write',self.changed)
+        self.enabled.trace_add('write',self.changed)
         self.refresh()
 
     def changed(self,*_args):
-        self.app.config.update(barcode_experiment=self.experiment.get(),manual_barcode_bits=int(self.count.get()),manual_barcode_schema=deepcopy(self.schema))
+        self.app.config.update(barcode_experiment=self.experiment.get(),manual_barcode_bits=int(self.count.get()),manual_barcode_schema=deepcopy(self.schema),
+                               manual_barcode_enabled=self.enabled.get())
         self.app._schedule_config_save()
         self.app._invalidate_preview()
         if self.experiment.get() != self._last_experiment:
@@ -79,11 +84,16 @@ class BarcodeGuard(ttk.LabelFrame):
         return record(self.schema,int(self.count.get()),self.fractions(),self.experiment.get(),run_id,run_name,plate,wells)
 
     def check_manual(self):
+        if not self.enabled.get():
+            return None
         entry=self.manual_record()
         self.registry.check(entry)
         return entry
 
     def refresh(self):
+        if not self.enabled.get():
+            self.status.set('No barcode — replacements are unrestricted')
+            return
         try:
             entry=self.check_manual()
             self.status.set('Available · '+entry['bits'])
@@ -99,7 +109,9 @@ class BarcodeGuard(ttk.LabelFrame):
             from barcode_template_schema import from_template
             payload,count=from_template(payload,self.schema)
         if count is None:
-            if 'nine_bit' in payload and 'six_bit' not in payload:
+            if 'seven_bit' in payload and 'six_bit' not in payload and 'nine_bit' not in payload:
+                count=7
+            elif 'nine_bit' in payload and 'six_bit' not in payload:
                 count=9
             elif 'six_bit' in payload and 'nine_bit' not in payload:
                 count=6
@@ -109,6 +121,7 @@ class BarcodeGuard(ttk.LabelFrame):
         self.schema=value
         self.schema_name.set(value['name'])
         self.count.set(str(count))
+        self.enabled.set(True)
         self.changed()
 
     def load_schema(self):
@@ -158,6 +171,7 @@ class BarcodeGuard(ttk.LabelFrame):
                 if value:view.site_fractions[name]=1.0
                 view._paint_square(name)
             view._update_selection_summary()
+            self.enabled.set(True)
             self.app._selections_changed()
         except (ValueError,StopIteration) as exc:messagebox.showerror('Cannot choose code',str(exc),parent=self)
 
