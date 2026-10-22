@@ -8,6 +8,8 @@ import hashlib
 import shutil
 from zipfile import ZipFile, ZIP_DEFLATED
 
+from crash_tracking import record as record_diagnostic
+
 import numpy as np
 import pandas as pd
 
@@ -66,12 +68,17 @@ def save_analysis_session(path, state):
             archive.writestr('manifest.json', json.dumps(dict(format=FORMAT, version=VERSION, root=root, nodes=nodes)))
         os.replace(temporary, path)
     finally:
+        if 'retained' in locals():
+            retained.clear()
+            nodes.clear()
+            memo.clear()
         if os.path.exists(temporary):
             os.unlink(temporary)
 
 
 def load_analysis_session(path, record_types, progress_callback=None, array_cache_dir=None):
     """Decode only known data records; reject unsupported archive versions."""
+    record_diagnostic('archive_open', path=str(path), disk_cache=array_cache_dir is not None)
     cache_directory = None
     if array_cache_dir is not None:
         path = Path(path)
@@ -89,6 +96,8 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
             percent = 100 if finished else min(99, int(90 * bytes_read / total_bytes + 9 * nodes_done / node_count))
             if progress_callback is not None and percent != last_percent:
                 last_percent = percent
+                record_diagnostic('archive_progress', percent=percent, bytes_read=bytes_read,
+                                  total_bytes=total_bytes, nodes_done=nodes_done, node_count=node_count)
                 progress_callback(percent)
 
         class ProgressReader:
@@ -121,15 +130,17 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
                 return self.stream.tell()
 
         report()
+        record_diagnostic('archive_manifest_started', bytes=archive.getinfo('manifest.json').file_size)
         with archive.open('manifest.json') as stream:
             manifest = json.loads(ProgressReader(stream).read())
         if manifest.get('format') != FORMAT or manifest.get('version') != VERSION:
             raise ValueError('Unsupported analysis file format or version.')
+        record_diagnostic('archive_manifest_decoded', nodes=len(manifest['nodes']))
         nodes, cache, decoding = manifest['nodes'], {}, set()
         node_count = max(1, len(nodes))
 
         def decode(value):
-            nonlocal nodes_done
+            nonlocal nodes_done, bytes_read
             if not isinstance(value, dict):
                 return value
             index = value['ref']
@@ -142,6 +153,8 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
             kind = node['kind']
             if kind == 'array':
                 member = archive.getinfo(node['file'])
+                if member.file_size >= 1024 * 1024:
+                    record_diagnostic('archive_array_started', node=index, member=member.filename, bytes=member.file_size)
                 if cache_directory is not None and member.file_size >= 64 * 1024:
                     cached_path = cache_directory / f"array-{index}.npy"
                     if not cached_path.exists() or cached_path.stat().st_size != member.file_size:
@@ -155,6 +168,11 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
                         finally:
                             if temporary is not None:
                                 temporary.unlink(missing_ok=True)
+                    else:
+                        # Reused bytes are complete work too. Without this,
+                        # warm loads stall near 0–9% until the final jump to 100.
+                        bytes_read += member.file_size
+                        report()
                     result = np.load(cached_path, mmap_mode='r', allow_pickle=False)
                 else:
                     with archive.open(member) as stream:
@@ -168,11 +186,16 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
             elif kind == 'path':
                 result = Path(node['value'])
             elif kind == 'dataframe':
+                record_diagnostic('archive_dataframe_started', node=index)
                 columns = decode(node['columns'])
-                result = pd.DataFrame({i: pd.Series(decode(v)).astype(dtype)
-                                       for i, (v, dtype) in enumerate(zip(node['values'], node['dtypes']))})
+                # Preserve mapped column storage. Default Series conversion and
+                # DataFrame consolidation otherwise copy the source table twice.
+                result = pd.DataFrame({i: pd.Series(decode(v), copy=False).astype(dtype, copy=False)
+                                       for i, (v, dtype) in enumerate(zip(node['values'], node['dtypes']))},
+                                      copy=False)
                 result.columns = columns
                 result.index = pd.Index(decode(node['index']), name=decode(node['index_name']))
+                record_diagnostic('archive_dataframe_finished', node=index, rows=len(result), columns=len(columns))
             elif kind == 'record':
                 if node['name'] not in record_types:
                     raise ValueError(f"Unsupported analysis record: {node['name']}")
@@ -189,6 +212,15 @@ def load_analysis_session(path, record_types, progress_callback=None, array_cach
             report()
             return result
 
-        result = decode(manifest['root'])
-        report(finished=True)
-        return result
+        try:
+            result = decode(manifest['root'])
+            report(finished=True)
+            record_diagnostic('archive_decode_finished', path=str(path))
+            return result
+        finally:
+            # Recursive decoder closures form a cycle. Release large JSON
+            # graphs and decoded objects immediately, rather than waiting for GC.
+            cache.clear()
+            nodes.clear()
+            manifest.clear()
+            decoding.clear()

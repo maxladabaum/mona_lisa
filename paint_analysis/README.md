@@ -211,6 +211,12 @@ Saving/loading runs in the background with a progress dialog. Loading shows a
 percentage based on archive data read and records restored, including recovery
 snapshots opened through **Resume Tiled Analysis…**. Large full-image
 archives can take time and disk space because they include the source data.
+The GUI extracts large arrays in bounded chunks to `.analysis-cache` beside the
+archive and opens them as read-only memory maps. Source-table columns reuse that
+storage rather than copying the full table into RAM. Keep this cache while the
+analysis is open; it may be deleted after closing the app and will be rebuilt
+on the next load. Loading from an external drive keeps this cache on that drive.
+Metadata and subsequent analysis operations still need RAM.
 Saves replace the destination only after writing successfully. Files use a
 versioned ZIP archive of JSON and NumPy arrays, without executable pickle data.
 This is separate from the automatic drift-correction cache described above.
@@ -257,16 +263,48 @@ to `.combined-cache/combined-*` inside the recovery folder, then released before
 the next tile. Combined numeric arrays (including regions, alignment images,
 site evidence, and source coordinates) are opened as memory-mapped arrays for
 viewing. Completed-tile previews open with the type-count plot.
-Small arrays are buffered together, and a bounded pool of file handles is reused
-across tiles to reduce repeated open/close overhead on external drives. Buffers
-are flushed before the combined results are opened for viewing.
+Shared alignment arrays are written once per tile and referenced by all barcode
+templates that use them. Tile appends use one buffered array stream instead of
+opening thousands of per-template files. At the end, each distinct combined row
+array is materialized once and shared through read-only memory maps. Templates
+that diverge on later tiles retain their own correct row histories. This reduces
+duplicate writes without holding the full run in RAM or changing recovery files.
+Restart the app to use this cache implementation; existing checkpoints can be
+resumed without recomputing completed tiles.
+During a tiled run, **Pause after Current Tile & Preview** finishes and checkpoints
+the current nonempty tile, then prepares a partial result from the tiles already
+combined in this session. If requested during startup/indexing, it finishes the
+first nonempty tile before pausing. Preparing the preview can take time; wait for
+the **Paused** message. Use **6 · Reconstruct Composite Image…** to build or export
+an image from those results. The composite editor labels the partial tile count.
+**Continue Paused Analysis** continues in the same app using the original run
+settings and source already in memory. It reads and combines saved tiles again,
+but computes only missing tiles. Wait for composite building/export to finish
+before continuing. Pausing on the final tile completes the run normally. After
+closing the app, use **Resume Tiled Analysis…** with the checkpoint folder instead.
+Shared nested classification metadata is retained once across templates during
+aggregation and finalization, avoiding repeated Python container copies. Loading
+checkpoints reports archive-reading progress separately from the time spent
+combining each tile, so disk reading does not appear as a data-release stall.
+Source-to-tile indexing groups at most 100,000 rows at a time into buffered
+per-tile files, then assembles the index sequentially on disk. The buffers use
+at most about 32 MiB across tiles. This avoids scattered writes through a large
+memory map on external drives. Coordinates are converted to nanometers only for the
+current tile; indexing no longer sorts or retains full-image coordinate arrays
+in RAM. Tile boundaries and localization order within each tile are unchanged.
+Finalization reports separate progress for opening templates, preparing source
+columns, and writing XY coordinates. Within the first template, large shared-array
+copies report the field name and copied MiB before and between bounded 4 MiB
+writes; the overall percentage can remain near 81% while this work completes. Selected source rows are gathered in chunks
+of at most 100,000 rows per column; numeric columns stay memory-mapped rather
+than allocating a full table copy. Text and extension-type columns still use RAM.
 
 The combined cache requires additional space on the checkpoint drive. It is
 disposable, not a replacement for the atomic tile archives: an interrupted merge
 can be rebuilt from those archives without repeating completed analysis. Each
 merge uses a new cache directory so existing views keep valid data. You may
 remove `.combined-cache` (and older `.preview-cache` folders) while the app is
-closed; the next merge rebuilds it. Source tables, tile indexing, metadata, and
+closed; the next merge rebuilds it. Source tables, metadata, and
 some alignment/plot calculations still use RAM, so this is not a fully bounded
 memory pipeline.
 
@@ -1362,3 +1400,59 @@ to approximately 2,000 pixels per axis. These display limits do not subsample
 classification coordinates or change analysis/export data. Full-image loading
 still needs 16 bytes per selected point for its float64 XY coordinate array;
 select a smaller ROI and enable Use ROI to reduce that cost.
+
+### Crash diagnostics
+
+The GUI starts a local flight recorder automatically. On macOS its files are in
+`~/Library/Application Support/PaintAnalysis/diagnostics/`; setting
+`PAINT_ANALYSIS_HOME` relocates this directory along with the other application
+support files. The launcher prints the diagnostics path at startup.
+
+- `latest.json`: process/run ID, latest action, timestamp, peak process RSS where
+  supported, free space on the diagnostics volume, and clean-exit status.
+- `events.jsonl`: timestamped actions, worker messages, archive member/table load
+  stages, validation, plot restoration, and caught/uncaught exception tracebacks.
+  History rolls over at approximately 5 MB into `events.previous.jsonl`.
+- `stacks.txt`: all Python thread stacks sampled every ten seconds.
+- `fatal.txt`: Python fatal-signal tracebacks when the runtime can produce them.
+- `previous-run-*`: copies preserved at the next startup, before new logs begin.
+
+Records contain file paths, UI control labels, and diagnostic metadata, not
+localization arrays or image contents. Nothing is uploaded. Logging failures do
+not interrupt analysis. A forced kill cannot execute a final handler: an absent
+clean-exit marker indicates an interrupted run, not proof of an out-of-memory
+kill. The last event and sampled stacks narrow the failing operation but cannot
+promise the exact instruction at the instant of SIGKILL. Keep the diagnostics
+folder when reporting an unexpected exit, preferably before restarting twice.
+
+Tiled aggregation stores the dense candidate-by-template probability matrices as
+shared, read-only float64 arrays on the checkpoint drive. Identical matrices in
+one tile share storage even when they were decoded as different Python objects;
+different tile histories remain separate. Archive readers/writers release their
+internal reference tables immediately. Composite overlap tracking uses one byte
+per source localization, saturating at “shared,” and source validation is chunked.
+
+On macOS the crash recorder now includes `physical_footprint_bytes` from the OS
+alongside `resident_bytes` and peak RSS. Footprint accounting covers compressed
+memory that the earlier RSS-only log missed. These fields improve diagnosis;
+they are not a guarantee that a large analysis will fit in available memory.
+
+### Composite smoothing controls
+
+The reconstruction window has two independent Gaussian widths, both in nm:
+
+- **Per-section Gaussian σ** (`sigma_nm`) smooths each species' density before
+  its weighted contribution is added to the composite.
+- **Whole-image Gaussian σ** (`global_sigma_nm`) smooths the assembled density
+  after all species have been added, separately for each RGB channel, before
+  display brightness scaling. Zero disables this step and is the default for
+  older saved configurations.
+
+Rebuild after changing either setting. PNG previews/exports and exported numerical
+densities use both settings; coverage remains an unsmoothed geometric count.
+The output includes padding for both Gaussian kernels. Whole-image smoothing can
+soften section boundaries but also softens detail. Because these operations are
+linear and the existing section filter is not clipped at section boundaries,
+their combined effect is approximately a Gaussian of width
+`sqrt(sigma_nm**2 + global_sigma_nm**2)` (apart from discretization/truncation).
+It does not selectively correct seams or replace missing channel measurements.

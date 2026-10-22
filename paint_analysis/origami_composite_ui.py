@@ -1,4 +1,5 @@
 """Independent reconstruction editor attached to the PAINT Origami tab."""
+from crash_tracking import record as record_diagnostic
 from dataclasses import asdict
 import json
 import queue
@@ -22,6 +23,7 @@ class CompositeWindow(tk.Toplevel):
         self.title('Origami · Reconstruct composite image')
         self.geometry('1180x850')
         self.result = None
+        self._closed = False
         self.busy = False
         self.codebook = {}
         self.geometry_settings = {}
@@ -30,15 +32,36 @@ class CompositeWindow(tk.Toplevel):
         self.events = queue.Queue()
         self.status = tk.StringVar(value='Assign each template a color and XY shift, then check the image region.')
         self.variables = {}
-        controls = ttk.Frame(self, padding=8)
+        self.source_scope = tk.StringVar(value='')
+        # Keep the controls and a full-size preview in one scrollable page.
+        viewport = ttk.Frame(self)
+        viewport.pack(fill='both', expand=True)
+        viewport.rowconfigure(0, weight=1)
+        viewport.columnconfigure(0, weight=1)
+        self.page_canvas = tk.Canvas(viewport, highlightthickness=0, yscrollincrement=24)
+        self.page_canvas.grid(row=0, column=0, sticky='nsew')
+        page_vertical = ttk.Scrollbar(viewport, orient='vertical', command=self.page_canvas.yview)
+        page_vertical.grid(row=0, column=1, sticky='ns')
+        page_horizontal = ttk.Scrollbar(viewport, orient='horizontal', command=self.page_canvas.xview)
+        page_horizontal.grid(row=1, column=0, sticky='ew')
+        self.page_canvas.configure(yscrollcommand=page_vertical.set, xscrollcommand=page_horizontal.set)
+        self.page = ttk.Frame(self.page_canvas)
+        self.page_window = self.page_canvas.create_window((0, 0), window=self.page, anchor='nw')
+        self.page.bind('<Configure>', self.resize_page)
+        self.page_canvas.bind('<Configure>', self.resize_page)
+        self.bind('<MouseWheel>', self.scroll_page)
+        self.bind('<Button-4>', self.scroll_page)
+        self.bind('<Button-5>', self.scroll_page)
+        ttk.Label(self.page, textvariable=self.source_scope, wraplength=1120).pack(fill='x', padx=12, pady=3)
+        controls = ttk.Frame(self.page, padding=8)
         controls.pack(fill='x')
         for label, command in [('Load barcode templates…', self.load_templates),
                                ('Load saved RGB picklist batch…', self.load_picklist_batch),
                                ('Load image encoding settings…', self.load_encoding),
                                ('Load mappings…', self.load_mappings), ('Save mappings…', self.save_mappings)]:
             ttk.Button(controls, text=label, command=command).pack(side='left', padx=3)
-        ttk.Label(self, text='Load image_manifest.json from a saved RGB picklist batch to fill color, XY placement, and image region. Unmatched templates need manual mapping.').pack(anchor='w', padx=12)
-        container = ttk.Frame(self)
+        ttk.Label(self.page, text='Load image_manifest.json from a saved RGB picklist batch to fill color, XY placement, and image region. Unmatched templates need manual mapping.').pack(anchor='w', padx=12)
+        container = ttk.Frame(self.page)
         container.pack(fill='x', padx=10)
         horizontal = ttk.Scrollbar(container, orient='horizontal')
         horizontal.pack(side='bottom', fill='x')
@@ -55,11 +78,18 @@ class CompositeWindow(tk.Toplevel):
         scrollbar.pack(side='right', fill='y')
         self.table.bind('<Configure>', self.resize_mapping_table)
         canvas.bind('<Configure>', self.resize_mapping_table)
-        ttk.Label(self, textvariable=self.mapping_summary, wraplength=1120).pack(fill='x', padx=12, pady=3)
+        ttk.Label(self.page, textvariable=self.mapping_summary, wraplength=1120).pack(fill='x', padx=12, pady=3)
         self.refresh_templates()
-        ttk.Label(self, text='Each barcode: rotate clockwise, then mirror left/right or top/bottom; XY shifts place its transformed upper-left corner. Rebuild after changes.').pack(anchor='w', padx=12)
-        ttk.Label(self, text='Brightness ×: 1 = unchanged, 0.5 = half, 2 = double, 0 = no signal. RGB scales all sections together to the brightest pixel.').pack(anchor='w', padx=12)
-        geometry_box = ttk.LabelFrame(self, text='Image-side rectangle in aligned coordinates (X right, Y up)', padding=6)
+        bulk_mirrors = ttk.Frame(self.page)
+        bulk_mirrors.pack(fill='x', padx=12, pady=3)
+        ttk.Label(bulk_mirrors, text='Mirror all sections before XY placement:').pack(side='left', padx=(0, 6))
+        for label, horizontal, vertical in [('None', False, False), ('Left ↔ right', True, False),
+                                            ('Top ↔ bottom', False, True), ('Both axes', True, True)]:
+            ttk.Button(bulk_mirrors, text=label,
+                       command=lambda x=horizontal, y=vertical: self.set_all_section_mirrors(x, y)).pack(side='left', padx=3)
+        ttk.Label(self.page, text='Each barcode: rotate clockwise, then mirror left/right or top/bottom; XY shifts place its transformed upper-left corner. Rebuild after changes.').pack(anchor='w', padx=12)
+        ttk.Label(self.page, text='Brightness ×: 1 = unchanged, 0.5 = half, 2 = double, 0 = no signal. RGB scales all sections together to the brightest pixel.').pack(anchor='w', padx=12)
+        geometry_box = ttk.LabelFrame(self.page, text='Image-side rectangle in aligned coordinates (X right, Y up)', padding=6)
         geometry_box.pack(fill='x', padx=10, pady=5)
         params = self.first_params()
         grid = self.full_grid(params)
@@ -68,10 +98,11 @@ class CompositeWindow(tk.Toplevel):
         sx, sy = float(params.get('spacing_x_nm', 9.9)), float(params.get('spacing_y_nm', 5.1))
         defaults = dict(left_nm=(left + right) / 2, top_nm=top + sy / 2,
                         width_nm=(right - left + sx) / 2, height_nm=top - bottom + sy,
-                        pixel_nm=1, sigma_nm=1.5, exclusion_radius_nm=2, rotation_deg=0)
+                        pixel_nm=1, sigma_nm=1.5, global_sigma_nm=0, exclusion_radius_nm=2, rotation_deg=0)
         labels = [('left_nm', 'Left X (nm)'), ('top_nm', 'Top Y (nm)'), ('width_nm', 'Width (nm)'),
-                  ('height_nm', 'Height (nm)'), ('pixel_nm', 'Output pixel (nm)'), ('sigma_nm', 'Gaussian σ (nm)'),
-                  ('exclusion_radius_nm', 'Marker exclusion (nm)'), ('rotation_deg', 'Whole image rotation (°)')]
+                  ('height_nm', 'Height (nm)'), ('pixel_nm', 'Output pixel (nm)'), ('sigma_nm', 'Per-section Gaussian σ (nm)'),
+                  ('exclusion_radius_nm', 'Marker exclusion (nm)'), ('rotation_deg', 'Whole image rotation (°)'),
+                  ('global_sigma_nm', 'Whole-image Gaussian σ (nm)')]
         for i, (key, label) in enumerate(labels):
             var = tk.StringVar(value=f'{defaults[key]:g}')
             self.variables[key] = var
@@ -85,18 +116,19 @@ class CompositeWindow(tk.Toplevel):
             widget.grid(row=i // 4 * 2 + 1, column=i % 4, sticky='ew', padx=5)
         self.average = tk.BooleanVar(value=True)
         self.average.trace_add('write', self.invalidate)
-        ttk.Checkbutton(geometry_box, text='Average signal per origami within each species', variable=self.average).grid(row=4, column=0, columnspan=3, sticky='w', pady=5)
-        ttk.Label(geometry_box, text='Positive decoded shifts move right/down in the composite. Preview the rectangle before building; exclude barcode and fiducial signal.').grid(row=5, column=0, columnspan=4, sticky='w')
-        actions = ttk.Frame(self)
+        ttk.Checkbutton(geometry_box, text='Average signal per origami within each species', variable=self.average).grid(row=6, column=0, columnspan=3, sticky='w', pady=5)
+        ttk.Label(geometry_box, text='Positive decoded shifts move right/down in the composite. Preview the rectangle before building; exclude barcode and fiducial signal.').grid(row=7, column=0, columnspan=4, sticky='w')
+        ttk.Label(geometry_box, text='Whole-image smoothing blends across section boundaries after assembly. Set σ to 0 to disable; rebuild after changes.').grid(row=8, column=0, columnspan=4, sticky='w')
+        actions = ttk.Frame(self.page)
         actions.pack(fill='x', padx=10)
         ttk.Button(actions, text='Preview image region', command=self.preview_region).pack(side='left', padx=3)
         ttk.Button(actions, text='Build composite', command=self.build).pack(side='left', padx=3)
-        ttk.Button(actions, text='Export PNG + densities + report…', command=self.export).pack(side='left', padx=3)
+        ttk.Button(actions, text='Export PNGs + densities + report…', command=self.export).pack(side='left', padx=3)
         self.view = tk.StringVar(value='Composite')
         selector = ttk.Combobox(actions, textvariable=self.view, values=('Composite', 'Red', 'Green', 'Blue', 'Coverage'), state='readonly', width=14)
         selector.pack(side='left', padx=8)
         selector.bind('<<ComboboxSelected>>', lambda e: self.plot_result())
-        orientation_bar = ttk.Frame(self)
+        orientation_bar = ttk.Frame(self.page)
         orientation_bar.pack(fill='x', padx=10, pady=(5,0))
         ttk.Label(orientation_bar, text='Whole image:').pack(side='left', padx=3)
         ttk.Button(orientation_bar, text='Rotate left 90°', command=lambda: self.rotate_display(-90)).pack(side='left', padx=3)
@@ -107,16 +139,38 @@ class CompositeWindow(tk.Toplevel):
             ttk.Checkbutton(orientation_bar, text=text, variable=variable).pack(side='left', padx=6)
             variable.trace_add('write', self.update_display_orientation)
         ttk.Button(orientation_bar, text='Reset orientation', command=self.reset_display_orientation).pack(side='left', padx=3)
-        ttk.Label(self, textvariable=self.status, wraplength=1120).pack(fill='x', padx=12, pady=5)
-        self.figure = Figure(figsize=(9, 4))
-        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
-        self.canvas.get_tk_widget().pack(fill='both', expand=True)
-        NavigationToolbar2Tk(self.canvas, self).update()
+        ttk.Label(self.page, textvariable=self.status, wraplength=1120).pack(fill='x', padx=12, pady=5)
+        self.figure = Figure(figsize=(10, 7.6), dpi=100, layout='constrained')
+        self.canvas = FigureCanvasTkAgg(self.figure, master=self.page)
+        self.canvas.get_tk_widget().configure(height=760)
+        self.canvas.get_tk_widget().pack(fill='x')
+        NavigationToolbar2Tk(self.canvas, self.page, pack_toolbar=False).pack(fill='x')
         saved = getattr(owner, 'origami_composite_configuration', None)
         if saved:
             self.apply_configuration(saved)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.poll_after_id = self.after(100, self.poll)
+
+    def resize_page(self, _event=None):
+        self.page_canvas.itemconfigure(
+            self.page_window, width=max(self.page_canvas.winfo_width(), self.page.winfo_reqwidth()))
+        self.page_canvas.configure(scrollregion=self.page_canvas.bbox('all'))
+
+    def scroll_page(self, event):
+        if getattr(event, 'num', None) in (4, 5):
+            amount = -1 if event.num == 4 else 1
+        elif event.delta:
+            amount = int(-event.delta / 120) if abs(event.delta) >= 120 else (-1 if event.delta > 0 else 1)
+        else:
+            return
+        self.page_canvas.yview_scroll(amount, 'units')
+        return 'break'
+
+    def reveal_preview(self):
+        self.page.update_idletasks()
+        self.resize_page()
+        self.page_canvas.yview_moveto(
+            self.canvas.get_tk_widget().winfo_y() / max(1, self.page.winfo_height()))
 
     def first_params(self):
         results = self.owner.origami_multi_template_results
@@ -130,12 +184,18 @@ class CompositeWindow(tk.Toplevel):
                                 float(params.get('spacing_x_nm', 9.9)), float(params.get('spacing_y_nm', 5.1)), params)
 
     def invalidate(self, *args):
+        if self.__dict__.get('_bulk_mapping_update', False):
+            return
         self.result = None
         self.update_mapping_summary()
         if hasattr(self, 'status'):
             self.status.set('Mapping or geometry changed. Build the composite to update the preview and exports.')
 
     def refresh_templates(self):
+        preview = self.first_params().get('_checkpoint_preview')
+        self.source_scope.set(
+            f"Partial analysis: {preview['completed']}/{preview['planned']} tiles. Composite uses completed tiles only."
+            if preview else '')
         previous = self.mapping_values() if self.rows else {}
         for child in self.table.winfo_children():
             child.destroy()
@@ -225,6 +285,18 @@ class CompositeWindow(tk.Toplevel):
             for key in ('color', 'x_shift_nm', 'y_shift_nm'):
                 row[key].set(self.codebook[code][key])
             row['code']._applied_code = code
+
+    def set_all_section_mirrors(self, horizontal, vertical):
+        """Set every row's existing mirror flags, preserving barcode placement."""
+        self._bulk_mapping_update = True
+        try:
+            for row in self.rows.values():
+                row['mirror_x'].set(horizontal)
+                row['mirror_y'].set(vertical)
+        finally:
+            self._bulk_mapping_update = False
+            self.invalidate()
+        self.status.set(f'Section mirrors updated for {len(self.rows)} templates. Click Build composite to apply before XY placement.')
 
     def rotate_display(self, degrees):
         # Keep the buttons visually clockwise/counterclockwise even with one
@@ -414,6 +486,7 @@ class CompositeWindow(tk.Toplevel):
             messagebox.showerror('Cannot preview region', str(exc), parent=self)
 
     def build(self):
+        record_diagnostic("composite_build_requested")
         if self.busy:
             return
         try:
@@ -451,9 +524,11 @@ class CompositeWindow(tk.Toplevel):
                     result['report']['source'] = source_path
                     result['report']['encoding_codes_without_observed_species'] = sorted(
                         set(configuration['codebook']) - {s.get('code', '') for s in result['report']['species'] if not s['missing']})
-                    self.events.put(('result', (result, configuration, results, source)))
+                    if not self._closed:
+                        self.events.put(('result', (result, configuration, results, source)))
                 except Exception as exc:
-                    self.events.put(('error', str(exc)))
+                    if not self._closed:
+                        self.events.put(('error', str(exc)))
             threading.Thread(target=work, daemon=True).start()
         except Exception as exc:
             messagebox.showerror('Cannot reconstruct', str(exc), parent=self)
@@ -462,6 +537,7 @@ class CompositeWindow(tk.Toplevel):
         try:
             while True:
                 kind, payload = self.events.get_nowait()
+                record_diagnostic('composite_event', kind=kind, message=payload if kind in ('progress', 'error') else 'result ready')
                 if kind == 'progress':
                     self.status.set(payload)
                 elif kind == 'error':
@@ -484,8 +560,9 @@ class CompositeWindow(tk.Toplevel):
                     self.result_inputs = (results, source)
                     species = result['report']['species']
                     self.status.set(f"{sum(s['accepted_origami'] for s in species)} origami; {sum(s['missing'] for s in species)} missing species. "
-                                    + '; '.join(f"{s['template']}: {s['accepted_origami']} copies, {s['image_localizations']} image localizations" for s in species))
+                                    'Per-template counts are included in the exported report.')
                     self.plot_result()
+                    self.reveal_preview()
         except queue.Empty:
             pass
         self.poll_after_id = self.after(100, self.poll)
@@ -521,7 +598,7 @@ class CompositeWindow(tk.Toplevel):
             path = filedialog.asksaveasfilename(parent=self, defaultextension='.png', initialfile='origami_composite.png', filetypes=[('PNG', '*.png')])
             if path:
                 export_composite(self.result, path)
-                self.status.set('Saved PNG, numerical RGB densities and coverage (.npz), and reconstruction report (.json).')
+                self.status.set('Saved plain PNG and _axes.png with nanometre axes, numerical RGB densities and coverage (.npz), and reconstruction report (.json).')
         except Exception as exc:
             messagebox.showerror('Cannot export composite', str(exc), parent=self)
 
@@ -530,5 +607,15 @@ class CompositeWindow(tk.Toplevel):
             self.owner.origami_composite_configuration = self.configuration()
         except (ValueError, tk.TclError):
             pass
+        self._closed = True
         self.after_cancel(self.poll_after_id)
+        self.result = None
+        self.result_inputs = None
+        while True:
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                break
+        if getattr(self.owner, 'origami_composite_window', None) is self:
+            self.owner.origami_composite_window = None
         self.destroy()

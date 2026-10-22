@@ -3,8 +3,29 @@ from contextlib import contextmanager
 from pathlib import Path
 from zipfile import BadZipFile
 import os
+import time
+import shutil
+import sys
 
 from analysis_session import load_analysis_session, save_analysis_session
+
+
+class LowSystemDiskSpaceError(RuntimeError):
+    """Stop before starting more work when macOS has little swap headroom."""
+
+
+def check_system_disk_headroom(minimum_bytes=2 * 1024 ** 3):
+    # Check the startup data volume even when checkpoints live externally.
+    if sys.platform != 'darwin':
+        return
+    free = shutil.disk_usage(Path.home()).free
+    if free < minimum_bytes:
+        raise LowSystemDiskSpaceError(
+            f'Analysis stopped before starting another tile: the startup disk has only '
+            f'{free / 1024 ** 3:.2f} GiB free (minimum {minimum_bytes / 1024 ** 3:.0f} GiB). '
+            'macOS needs startup-disk space for swap even with checkpoints on an external drive. '
+            'Completed tile checkpoints are retained. Free startup-disk space, then resume '
+            'the same checkpoint folder. This check cannot guarantee enough memory for every tile.')
 
 
 @contextmanager
@@ -58,10 +79,21 @@ class TileCheckpoint:
         if not path.exists():
             return None
         try:
-            record = load_analysis_session(path, self.record_types, array_cache_dir=self.array_cache_dir)
+            started = time.monotonic()
+            last_percent = -10
+
+            def progress(percent):
+                nonlocal last_percent
+                if percent >= last_percent + 10 or percent == 100:
+                    last_percent = percent
+                    self.report(f'Reading saved tile {index + 1}: {percent}%')
+
+            record = load_analysis_session(path, self.record_types, array_cache_dir=self.array_cache_dir,
+                                           progress_callback=progress)
             if (record['run_id'] != self.run_id or record['index'] != index
                     or tuple(record['bounds']) != tuple(bounds) or record['mode'] != mode):
                 raise ValueError('Tile belongs to a different run or geometry.')
+            self.report(f'Read saved tile {index + 1} in {time.monotonic() - started:.1f}s.')
             return record['payload']
         except OSError as exc:
             if self.array_cache_dir is not None or exc.errno in {12, 13, 24, 28, 30}:

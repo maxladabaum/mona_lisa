@@ -1,0 +1,34 @@
+{
+  "batch": "/Users/maxladabaum/Documents/GitHub/mona_lisa/picklist_generator/generated_output/big_mona_lisa/2026-10-20_08-35-56",
+  "checks": {
+    "transfer_site_fractions": 7200,
+    "templates_and_codes": 120,
+    "reconstruction_mappings": 120,
+    "combined_csv_copy_matches": true
+  },
+  "image_region_defaults": {
+    "left_nm": 5.000000000000003,
+    "top_nm": 20.4,
+    "width_nm": 49.5,
+    "height_nm": 40.8,
+    "rotation_deg": 0
+  },
+  "fiducials_vertical_symmetric": true,
+  "fiducials_half_turn_symmetric": false,
+  "vertical_reflection_bit_order": [
+    1,
+    3,
+    2,
+    4,
+    6,
+    5,
+    7
+  ],
+  "vertical_reflection_codes": {
+    "unchanged": 28,
+    "valid_code": 120,
+    "changed": 92,
+    "changed_color": 16
+  },
+  "limitations": "No measured localizations or remote-device session available. Transfer checks compare saved sequences and volumes with repository reference sequences, not physical plate contents."
+}

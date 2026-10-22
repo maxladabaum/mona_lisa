@@ -1,0 +1,13 @@
+{
+  "designs": 120,
+  "site_volume_checks": 7200,
+  "barcode_bits": 840,
+  "destination_wells": 120,
+  "image_pixel_placements": 4800,
+  "combined_equals_all_120_individual_picklists": true,
+  "unique_destination_wells": 120,
+  "remote_files_identical": {
+    "image_manifest.json": true,
+    "picklist_combined.csv": true
+  }
+}

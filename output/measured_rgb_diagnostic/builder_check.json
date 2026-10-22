@@ -1,0 +1,20 @@
+{
+  "designs": 120,
+  "synthetic_localizations": 7343,
+  "arbitrary_pose_rotations": true,
+  "all_codes_unchanged": true,
+  "maximum_density_error": 1.1102230246251565e-16,
+  "settings": {
+    "left_nm": 5.000000000000003,
+    "top_nm": 20.4,
+    "width_nm": 49.5,
+    "height_nm": 40.8,
+    "pixel_nm": 1.0,
+    "sigma_nm": 1.5,
+    "average_species": true,
+    "rotation_deg": 0,
+    "exclusion_radius_nm": 0,
+    "mirror_x": false,
+    "mirror_y": false
+  }
+}

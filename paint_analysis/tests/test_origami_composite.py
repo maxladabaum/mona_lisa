@@ -336,3 +336,64 @@ def test_imported_region_and_reconstruction_follow_identification_mirrors(mirror
     b = reconstruct_composite(source * signs, reflected, dict(a=mapping()), reflected_settings)
     np.testing.assert_array_equal(a['density'], b['density'])
     assert b['density'].sum() == 2
+
+
+def test_export_figure_labels_physical_size_after_rotation(tmp_path):
+    from origami_composite import composite_figure, reorient_composite
+    source = np.array([[4.5, 3.5]])
+    result = reconstruct_composite(source, dict(red=payload([footprint()])),
+                                   dict(red=mapping()), replace(settings(), width_nm=6, pixel_nm=.5))
+    result = reorient_composite(result, 90, True, False)
+    figure = composite_figure(result)
+    axis = figure.axes[0]
+    height, width = result['rgb'].shape[:2]
+    assert axis.get_xlabel() == 'Display X (nm)'
+    assert axis.get_ylabel() == 'Display Y (nm)'
+    assert tuple(axis.images[0].get_extent()) == (0, width*.5, height*.5, 0)
+    np.testing.assert_array_equal(axis.images[0].get_array(), result['rgb'])
+    path = tmp_path/'measured.png'
+    export_composite(result, path)
+    assert path.with_name('measured_axes.png').is_file()
+    from PIL import Image
+    np.testing.assert_array_equal(np.asarray(Image.open(path)), result['rgb'])
+
+
+def test_overlap_tracking_saturates_instead_of_wrapping():
+    # A byte counter must stay 'shared' even after more than 255 overlaps.
+    result = reconstruct_composite(np.array([[4.5, 3.5]]),
+        {'a': payload([footprint() for _ in range(257)])}, {'a': mapping()}, settings())
+    assert result['density'].sum() == 0
+    assert result['report']['shared_localizations_excluded'] == 1
+
+
+def test_whole_image_smoothing_matches_filter_after_weighted_assembly(tmp_path):
+    from scipy.ndimage import gaussian_filter
+    source = np.array([[4.5, 3.5], [24.5, 3.5]])
+    results = dict(a=payload([footprint()]), b=payload([footprint((20, 0))]))
+    mappings = dict(a=dict(mapping('Red'), brightness=2), b=mapping('Blue', 4, 0))
+    base = reconstruct_composite(source, results, mappings, settings())
+    smoothed = reconstruct_composite(source, results, mappings, replace(settings(), global_sigma_nm=1))
+    # New padding leaves room for the second Gaussian's tails.
+    padded = np.pad(base['density'], ((4, 4), (4, 4), (0, 0)))
+    expected = gaussian_filter(padded, sigma=(1, 1, 0), mode='constant')
+    np.testing.assert_allclose(smoothed['density'], expected)
+    assert not smoothed['density'][:, :, 1].any()  # no color-channel mixing
+    np.testing.assert_array_equal(smoothed['coverage'], np.pad(base['coverage'], ((4,4),(4,4),(0,0))))
+    assert smoothed['density'][4, 8, 0] > 0  # red crosses into the adjacent section
+    path = tmp_path / 'smoothed.png'
+    export_composite(smoothed, path)
+    np.testing.assert_array_equal(np.load(path.with_suffix('.npz'))['density'], expected)
+    assert json.loads(path.with_suffix('.json').read_text())['settings']['global_sigma_nm'] == 1
+
+
+def test_whole_image_smoothing_defaults_off_for_old_settings():
+    from dataclasses import asdict
+    old = asdict(settings())
+    old.pop('global_sigma_nm')
+    assert CompositeSettings(**old).global_sigma_nm == 0
+
+
+@pytest.mark.parametrize('sigma', [-1, np.nan, np.inf])
+def test_invalid_whole_image_smoothing_is_rejected(sigma):
+    with pytest.raises(ValueError):
+        replace(settings(), global_sigma_nm=sigma).validate()

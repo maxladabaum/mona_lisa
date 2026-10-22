@@ -255,3 +255,16 @@ def test_aggregation_reuses_shared_arrays_and_maps_large_results(tmp_path):
     assert combined.point_counts is other.point_counts
     assert not np.array_equal(combined.accepted_mask, other.accepted_mask)
     np.testing.assert_array_equal(combined.alignment_candidate_images, np.concatenate([large, large]))
+
+
+def test_gui_session_loader_maps_large_arrays_beside_archive(tmp_path):
+    live, _, _ = run_fixture()
+    payload = live._capture_origami_analysis()
+    # Unused additional data verifies the GUI path, without affecting validation.
+    payload['large_probe'] = np.arange(40_000, dtype=float)
+    path = tmp_path / 'saved.paintanalysis'
+    save_analysis_session(path, payload)
+    restored = live._read_origami_analysis_file(path, live._analysis_record_types())
+    assert isinstance(restored['large_probe'], np.memmap)
+    assert (tmp_path / '.analysis-cache').is_dir()
+    np.testing.assert_equal(restored['large_probe'], payload['large_probe'])

@@ -23,15 +23,16 @@ class CompositeSettings:
     exclusion_radius_nm: float = 2.0
     mirror_x: bool = False
     mirror_y: bool = False
+    global_sigma_nm: float = 0.0
 
     def validate(self):
         values = [self.left_nm, self.top_nm, self.width_nm, self.height_nm,
-                  self.pixel_nm, self.sigma_nm, self.exclusion_radius_nm]
+                  self.pixel_nm, self.sigma_nm, self.global_sigma_nm, self.exclusion_radius_nm]
         if not np.all(np.isfinite(values)):
             raise ValueError("Image geometry and rendering settings must be finite.")
         if min(self.width_nm, self.height_nm, self.pixel_nm) <= 0:
             raise ValueError("Image width, height and pixel size must be positive.")
-        if min(self.sigma_nm, self.exclusion_radius_nm) < 0:
+        if min(self.sigma_nm, self.global_sigma_nm, self.exclusion_radius_nm) < 0:
             raise ValueError("Smoothing and exclusion radius cannot be negative.")
         if self.rotation_deg not in (0, 90, 180, 270):
             raise ValueError("Display rotation must be 0, 90, 180 or 270 degrees.")
@@ -197,8 +198,11 @@ def extract_image_points(source, tree, corners, settings, excluded_sites=()):
 def reconstruct_composite(source, results, mappings, settings, exclusions=None, progress=None):
     settings.validate()
     source = np.asarray(source, dtype=float)
-    if source.ndim != 2 or source.shape[1] != 2 or not len(source) or not np.all(np.isfinite(source)):
+    if source.ndim != 2 or source.shape[1] != 2 or not len(source):
         raise ValueError("Load finite source localization coordinates before reconstruction.")
+    for start in range(0, len(source), 100_000):
+        if not np.all(np.isfinite(source[start:start + 100_000])):
+            raise ValueError("Load finite source localization coordinates before reconstruction.")
     if not results:
         raise ValueError("Run Step 4 to classify barcode templates first.")
     names = [name for name in results if mappings.get(name, {}).get('include', True)]
@@ -209,20 +213,24 @@ def reconstruct_composite(source, results, mappings, settings, exclusions=None, 
         raise ValueError("Check barcode mappings:\n" + "\n".join(f'Template "{name}": {message}' for name, message in issues))
     shifts = np.array([[float(mappings[n]['x_shift_nm']), float(mappings[n]['y_shift_nm'])] for n in names])
     sizes = np.array([orient_section(np.empty((0, 2)), settings.width_nm, settings.height_nm, mappings[n])[1] for n in names])
-    pad = 4 * settings.sigma_nm
+    pad = 4 * (settings.sigma_nm + settings.global_sigma_nm)
     lower = shifts.min(axis=0) - pad
     upper = (shifts + sizes).max(axis=0) + pad
     dimensions = np.ceil((upper - lower) / settings.pixel_nm)
     if not np.all(np.isfinite(dimensions)) or np.prod(dimensions) > 4_000_000:
         raise ValueError("Composite exceeds four million pixels. Increase the output pixel size.")
     shape = dimensions.astype(int)
-    tree = cKDTree(source)
-    # Count shared source indices so overlapping image regions never reuse signal.
-    ownership = np.zeros(len(source), dtype=np.uint32)
-    counts = {}
     total = sum(np.count_nonzero(results[n]['picks'].accepted_mask) for n in names)
     if total == 0:
         raise ValueError("No accepted origami in the included templates.")
+    if progress:
+        progress('Indexing source coordinates for reconstruction…')
+    tree = cKDTree(source)
+    # Only unseen / unique / shared matter. Saturate at two instead of
+    # allocating four bytes per source localization for an unbounded count.
+    ownership = np.zeros(len(source), dtype=np.uint8)
+    counts = {}
+    checked = 0
     def regions(name):
         picks = results[name]['picks']
         for index in np.flatnonzero(picks.accepted_mask):
@@ -231,7 +239,10 @@ def reconstruct_composite(source, results, mappings, settings, exclusions=None, 
     for name in names:
         counts[name] = int(np.count_nonzero(results[name]['picks'].accepted_mask))
         for _, (ids, _) in regions(name):
-            ownership[ids] += 1
+            ownership[ids] = np.minimum(ownership[ids] + 1, 2)
+            checked += 1
+            if progress and (checked % 100 == 0 or checked == total):
+                progress(f'Checking shared signal: {checked}/{total} accepted origami')
     density = np.zeros((shape[1], shape[0], 3), dtype=float)
     coverage = np.zeros_like(density, dtype=np.uint32)
     species = []
@@ -277,6 +288,12 @@ def reconstruct_composite(source, results, mappings, settings, exclusions=None, 
                             image_localizations=signal_count, missing=counts[name] == 0,
                             mirror_all_templates=bool(results[name].get('params', {}).get('mirror_all_templates', False)),
                             mirror_template_y=bool(results[name].get('params', {}).get('mirror_template_y', False))))
+    if settings.global_sigma_nm:
+        if progress:
+            progress('Smoothing the assembled image…')
+        # Smooth spatial axes only: never mix red, green and blue channels.
+        sigma = settings.global_sigma_nm / settings.pixel_nm
+        gaussian_filter(density, sigma=(sigma, sigma, 0), mode='constant', output=density)
     density = _orient_composite_raster(density, settings.rotation_deg, settings.mirror_x, settings.mirror_y)
     coverage = _orient_composite_raster(coverage, settings.rotation_deg, settings.mirror_x, settings.mirror_y)
     reference = float(np.max(density))
@@ -289,12 +306,32 @@ def reconstruct_composite(source, results, mappings, settings, exclusions=None, 
         output_pixel_nm=settings.pixel_nm, coordinate_frame='x right, y down; section clockwise rotation then mirrors, rebase section upper-left, decoded shifts, then clockwise display rotation, then horizontal/vertical display mirrors',
         intensity_units='localizations / nm^2' + (' / origami within species' if settings.average_species else ''),
         brightness_meaning='Per-species multiplier applied after averaging and smoothing, before summing channels; density contains weighted signal. RGB uses a shared maximum across all weighted channels.',
+        smoothing_meaning='sigma_nm smooths each species before summation; global_sigma_nm smooths the assembled density spatially per RGB channel before display scaling. Coverage remains geometric and unsmoothed.',
         coverage_meaning='Number of observed species whose extraction rectangles cover each pixel; not site-level sampling coverage'))
+
+
+def composite_figure(result):
+    """Render the exported RGB raster at its calibrated physical dimensions."""
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    rgb = result['rgb']
+    pixel_nm = float(result['report']['output_pixel_nm'])
+    figure = Figure(figsize=(6, 7), layout='constrained')
+    FigureCanvasAgg(figure)
+    axis = figure.add_subplot(111)
+    axis.imshow(rgb, origin='upper', interpolation='nearest', aspect='equal',
+                extent=(0, rgb.shape[1] * pixel_nm, rgb.shape[0] * pixel_nm, 0))
+    axis.set(xlabel='Display X (nm)', ylabel='Display Y (nm)',
+             title='Reconstructed composite')
+    return figure
 
 
 def export_composite(result, path):
     path = Path(path)
     Image.fromarray(result['rgb']).save(path)
+    figure = composite_figure(result)
+    figure.savefig(path.with_name(path.stem + '_axes.png'), dpi=300)
+    figure.clear()
     np.savez_compressed(path.with_suffix('.npz'), density=result['density'], coverage=result['coverage'],
                         pixel_nm=result['report']['output_pixel_nm'])
     path.with_suffix('.json').write_text(json.dumps(result['report'], indent=2) + '\n')

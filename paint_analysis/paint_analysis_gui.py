@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from crash_tracking import record as record_diagnostic, start as start_crash_tracking
+
+# Start before scientific-library imports, so startup failures leave evidence too.
+_crash_tracker = start_crash_tracking() if __name__ == '__main__' else None
+
 import math
 import json
 import hashlib
@@ -42,7 +47,7 @@ from matplotlib.widgets import RectangleSelector
 from source_selection import select_source_roi, source_points_nm, CHUNK_ROWS
 from roi_preview import roi_preview, ROI_PREVIEW_LIMIT
 from analysis_session import save_analysis_session, load_analysis_session
-from tile_checkpoint import TileCheckpoint, checkpoint_lock, load_checkpoint_run, validate_checkpoint_run
+from tile_checkpoint import TileCheckpoint, checkpoint_lock, load_checkpoint_run, validate_checkpoint_run, check_system_disk_headroom
 import classification_compute as compute
 from origami_analysis import iter_sparse_site_evidence
 from tiled_aggregation import StreamingTileResults, SEQUENCE_PARAMS
@@ -3894,8 +3899,34 @@ def frame_gap_values(locs: pd.DataFrame) -> np.ndarray:
 
 
 class PaintAnalysisApp(tk.Tk):
+    def _record_ui_action(self, event):
+        try:
+            widget = event.widget
+            # Tcl-created widgets (notably combobox popdown listboxes) have
+            # no Tkinter object, so event.widget is their Tcl path string.
+            if isinstance(widget, str):
+                widget_class = self.tk.call('winfo', 'class', widget)
+                label = ''
+            else:
+                widget_class = widget.winfo_class()
+                label = widget.cget('text') if 'text' in widget.keys() else ''
+            record_diagnostic('ui_action', widget=str(widget), widget_class=widget_class,
+                              label=label, input_event=str(event.type))
+        except Exception:
+            # Diagnostics must never interrupt UI interaction, including events
+            # for widgets destroyed before this global binding is dispatched.
+            pass
+
+    def report_callback_exception(self, exc, value, tb):
+        record_diagnostic('tk_callback_exception',
+                          traceback=''.join(traceback.format_exception(exc, value, tb)))
+        super().report_callback_exception(exc, value, tb)
+
     def __init__(self) -> None:
         super().__init__()
+        self.bind_all('<ButtonPress-1>', self._record_ui_action, add='+')
+        self.bind_all('<Return>', self._record_ui_action, add='+')
+        self.bind_all('<space>', self._record_ui_action, add='+')
         self.title(APP_TITLE)
         self.geometry("1240x780")
         # Keep the application usable on laptop-sized and split-screen windows.
@@ -5244,6 +5275,14 @@ class PaintAnalysisApp(tk.Tk):
             row=8, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         ttk.Label(tile_box, textvariable=self.origami_checkpoint_location, wraplength=320).grid(
             row=9, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.origami_pause_tiles_button = ttk.Button(
+            tile_box, text="Pause after Current Tile & Preview", command=self.pause_tiled_analysis)
+        self.origami_pause_tiles_button.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        self.origami_pause_tiles_button.state(["disabled"])
+        self.origami_continue_tiles_button = ttk.Button(
+            tile_box, text="Continue Paused Analysis", command=self.continue_tiled_analysis)
+        self.origami_continue_tiles_button.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        self.origami_continue_tiles_button.state(["disabled"])
         step_progress(tile_box, 4, 5)
         ttk.Label(
             tile_box,
@@ -10015,9 +10054,70 @@ class PaintAnalysisApp(tk.Tk):
         self._remember_file_dialog_dir(directory)
         return directory
 
+    def _refresh_tiled_pause_controls(self):
+        control = self.__dict__.get("_tiled_control") or {}
+        busy = self.__dict__.get("active_worker_count", 0) or self.__dict__.get("analysis_io_busy", False)
+        for name, enabled in (
+            ("origami_pause_tiles_button", control.get("state") == "running"),
+            ("origami_continue_tiles_button", control.get("state") == "paused" and not busy),
+        ):
+            button = self.__dict__.get(name)
+            if button is not None:
+                button.state(["!disabled" if enabled else "disabled"])
+
+    def _start_tiled_checkpoint(self, directory, run, *, initialize=False, completed_only=False):
+        self._tiled_control = dict(directory=directory, run=run, pause=threading.Event(),
+                                   state="preview" if completed_only else "running")
+        self._refresh_tiled_pause_controls()
+        if initialize:
+            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, initialize=True))
+        elif completed_only:
+            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, completed_only=True))
+        else:
+            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run))
+
+    def pause_tiled_analysis(self):
+        control = self.__dict__.get("_tiled_control")
+        if not control or control["state"] != "running":
+            return
+        control["state"] = "pausing"
+        control["pause"].set()
+        self.status.set("Pause requested: finishing and saving the current tile, then preparing completed results…")
+        self._refresh_tiled_pause_controls()
+
+    def continue_tiled_analysis(self):
+        control = self.__dict__.get("_tiled_control")
+        if not control or control["state"] != "paused":
+            return
+        window = self.__dict__.get("origami_composite_window")
+        if (self.__dict__.get("active_worker_count", 0) or self.__dict__.get("analysis_io_busy", False)
+                or (window is not None and window.winfo_exists() and window.busy)):
+            messagebox.showinfo("Analysis busy", "Wait for the current operation or composite build to finish before continuing.")
+            return
+        self._resume_tiled_checkpoint(control["directory"], control["run"])
+
+    def _complete_tiled_pause_control(self, payload):
+        control = self.__dict__.get("_tiled_control")
+        if not control or payload.get("_tiled_control_id") != control["run"]["run_id"]:
+            return
+        params = payload.get("params", payload.get("identification_params", {}))
+        if params.get("_tiled_paused"):
+            control["state"] = "paused"
+            count = params["_checkpoint_preview"]
+            note = (f"Paused: {count['completed']}/{count['planned']} tiles ready. "
+                    "Use 6 · Reconstruct Composite Image, then Continue Paused Analysis.")
+            self.status.set(note)
+            self.origami_identification_progress_text.set(note)
+            self._set_origami_step_progress(5, 100.0, note)
+        else:
+            self._tiled_control = None
+        self._refresh_tiled_pause_controls()
+
     @compute.timed
     def _checkpointed_tiled_worker(self, directory, run, *, initialize=False, completed_only=False):
         with checkpoint_lock(directory):
+            if not completed_only:
+                check_system_disk_headroom()
             if initialize:
                 self._worker_status(f"Saving source data and analysis settings for recovery to {directory}…")
                 save_analysis_session(Path(directory) / "run.paintanalysis", run)
@@ -10025,8 +10125,15 @@ class PaintAnalysisApp(tk.Tk):
             try:
                 multi = bool(run["context"]["identification_params"].get("custom_templates", ()))
                 with StreamingTileResults(Path(directory) / ".combined-cache", multi) as disk_results:
-                    return self._tiled_origami_worker(**run["context"], checkpoint=checkpoint,
-                                                      completed_only=completed_only, disk_results=disk_results)
+                    control = self.__dict__.get("_tiled_control")
+                    if control is not None and control["run"] is not run:
+                        control = None
+                    kind, payload = self._tiled_origami_worker(**run["context"], checkpoint=checkpoint,
+                        completed_only=completed_only, disk_results=disk_results,
+                        pause_event=control["pause"] if control is not None and not completed_only else None)
+                    if control is not None:
+                        payload["_tiled_control_id"] = run["run_id"]
+                    return kind, payload
             except OSError as exc:
                 raise OSError(exc.errno, f"Could not build tiled results in {directory}: {exc}. "
                               "Completed tile checkpoints are retained; resolve the storage error and retry.") from exc
@@ -10065,9 +10172,9 @@ class PaintAnalysisApp(tk.Tk):
             self.origami_figure.clear()
             self.origami_figure.text(0.5, 0.5, "Loading completed tiles…", ha="center", va="center")
             self.origami_canvas.draw_idle()
-            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, completed_only=True))
+            self._start_tiled_checkpoint(directory, run, completed_only=True)
         else:
-            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run))
+            self._start_tiled_checkpoint(directory, run)
 
     def analyze_tiled_origamis(self, *, use_tile_limit: bool = False) -> None:
         context = self._validated_origami_tile_context() if use_tile_limit else self._validated_origami_tile_context(include_partial_edges=True)
@@ -10169,7 +10276,7 @@ class PaintAnalysisApp(tk.Tk):
                                 tile_lattice=tile_lattice, tile_indices=tile_indices,
                                 identification_params=validated_params, source_params=source_params,
                                 overlay_params=overlay_params))
-        self._run_worker(lambda: self._checkpointed_tiled_worker(destination, run, initialize=True))
+        self._start_tiled_checkpoint(destination, run, initialize=True)
 
     def _tiled_origami_worker(
         self,
@@ -10183,6 +10290,7 @@ class PaintAnalysisApp(tk.Tk):
         checkpoint: TileCheckpoint | None = None,
         completed_only: bool = False,
         disk_results: StreamingTileResults | None = None,
+        pause_event: threading.Event | None = None,
     ) -> tuple[str, Any]:
         identification_params = dict(identification_params)
         identification_params["_tiled_full_field_display"] = len(tile_indices) == len(tile_lattice)
@@ -10205,31 +10313,40 @@ class PaintAnalysisApp(tk.Tk):
         if selected.empty:
             raise ValueError("The whole-image source contains no points after applying the validated source filters.")
 
-        x_nm = selected["x"].to_numpy(dtype=float, copy=False) * pixelsize
-        y_nm = selected["y"].to_numpy(dtype=float, copy=False) * pixelsize
-        x_starts = np.asarray(sorted({tile[0] for tile in tile_lattice}), dtype=float)
-        y_starts = np.asarray(sorted({tile[2] for tile in tile_lattice}), dtype=float)
         tile_width = max(tile[1] - tile[0] for tile in tile_lattice)
         tile_height = max(tile[3] - tile[2] for tile in tile_lattice)
-        nx = len(x_starts)
-        ny = len(y_starts)
-        # Clipped edge tiles have different widths; locate each point using
-        # the actual boundaries instead of dividing by the first tile width.
-        tile_x = np.searchsorted(x_starts, x_nm, side="right") - 1
-        tile_y = np.searchsorted(y_starts, y_nm, side="right") - 1
-        valid = (
-            np.isfinite(x_nm) & np.isfinite(y_nm)
-            & (tile_x >= 0) & (tile_x < nx) & (tile_y >= 0) & (tile_y < ny)
-            & (x_nm < max(tile[1] for tile in tile_lattice))
-            & (y_nm < max(tile[3] for tile in tile_lattice))
-        )
-        source_indices = np.flatnonzero(valid)
-        tile_ids = tile_y[valid] * nx + tile_x[valid]
-        order = np.argsort(tile_ids, kind="stable")
-        sorted_ids = tile_ids[order]
-        sorted_indices = source_indices[order]
-        del tile_ids, source_indices, order, tile_x, tile_y, valid
-
+        if disk_results is not None:
+            self._worker_status("Indexing source localizations in bounded chunks on disk…")
+            sorted_indices, tile_offsets = disk_results.tile_index(
+                selected, pixelsize, tile_lattice,
+                lambda done, total: self._worker_status(
+                    f"Indexing tile source rows: {done:,}/{len(selected):,}" if done <= len(selected)
+                    else f"Assembling tile index on disk: {done - len(selected):,}/{len(selected):,} rows"))
+        else:
+            x_nm = selected["x"].to_numpy(dtype=float, copy=False) * pixelsize
+            y_nm = selected["y"].to_numpy(dtype=float, copy=False) * pixelsize
+            x_starts = np.asarray(sorted({tile[0] for tile in tile_lattice}), dtype=float)
+            y_starts = np.asarray(sorted({tile[2] for tile in tile_lattice}), dtype=float)
+            tile_width = max(tile[1] - tile[0] for tile in tile_lattice)
+            tile_height = max(tile[3] - tile[2] for tile in tile_lattice)
+            nx = len(x_starts)
+            ny = len(y_starts)
+            # Clipped edge tiles have different widths; locate each point using
+            # the actual boundaries instead of dividing by the first tile width.
+            tile_x = np.searchsorted(x_starts, x_nm, side="right") - 1
+            tile_y = np.searchsorted(y_starts, y_nm, side="right") - 1
+            valid = (
+                np.isfinite(x_nm) & np.isfinite(y_nm)
+                & (tile_x >= 0) & (tile_x < nx) & (tile_y >= 0) & (tile_y < ny)
+                & (x_nm < max(tile[1] for tile in tile_lattice))
+                & (y_nm < max(tile[3] for tile in tile_lattice))
+            )
+            source_indices = np.flatnonzero(valid)
+            tile_ids = tile_y[valid] * nx + tile_x[valid]
+            order = np.argsort(tile_ids, kind="stable")
+            sorted_ids = tile_ids[order]
+            sorted_indices = source_indices[order]
+            del tile_ids, source_indices, order, tile_x, tile_y, valid
         accepted_regions: list[np.ndarray] = []
         accepted_centers: list[np.ndarray] = []
         tile_pick_results: list[OrigamiPickResult] = []
@@ -10243,9 +10360,19 @@ class PaintAnalysisApp(tk.Tk):
         available_tile_count = len(tile_lattice)
         empty_tile_count = 0
         for selection_index, lattice_index_value in enumerate(tile_indices):
+            # Honor pause only after a complete, checkpointed nonempty tile.
+            # Finalize the existing builder, so preview does not reload tiles.
+            if pause_event is not None and pause_event.is_set() and analyzed_nonempty_tiles:
+                completed_only = True
+                identification_params["_tiled_paused"] = True
+                self._worker_status("Paused at a saved tile boundary; preparing completed results…")
+                break
             lattice_index = int(lattice_index_value)
-            left = int(np.searchsorted(sorted_ids, lattice_index, side="left"))
-            right = int(np.searchsorted(sorted_ids, lattice_index, side="right"))
+            if disk_results is not None:
+                left, right = map(int, tile_offsets[lattice_index:lattice_index + 2])
+            else:
+                left = int(np.searchsorted(sorted_ids, lattice_index, side="left"))
+                right = int(np.searchsorted(sorted_ids, lattice_index, side="right"))
             if right <= left:
                 empty_tile_count += 1
                 self._origami_identification_worker_progress(
@@ -10267,9 +10394,15 @@ class PaintAnalysisApp(tk.Tk):
             # coarse connected-component detection, so signal or noise in an
             # adjacent tile could merge with an otherwise valid candidate and
             # make tiled classification disagree with Step 4.
-            tile_points = np.column_stack((x_nm[core_indices], y_nm[core_indices])).astype(
-                float, copy=False
-            )
+            if disk_results is not None:
+                tile_points = np.column_stack((
+                    selected["x"].to_numpy(copy=False)[core_indices],
+                    selected["y"].to_numpy(copy=False)[core_indices],
+                )).astype(float) * pixelsize
+            else:
+                tile_points = np.column_stack((x_nm[core_indices], y_nm[core_indices])).astype(
+                    float, copy=False
+                )
             analyzed_nonempty_tiles += 1
             analyzed_source_indices.append(core_indices)
 
@@ -10301,6 +10434,9 @@ class PaintAnalysisApp(tk.Tk):
                 )
                 tile_payload = saved_preview if completed_only else (checkpoint.load(lattice_index, tile_lattice[lattice_index], "multi") if checkpoint else None)
                 if tile_payload is None:
+                    if checkpoint is not None:
+                        check_system_disk_headroom()
+                    record_diagnostic('tile_analysis_started', tile=lattice_index + 1)
                     result_kind, tile_payload = self._identify_origami_worker(
                         tile_points, tile_identification_params, tile_progress)
                     if result_kind != "origami_multi_picks":
@@ -10318,8 +10454,10 @@ class PaintAnalysisApp(tk.Tk):
                 )
                 candidate_count += tile_unique_count
                 if disk_results is not None:
+                    self._worker_status(f"Combining tile {lattice_index + 1} on disk…")
+                    combine_started = time.monotonic()
                     disk_results.append(tile_payload)
-                    self._worker_status(f"Combined tile {lattice_index + 1} on disk; releasing tile data…")
+                    self._worker_status(f"Combined tile {lattice_index + 1} in {time.monotonic() - combine_started:.1f}s.")
                     del item, tile_payload, saved_preview
                 else:
                     multi_tile_payloads.append(tile_payload)
@@ -10329,6 +10467,9 @@ class PaintAnalysisApp(tk.Tk):
 
             saved_tile = saved_preview if completed_only else (checkpoint.load(lattice_index, tile_lattice[lattice_index], "single") if checkpoint else None)
             if saved_tile is None:
+                if checkpoint is not None:
+                    check_system_disk_headroom()
+                record_diagnostic('tile_analysis_started', tile=lattice_index + 1)
                 picks = identify_origami_regions(
                     tile_points,
                     pick_bin_size_nm=float(identification_params["pick_bin_size_nm"]),
@@ -10410,10 +10551,16 @@ class PaintAnalysisApp(tk.Tk):
             if selection_index % 10 == 0:
                 gc.collect()
 
-        del x_nm, y_nm, sorted_ids
+        if disk_results is None:
+            del x_nm, y_nm, sorted_ids
         if disk_results is not None and disk_results.tiles:
             self._origami_identification_worker_progress(81.0, "Opening combined results from disk…")
-            combined_disk_payload = disk_results.finish()
+            combined_disk_payload = disk_results.finish(
+                lambda done, total: self._origami_identification_worker_progress(
+                    81.0 + 7.0 * done / total, f"Opening combined templates: {done}/{total}"),
+                status=lambda current, total, message: self._origami_identification_worker_progress(
+                    81.0 + 7.0 * current / total,
+                    f"Finalizing template {current + 1}/{total} · {message}"))
             if multi_template_mode:
                 multi_tile_payloads = [combined_disk_payload]
             else:
@@ -10456,11 +10603,15 @@ class PaintAnalysisApp(tk.Tk):
                 for parameter_name in sequence_param_names:
                     if parameter_name in {"classification_lookup_eligible", "_alignment_accepted_mask"} and not any(parameter_name in item["params"] for item in tile_items):
                         continue
-                    combined_params[parameter_name] = tuple(
-                        value
-                        for item in tile_items
-                        for value in item["params"].get(parameter_name, ())
-                    )
+                    if disk_results is not None:
+                        # Already combined and shared by the disk builder. Re-
+                        # wrapping it would create one tuple/row-view per template.
+                        combined_params[parameter_name] = tile_items[0]["params"].get(parameter_name, ())
+                    else:
+                        combined_params[parameter_name] = tuple(
+                            value for item in tile_items
+                            for value in item["params"].get(parameter_name, ())
+                        )
                 combined_templates.append(
                     {
                         "name": name,
@@ -10481,8 +10632,16 @@ class PaintAnalysisApp(tk.Tk):
             assigned_count = int(np.sum(combined_counts))
             # Whole-image overviews retain edge localizations as spatial context.
             # Classification still runs only on the selected tiles.
-            combined_locs = selected if selected_tile_count == available_tile_count else selected.iloc[np.concatenate(analyzed_source_indices)]
-            combined_points_nm = (disk_results.source_points(combined_locs, pixelsize) if disk_results is not None
+            self._origami_identification_worker_progress(89.0, "Preparing source localization table…")
+            combined_locs = (selected if selected_tile_count == available_tile_count else
+                             disk_results.source_table(selected, analyzed_source_indices,
+                                 lambda done, total: self._origami_identification_worker_progress(
+                                     89.0 + 7.0 * done / total, f"Preparing source columns: {done}/{total}"))
+                             if disk_results is not None else selected.iloc[np.concatenate(analyzed_source_indices)])
+            self._origami_identification_worker_progress(97.0, "Writing source XY coordinates…")
+            combined_points_nm = (disk_results.source_points(combined_locs, pixelsize,
+                                      lambda done, total: self._origami_identification_worker_progress(
+                                          97.0 + 2.0 * done / total, f"Writing source coordinates: {done:,}/{total:,}")) if disk_results is not None
                                   else combined_locs[["x", "y"]].to_numpy(dtype=float) * pixelsize)
             limited_selection = selected_tile_count < available_tile_count
             selection_description = (
@@ -10576,8 +10735,16 @@ class PaintAnalysisApp(tk.Tk):
             combined_picks = tile_pick_results[0]
         else:
             combined_picks = concatenate_origami_pick_results(tile_pick_results)
-        combined_locs = selected if selected_tile_count == available_tile_count else selected.iloc[np.concatenate(analyzed_source_indices)]
-        combined_points_nm = (disk_results.source_points(combined_locs, pixelsize) if disk_results is not None
+        self._origami_identification_worker_progress(89.0, "Preparing source localization table…")
+        combined_locs = (selected if selected_tile_count == available_tile_count else
+                         disk_results.source_table(selected, analyzed_source_indices,
+                             lambda done, total: self._origami_identification_worker_progress(
+                                 89.0 + 7.0 * done / total, f"Preparing source columns: {done}/{total}"))
+                         if disk_results is not None else selected.iloc[np.concatenate(analyzed_source_indices)])
+        self._origami_identification_worker_progress(97.0, "Writing source XY coordinates…")
+        combined_points_nm = (disk_results.source_points(combined_locs, pixelsize,
+                                      lambda done, total: self._origami_identification_worker_progress(
+                                          97.0 + 2.0 * done / total, f"Writing source coordinates: {done:,}/{total:,}")) if disk_results is not None
                                   else combined_locs[["x", "y"]].to_numpy(dtype=float) * pixelsize)
         limited_selection = selected_tile_count < available_tile_count
         selection_description = (
@@ -11452,6 +11619,7 @@ class PaintAnalysisApp(tk.Tk):
         return "link_map", map_result
 
     def _run_worker(self, func: Any) -> None:
+        record_diagnostic('worker_queued', operation=getattr(func, '__qualname__', str(func)))
         self._hide_error_indicator()
         self.active_worker_count = self.__dict__.get("active_worker_count", 0) + 1
 
@@ -11462,7 +11630,9 @@ class PaintAnalysisApp(tk.Tk):
                                  args=(stop_watchdog, getattr(func, "__name__", "worker")),
                                  daemon=True).start()
             try:
+                record_diagnostic('worker_started', operation=getattr(func, '__qualname__', str(func)))
                 result = func()
+                record_diagnostic('worker_completed', result_kind=result[0])
                 if result[0] in {"origami_stage_preview", "origami_picks", "origami_multi_template", "origami_tiled"}:
                     cached_render = getattr(self, "origami_source_render_result", None)
                     if cached_render is not None:
@@ -11471,6 +11641,7 @@ class PaintAnalysisApp(tk.Tk):
                         PaintAnalysisApp._prepare_origami_display_contrast(cached_render)
                 self.worker_queue.put(("result", result))
             except Exception as exc:
+                record_diagnostic("worker_error", traceback=traceback.format_exc())
                 self.worker_queue.put(("error", (exc, traceback.format_exc())))
             finally:
                 stop_watchdog.set()
@@ -11479,6 +11650,7 @@ class PaintAnalysisApp(tk.Tk):
         threading.Thread(target=target, daemon=True).start()
 
     def _worker_status(self, message: str) -> None:
+        record_diagnostic('worker_status', message=message)
         self.worker_queue.put(("status", message))
 
     def _poll_worker(self) -> None:
@@ -11488,6 +11660,7 @@ class PaintAnalysisApp(tk.Tk):
                 kind, payload = self.worker_queue.get_nowait()
                 if kind == "worker_done":
                     self.active_worker_count = max(0, self.__dict__.get("active_worker_count", 0) - 1)
+                    self._refresh_tiled_pause_controls()
                 elif kind == "analysis_io_progress":
                     self._update_analysis_load_progress(payload)
                 elif kind == "analysis_io":
@@ -11506,6 +11679,10 @@ class PaintAnalysisApp(tk.Tk):
                     self._set_origami_step_progress(self.origami_active_step, percent, str(message))
                 elif kind == "error":
                     exc, details = payload
+                    control = self.__dict__.get("_tiled_control")
+                    if control and control["state"] in {"running", "pausing", "preview"}:
+                        self._tiled_control = None
+                        self._refresh_tiled_pause_controls()
                     if self.origami_active_step in self.origami_step_progress_text:
                         self.origami_step_progress_text[self.origami_active_step].set(
                             f"Stopped: {exc}"
@@ -12084,6 +12261,8 @@ class PaintAnalysisApp(tk.Tk):
                             if self.loaded is not None and result_payload.get("source_path") == self.loaded.path:
                                 self._plot_origami_analysis(result_payload)
                                 self._refresh_origami_action_states()
+                        if isinstance(result_payload, dict) and "_tiled_control_id" in result_payload:
+                            self._complete_tiled_pause_control(result_payload)
                     except Exception as exc:
                         details = traceback.format_exc()
                         self.status.set("Error")
@@ -12804,11 +12983,14 @@ class PaintAnalysisApp(tk.Tk):
                 f"density contrast ({density_limits[0]:.3g}-{density_limits[1]:.3g} locs/render px)"
             )
         else:
+            record_diagnostic('source_density_preview_started', points=len(points_nm),
+                              pixel_nm=float(self.origami_preview_pixel_nm.get()))
             preview = render_localization_preview(
                 points_nm,
                 pixel_size_nm=max(float(self.origami_preview_pixel_nm.get()), 0.1),
                 blur_nm=1.0,
             )
+            record_diagnostic('source_density_preview_finished', shape=preview['contrast'].shape)
             contrast = np.asarray(preview["contrast"], dtype=float)
             extent = tuple(float(value) for value in preview["extent"])
             colorbar_label = "density contrast (0–1)"
@@ -17768,6 +17950,7 @@ class PaintAnalysisApp(tk.Tk):
                 raise ValueError(f"Saved counts disagree with assignments for {name}.")
 
     def _install_origami_analysis(self, payload):
+        record_diagnostic("analysis_install_started")
         self.__dict__.pop("_origami_saved_classifications", None)
         # Validate the complete decoded archive before replacing the current session.
         self._validate_origami_analysis(payload)
@@ -17793,7 +17976,9 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_zoom_render_running = False
         self.origami_zoom_render_pending = False
         self.origami_source_draw_signature = None
+        record_diagnostic("analysis_install_source", path=str(state["loaded"].path))
         self._after_load(state["loaded"], render_raw=False)
+        record_diagnostic("analysis_install_settings")
         for key in ANALYSIS_STATE_FIELDS:
             if key in state:
                 setattr(self, key, state[key])
@@ -17880,13 +18065,19 @@ class PaintAnalysisApp(tk.Tk):
             self.origami_plot_option.set("Individual origami gallery")
         self._show_origami_stage("Identify")
         self._finish_origami_identification_progress("Loaded saved analysis; no reanalysis required.")
+        record_diagnostic("analysis_restore_plot_started", plot=self.origami_plot_option.get())
         self.render_origami_plot()
+        record_diagnostic("analysis_restore_plot_finished")
         self.notebook.select(ORIGAMI_TAB)
 
     def _read_origami_analysis_file(self, path, records, progress_callback=None):
+        # Keep decompressed arrays beside the archive, not in RAM or on the
+        # potentially full system drive. Existing recovery files are unchanged.
         result = load_analysis_session(path, records,
+                                       array_cache_dir=Path(path).parent / ".analysis-cache",
                                        progress_callback=(lambda percent: progress_callback(min(99, percent)))
                                        if progress_callback is not None else None)
+        record_diagnostic("analysis_validation_started", path=str(path))
         if isinstance(result, dict) and "checkpoint_version" in result:
             validate_checkpoint_run(result)
             self._validate_origami_analysis(result["analysis"])
@@ -17895,6 +18086,7 @@ class PaintAnalysisApp(tk.Tk):
                              "from the same folder, or use Resume Tiled Analysis… and select that folder.")
         else:
             self._validate_origami_analysis(result)
+        record_diagnostic("analysis_validation_finished", path=str(path))
         if progress_callback is not None:
             progress_callback(100)
         return result
@@ -17926,6 +18118,7 @@ class PaintAnalysisApp(tk.Tk):
         return choice.get()
 
     def _complete_origami_analysis_io(self, path, loading, analysis, error):
+        record_diagnostic("analysis_io_delivered", path=str(path), loading=loading, error=error)
         checkpoint_action = self.__dict__.pop("_analysis_checkpoint_action", None)
         close_after_save = self.__dict__.pop("_close_after_analysis_save", False)
         dialog = self.__dict__.pop("_analysis_io_dialog", None)
@@ -17978,6 +18171,7 @@ class PaintAnalysisApp(tk.Tk):
         if not path_text:
             return
         path = Path(path_text)
+        record_diagnostic("analysis_io_requested", path=str(path), loading=loading, checkpoint_action=checkpoint_action)
         if not loading and self.loaded is not None and path.resolve() == self.loaded.path.resolve():
             messagebox.showerror("Choose another filename", "The analysis archive cannot overwrite the localization source file.")
             return
@@ -18019,6 +18213,7 @@ class PaintAnalysisApp(tk.Tk):
                     result = None
                 self.worker_queue.put(("analysis_io", (path, loading, result, None)))
             except Exception as exc:
+                record_diagnostic("analysis_io_error", path=str(path), traceback=traceback.format_exc())
                 self.worker_queue.put(("analysis_io", (path, loading, None, str(exc))))
         threading.Thread(target=work, daemon=True).start()
 
@@ -18135,6 +18330,8 @@ class PaintAnalysisApp(tk.Tk):
 def main() -> None:
     app = PaintAnalysisApp()
     app.mainloop()
+    if _crash_tracker is not None:
+        _crash_tracker.close()
 
 
 if __name__ == "__main__":

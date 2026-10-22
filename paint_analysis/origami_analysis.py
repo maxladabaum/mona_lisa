@@ -1981,30 +1981,49 @@ def render_localization_preview(
     blur_nm: float = 1.0,
     max_pixels: int = 4_000_000,
 ) -> dict[str, object]:
-    """Render original localization coordinates independently of the coarse picker grid."""
-    points_nm = np.asarray(points_nm, dtype=float)
-    points_nm = points_nm[np.all(np.isfinite(points_nm), axis=1)]
-    if not len(points_nm):
-        raise ValueError("There are no finite localizations to preview.")
-    if pixel_size_nm <= 0 or blur_nm < 0:
+    """Render all coordinates with bounded scratch memory, including mapped sources."""
+    if not np.isfinite(pixel_size_nm) or pixel_size_nm <= 0 or not np.isfinite(blur_nm) or blur_nm < 0:
         raise ValueError("Preview pixel size must be positive and blur cannot be negative.")
-    lower = np.floor(np.min(points_nm, axis=0) / pixel_size_nm) * pixel_size_nm
-    upper = np.ceil(np.max(points_nm, axis=0) / pixel_size_nm) * pixel_size_nm
-    span = np.maximum(upper - lower, pixel_size_nm)
+    if max_pixels < 1:
+        raise ValueError("Preview must allow at least one pixel.")
+    # Preserve disk-backed arrays and their dtype. Converting the whole source
+    # to float64 or applying a full-source finite mask can allocate gigabytes.
+    points_nm = np.asarray(points_nm)
+    if points_nm.ndim != 2 or points_nm.shape[1] != 2:
+        raise ValueError("Preview coordinates must have shape (N, 2).")
+
+    def finite_chunks():
+        for start in range(0, len(points_nm), 100_000):
+            block = np.asarray(points_nm[start:start + 100_000], dtype=float)
+            yield block[np.all(np.isfinite(block), axis=1)]
+
+    minimum, maximum = np.full(2, np.inf), np.full(2, -np.inf)
+    for block in finite_chunks():
+        if len(block):
+            minimum = np.minimum(minimum, block.min(axis=0))
+            maximum = np.maximum(maximum, block.max(axis=0))
+    if not np.all(np.isfinite(minimum)):
+        raise ValueError("There are no finite localizations to preview.")
+    lower = np.floor(minimum / pixel_size_nm) * pixel_size_nm
+    upper = np.maximum(np.ceil(maximum / pixel_size_nm) * pixel_size_nm, lower + pixel_size_nm)
+    span = upper - lower
     x_bins = max(1, int(np.ceil(span[0] / pixel_size_nm)))
     y_bins = max(1, int(np.ceil(span[1] / pixel_size_nm)))
     if x_bins * y_bins > max_pixels:
         scale = np.sqrt((x_bins * y_bins) / max_pixels)
-        x_bins = max(1, int(np.floor(x_bins / scale)))
-        y_bins = max(1, int(np.floor(y_bins / scale)))
+        x_bins = min(max_pixels, max(1, int(np.floor(x_bins / scale))))
+        y_bins = min(max_pixels // x_bins, max(1, int(np.floor(y_bins / scale))))
     effective_x_nm = float(span[0] / x_bins)
     effective_y_nm = float(span[1] / y_bins)
-    density, _x_edges, _y_edges = np.histogram2d(
-        points_nm[:, 0],
-        points_nm[:, 1],
-        bins=(x_bins, y_bins),
-        range=((lower[0], upper[0]), (lower[1], upper[1])),
-    )
+    density = np.zeros((x_bins, y_bins), dtype=float)
+    for block in finite_chunks():
+        if len(block):
+            counts, _, _ = np.histogram2d(
+                block[:, 0], block[:, 1], bins=(x_bins, y_bins),
+                range=((lower[0], upper[0]), (lower[1], upper[1])),
+            )
+            density += counts
+            del counts
     if blur_nm > 0:
         density = gaussian_filter(
             density,

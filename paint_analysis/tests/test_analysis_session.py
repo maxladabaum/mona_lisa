@@ -209,3 +209,60 @@ def test_large_arrays_can_load_from_disk_cache_without_changing_archive(tmp_path
     again = load_analysis_session(path, {}, array_cache_dir=cache)
     assert files[0].stat().st_mtime_ns == mtime
     np.testing.assert_array_equal(again['large'], data)
+
+
+def test_cached_source_tables_keep_mapped_columns(tmp_path):
+    import pandas as pd
+    data = np.arange(40_000, dtype=np.float64)
+    table = pd.DataFrame({'x': data, 'y': data + 1}, copy=False)
+    path = tmp_path / 'table.paintanalysis'
+    save_analysis_session(path, {'table': table})
+    restored = load_analysis_session(path, {}, array_cache_dir=tmp_path / 'cache')['table']
+    pd.testing.assert_frame_equal(restored, table)
+    for name in table:
+        column = restored[name].to_numpy(copy=False)
+        assert not column.flags.writeable
+        while getattr(column, 'base', None) is not None and not isinstance(column, np.memmap):
+            column = column.base
+        assert isinstance(column, np.memmap), 'Source table copied the mapped column into RAM'
+
+
+def test_cached_arrays_count_toward_load_progress_without_reextraction(tmp_path, monkeypatch):
+    from zipfile import ZipFile
+    path = tmp_path / 'cached-progress.paintanalysis'
+    cache = tmp_path / 'cache'
+    save_analysis_session(path, {'a': np.arange(100_000, dtype=float)})
+    load_analysis_session(path, {}, array_cache_dir=cache)
+    original = ZipFile.open
+    def no_array_read(self, name, *args, **kwargs):
+        filename = name.filename if hasattr(name, 'filename') else name
+        assert not filename.startswith('arrays/'), 'Cached array was decompressed again'
+        return original(self, name, *args, **kwargs)
+    monkeypatch.setattr(ZipFile, 'open', no_array_read)
+    progress = []
+    result = load_analysis_session(path, {}, array_cache_dir=cache, progress_callback=progress.append)
+    assert progress == sorted(progress)
+    assert progress[-1] == 100
+    assert any(90 <= value < 100 for value in progress)
+    np.testing.assert_equal(result['a'], np.arange(100_000))
+
+
+def test_archive_closures_do_not_retain_arrays_until_gc(tmp_path):
+    import gc
+    import weakref
+    path = tmp_path / 'release.paintanalysis'
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        data = np.arange(100_000)
+        reference = weakref.ref(data)
+        save_analysis_session(path, {'array': data})
+        del data
+        assert reference() is None, 'Save closure retained input array'
+        loaded = load_analysis_session(path, {})
+        reference = weakref.ref(loaded['array'])
+        del loaded
+        assert reference() is None, 'Decode closure retained loaded array'
+    finally:
+        if enabled:
+            gc.enable()
