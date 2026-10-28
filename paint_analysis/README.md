@@ -187,6 +187,15 @@ particle are restored when available. Use the Classification and View controls
 to inspect other saved results. Completed threshold-sweep tables are preserved; older saves can regenerate them
 from saved measurements without repeating detection or classification.
 
+When opening a tiled run's `run.paintanalysis` with **Load Analysis…**, choose
+**Load first N windows…** to inspect only a specified number of completed spatial
+windows, in saved tile order. Missing or unreadable tiles are skipped. Remaining
+tile files are not loaded, and the view is marked as partial. The shared source
+data still loads first. Saved windows load before source-row indexing, which then
+scans coordinates in chunks and writes index entries only for loaded windows.
+This option does not apply to a standalone analysis archive.
+The saved run remains intact for a later full load or resume.
+
 The archive embeds localization tables, detection/classification template images,
 digital-group schemas, mirror/brightness settings, analysis parameters, and the
 custom type-count axis order. Original source and template files are not required
@@ -690,6 +699,20 @@ with its own color scale. Display overlay toggles apply to each panel using that
 template's group definitions. Uncheck **Show legends** in the display controls
 to hide legends without hiding overlays or color scales. This preference is saved
 with the analysis and also applies to other Classification plots.
+Choose **Overlay colormap** in the display controls to use any registered Matplotlib
+colormap (including reversed `_r` palettes) for aligned density, site heatmaps,
+density galleries, and selected-origami density detail. **Default** keeps each
+plot’s original palette. The selection is saved with the analysis.
+Enable **White digital pixels** to show digital-pixel masks in white and alignment
+fiducials in a separate color on aligned overlays and galleries. This enables the
+bright and alignment overlays. Use **Fiducial color…** to choose the fiducial color
+(cyan by default). Density retains the selected colormap and ON/OFF diagnostic
+colors remain unchanged. Both preferences are saved with the analysis.
+For **Individual origami gallery**, use **Origami per panel** beside the plot to
+show 1, 4, 9, 16, 25, 64, 100, or 256 origami. **Gallery resolution** offers
+1× (the original resolution), 2×, and 4× as many pixels per side. Higher
+resolution preserves the physical field of view and blur, uses more memory,
+and also applies to gallery PDF exports. Both settings are saved with the analysis.
 Panels follow the type-count x-axis order; empty
 classifications show “No assigned origami”. Missing overlays build one at a time
 from saved aligned localizations, including in loaded analysis sessions.
@@ -1228,8 +1251,9 @@ classification steps first; tiled classification results are also supported.
    origami's locked pose, extracts the image rectangle, converts Y to downward,
    and applies the decoded XY shift. Positive shifts move right/down. Extraction
    reads the source data, including signal outside the barcode classification
-   crop. Known barcode-group sites and alignment fiducials are excluded within
-   the editable marker radius. Source localizations inside multiple accepted
+   crop. Only signal in the overlap extension near known barcode-group sites and
+   alignment fiducials is attenuated using Gaussian marker exclusion; the normal
+   image rectangle is unaffected. Source localizations inside multiple accepted
    image regions are excluded from every contribution to avoid double counting.
 6. By default, signal is averaged over accepted origami *within each species*,
    including copies with no image-side localizations. Disable that option for
@@ -1430,12 +1454,145 @@ shared, read-only float64 arrays on the checkpoint drive. Identical matrices in
 one tile share storage even when they were decoded as different Python objects;
 different tile histories remain separate. Archive readers/writers release their
 internal reference tables immediately. Composite overlap tracking uses one byte
-per source localization, saturating at “shared,” and source validation is chunked.
+per retained source localization, saturating at “shared.” Reconstruction scans
+source coordinates in 100,000-row chunks, validates them, and keeps only points
+within the circumscribed image-region circles of accepted origami in included
+templates. A small index of region centers drives this scan; the localization
+index is then built only over retained points. This avoids a full-acquisition
+float64 copy and spatial index for sparse accepted regions, including when the
+source is memory-mapped. Progress reports scanned and retained localization
+counts. Exact extraction boundaries, exclusions, and shared-signal rejection
+are unchanged. Dense regions covering most of the source still require a large
+localization index.
 
 On macOS the crash recorder now includes `physical_footprint_bytes` from the OS
 alongside `resident_bytes` and peak RSS. Footprint accounting covers compressed
 memory that the earlier RSS-only log missed. These fields improve diagnosis;
 they are not a guarantee that a large analysis will fit in available memory.
+
+### Load reconstruction directly from a saved analysis
+
+Use **Load reconstruction from analysis** next to **Load Analysis…** in the
+Origami sidebar. Select a normal `.paintanalysis` file or the `run.paintanalysis`
+inside a tiled-run folder. This opens a reconstruction-only view and leaves the
+main analysis untouched; it does not restore plots, galleries, overlays, candidate
+crops, localization tables, or classification probability matrices.
+
+For a normal analysis, the loader reads source XY coordinates, accepted saved
+poses, marker/grid geometry, and any saved reconstruction configuration. For a
+tiled run, it reads only the planned, completed `tile-*.paintanalysis` files,
+checks their run identity and bounds, and combines accepted poses. Keep those
+files beside `run.paintanalysis`. The source comes from the run's full-field XY
+columns with the saved pixel scale and source filters applied, rather than from
+the validation ROI. Extra source columns are read only when a saved filter needs
+them. Partial runs include completed-tile signal and show their saved-tile count;
+missing tiles are not analyzed. Single-template detection-only checkpoints are
+not substitutes for barcode classifications.
+
+Required numeric arrays of at least 1 MB are cached beside the archive in
+`.analysis-cache`, using the same cache as the normal analysis loader. Smaller
+arrays stay in memory: caching every tiny acceptance mask as a separate file can
+cost tens of seconds per tile on external drives. Tile archives up to 64 MB are
+read sequentially into a bounded buffer before selecting reconstruction inputs,
+avoiding hundreds of disk seeks; larger archives remain streamed from disk.
+Reopening also reuses derived XY coordinates for the same completed-tile
+selection. The first load still has to decompress required coordinates and read
+the archive's metadata; it skips decoding unrelated array payloads. Progress
+separately identifies sequential tile reads, metadata decoding, accepted-pose
+extraction, and source-coordinate preparation, with long-operation activity
+updates. Existing caches need not be deleted after upgrading.
+
+Older analyses did not save the RGB manifest or reconstruction mappings. For
+these, load **Load saved RGB picklist batch…** after import and define the image
+region. New analysis saves retain an existing reconstruction configuration and
+embedded manifest, which this loader restores automatically. Choose **Save
+reconstruction session…** to convert the imported inputs to the compact,
+fixed-region `.paintrecon` format described below.
+
+### Fast standalone reconstruction sessions
+
+After **Load reconstruction from analysis** (or a normal analysis load), open
+**6 · Reconstruct Composite Image…** if needed, load
+**Load saved RGB picklist batch…**, and set the image-side rectangle. Use
+**Save reconstruction session…** to write a single `.paintrecon` file. If the
+batch manifest has not been loaded yet, saving opens its file picker first and
+keeps the region currently defined in the reconstruction window.
+
+After restarting the application, open **6 · Reconstruct Composite Image…**
+directly and choose **Open reconstruction session…**. **Do not load the full
+analysis first.** The saved identifications, RGB batch manifest, exact per-template
+mappings (including manual adjustments), exclusion sites, and rendering settings
+are restored automatically. Click **Build composite** to use the current code.
+Opening a reconstruction session does not replace any analysis in the main window.
+Close the reconstruction window to return to that analysis.
+
+The session keeps only coordinates near the **fixed image region**, along with
+accepted poses and their original candidate IDs. It retains nearby points for
+all identified templates, including currently excluded templates, so inclusion
+can still be changed. Duplicate localizations and shared-signal rejection are
+preserved. Classification images, candidate crops, and probability matrices are
+omitted. Coordinates are stored uncompressed and memory-mapped on open; loading
+does not decompress or read the full source into memory. The one-time save still
+scans the original source and reports progress.
+
+The saved region's left, top, width, and height are read-only when reopened.
+Brightness, RGB placement, section/display orientation, output pixel size,
+smoothing, averaging, and marker exclusion σ remain editable. To change the
+extraction rectangle, use **Load reconstruction from analysis** again and save a
+new session with the desired region. Re-saving an
+open session requires a different filename. Saving is atomic and leaves an
+existing file intact if it fails. The embedded manifest means the original RGB
+batch folder is not needed to reopen the reconstruction.
+
+### Responsive image-region preview
+
+**Preview image region** scans the source in 100,000-row chunks on a background
+worker instead of building a whole-acquisition spatial index on the UI thread.
+The status reports scanned rows and nearby localizations, with elapsed-time
+updates during longer operations. **Cancel preview** stops the scan between
+chunks; closing the window also requests cancellation. Changed inputs invalidate
+an in-flight preview so an old region is not displayed as current.
+
+The preview uses the grid and exclusion markers for the selected accepted
+origami's template. It displays at most 20,000 reproducibly sampled nearby
+localizations and reports the full nearby count. This limit affects only the
+scatter preview; composite reconstruction still uses all eligible localizations.
+If there are no accepted origami, the preview shows geometry only.
+
+### Composite progress reporting
+
+Build reports validation, exclusion-site and extraction-region preparation,
+source scanning and indexing, overlap tracking, raster allocation, per-template
+rendering/smoothing/assembly, global smoothing, orientation, RGB scaling, report
+creation, and preview drawing. Counted work reports completed rows or origami.
+Background build and export operations also emit elapsed-time updates every
+second while a library operation has no finer progress information; these are
+activity indicators, not estimated percentages. Completion is shown after the
+preview is drawn. Export runs in a background worker and reports each of its four
+outputs, including compressed numerical data. Failure stops periodic updates and
+leaves an error status rather than an apparently unfinished stage.
+
+### Uniform replacement for an excluded color section
+
+To replace an unreliable template's section with a constant color, uncheck its
+**Include** box and enter a value in **Excluded fill %**. For example, set the
+green template at `(0, 40.8)` to **50** for uniform half-brightness green throughout
+its image rectangle. Leave the field blank for ordinary exclusion. The setting
+is ignored while **Include** is checked, so the measured template is then used.
+
+A fill affects only that section's selected color channel and uses the measured
+composite's shared display reference: 50% exports as green 128 on the 0–255 scale.
+Fills are applied after smoothing so the section remains uniform, then follow
+whole-image rotation and mirrors. Other color channels are unchanged. At least
+one included template with accepted origami is still required; if all measured
+signal is zero, the reference is one density unit. Overlapping synthetic fills in
+the same channel are rejected.
+
+PNG and numerical density exports include the replacement. Coverage, source
+localization counts, and accepted-origami counts remain measured; synthetic
+replacements are listed explicitly in the JSON report with their location,
+percentage, pixel count, and assigned density. Mapping files and reconstruction
+sessions retain the fill setting. Rebuild after editing it.
 
 ### Composite smoothing controls
 
@@ -1456,3 +1613,53 @@ linear and the existing section filter is not clipped at section boundaries,
 their combined effect is approximately a Gaussian of width
 `sqrt(sigma_nm**2 + global_sigma_nm**2)` (apart from discretization/truncation).
 It does not selectively correct seams or replace missing channel measurements.
+
+Marker exclusion applies only outside the normal rectangle, within the overlap
+extension. It has no effect inside the normal rectangle or when no overlap
+extension is used. It uses a Gaussian falloff instead of a hard radius. The control
+**Overlap marker exclusion σ (nm)** sets the width: a localization at distance d from the
+nearest excluded barcode/fiducial site contributes `1 - exp(-d² / (2σ²))`.
+Signal is zero at the site, about 39% at 1σ, 86% at 2σ, and 99% at 3σ.
+Set σ to zero to disable exclusion. Overlapping marker neighborhoods use the
+nearest site rather than multiplying weights. The region preview fades points
+with these same weights; exported density uses weighted localization counts,
+and reports include both raw retained counts and weighted counts. Existing saved
+`exclusion_radius_nm` values now specify σ when rebuilding a composite.
+
+The image-side geometry also has **Overlap blend width (nm)** and **Overlap
+blend height (nm)**. These define a second rectangle centered on the normal
+rectangle; zero follows the corresponding normal dimension and disables the
+extension on that axis. For example, normal height 45 nm with blend height 55 nm
+collects an additional 5 nm above and below. Nonzero blend dimensions must be
+at least the normal dimensions. Decoded XY shifts still place the normal
+rectangle's upper-left corner.
+
+Localizations inside the normal rectangle retain full blend weight. Outside,
+the weight falls as a Gaussian of distance from that rectangle, with each added
+margin spanning three standard deviations (about 1.1% weight at its outer
+edge). Horizontal and vertical weights multiply at corners, and marker
+exclusion weights multiply with the blend weight only outside the normal rectangle. Rotations and mirrors carry
+these extended tails with the section. The preview outlines the blend rectangle
+in dashed orange and fades example localizations with the same weights.
+
+By default, adjacent sections simply add their Gaussian-weighted signals,
+without overlap normalization. The **Normalize overlapping sections** checkbox
+is optional and defaults to off, including when loading older settings that do
+not contain this option. When enabled, same-channel signal is divided by the
+larger of one and the summed geometric blend weights. This normalization follows
+per-section smoothing and precedes whole-image smoothing. The choice is saved
+with reconstruction sessions and mappings and recorded in exported reports. Coverage still describes normal rectangles. The safeguard rejecting
+physical source localizations belonging to multiple accepted origami remains
+active; that is separate from blending decoded sections in the output image.
+
+New `.paintrecon` saves retain coordinates for the expanded extraction region
+and lock both normal and blend geometry on reload. Older saves open with blend
+extensions disabled: load reconstruction from the original analysis to choose
+a larger region, then save a new reconstruction file. Saved mapping settings
+and exported reports include the blend dimensions and weighting convention.
+
+To reopen a `.paintrecon` session on a fresh launch, use **Open reconstruction
+session…** directly below the analysis save/load controls in the Origami tab.
+This entry opens the composite editor and loads the selected session in the
+background; no source data or full analysis needs to be loaded first. Then
+click **Build composite** to regenerate the image.

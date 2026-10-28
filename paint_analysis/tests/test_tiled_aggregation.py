@@ -536,3 +536,15 @@ def test_equal_independent_probability_matrices_are_stored_once(tmp_path):
         loaded = load_analysis_session(path, {}, array_cache_dir=tmp_path / 'cache')
         assert loaded['a'] is loaded['b']
         np.testing.assert_array_equal(loaded['a'], matrix())
+
+
+def test_partial_tile_index_writes_only_requested_source_rows(tmp_path):
+    import pandas as pd
+    table = pd.DataFrame({'x': [0.5, 1.5, 2.5, 1.0, np.nan, -1.0],
+                          'y': [0.5] * 6})
+    lattice = [(0, 1, 0, 1), (1, 2, 0, 1), (2, 3, 0, 1)]
+    with StreamingTileResults(tmp_path, multi=False) as writer:
+        indices, offsets = writer.tile_index(table, 1, lattice, chunk_size=2, included_tiles=[1])
+        np.testing.assert_array_equal(indices, [1, 3])
+        np.testing.assert_array_equal(offsets, [0, 0, 2, 2])
+        assert (writer.directory / 'tile-source-index.bin').stat().st_size == 2 * 8

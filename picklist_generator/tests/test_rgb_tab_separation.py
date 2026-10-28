@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
 import picklist_app
@@ -9,7 +10,14 @@ def test_rgb_targets_are_independent_and_persist(tmp_path, monkeypatch):
     app = picklist_app.PicklistApp()
     app.withdraw()
     try:
-        assert {v.title for v in app.set_views} == {'PAINT P1','PAINT R1','LowConc PAINT R1'}
+        assert {v.title for v in app.set_views} == {
+            'Yaritza Extensions', 'Aptamers', 'Soyeon MB', 'miRNA', 'MB',
+            'PAINT P1', 'PAINT R1', 'LowConc PAINT R1',
+        }
+        for manual_view in app.set_views:
+            assert Path(manual_view.path_var.get()).is_file()
+            if manual_view.title not in picklist_app.PAINT_REPLACEMENT_TABS:
+                assert manual_view.desired_concentration_nm.get() == '50'
         view = app.rgb_image_view
         assert set(view.color_views) == {'R1 R','R1 G','R1 B'}
         view.auto_export_templates.set(False)

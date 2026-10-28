@@ -57,7 +57,7 @@ def test_closed_composite_releases_source_and_queued_results():
     reference = weakref.ref(source)
     events = queue.Queue()
     events.put(('result', source))
-    window = SimpleNamespace(owner=owner, configuration=lambda: {}, result=source,
+    window = SimpleNamespace(owner=owner, data_owner=owner, configuration=lambda: {}, result=source,
                              result_inputs=(source,), events=events, poll_after_id='poll',
                              after_cancel=Mock(), destroy=Mock())
     owner.origami_composite_window = window

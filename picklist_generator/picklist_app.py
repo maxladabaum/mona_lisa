@@ -103,7 +103,10 @@ DEFAULT_STORAGE_STATE = {"version": 2, "items": []}
 ROWS = ["H01", "H03", "H05", "H07", "H09", "H11", "H13", "H15"]
 COLS = ["{:02d}".format(i) for i in range(1, 13)]
 R1_SELECTION_COLORS = {"R1 R": "#ff0000", "R1 B": "#0000ff", "R1 G": "#00ff00"}
-ACTIVE_REPLACEMENT_TABS = {"PAINT P1", "PAINT R1", "LowConc PAINT R1"}
+PAINT_REPLACEMENT_TABS = {"PAINT P1", "PAINT R1", "LowConc PAINT R1"}
+ACTIVE_REPLACEMENT_TABS = PAINT_REPLACEMENT_TABS | {
+    "Yaritza Extensions", "Aptamers", "Soyeon MB", "miRNA", "MB",
+}
 
 
 class ScrollFrame(ttk.Frame):
@@ -137,6 +140,7 @@ class SetView:
         selection_changed=None,
         template_requested=None,
         base_transfer_volume=None,
+        scrollable=True,
     ) -> None:
         self.title = title
         self.selection_color = R1_SELECTION_COLORS.get(title, "#00ffff")
@@ -151,7 +155,7 @@ class SetView:
         self.path_var = tk.StringVar(value=str(csv_path))
         self.concentration_nm = 20000.0 if title == "LowConc PAINT R1" or title in R1_SELECTION_COLORS else 200000.0
         self.base_concentration_nm = 200000.0
-        self.desired_concentration_nm = tk.StringVar(value="25" if title == "LowConc PAINT R1" or title in R1_SELECTION_COLORS else ("250" if title in ACTIVE_REPLACEMENT_TABS else "50"))
+        self.desired_concentration_nm = tk.StringVar(value="25" if title == "LowConc PAINT R1" or title in R1_SELECTION_COLORS else ("250" if title in PAINT_REPLACEMENT_TABS else "50"))
         self.base_desired_concentration_nm = 50.0
         self.replacement_percentage = tk.StringVar(value="100%")
         self.site_fractions: Dict[str, float] = {}
@@ -161,7 +165,7 @@ class SetView:
         self.transfer_increment_nl = 25.0
         self.transfer_volume_nl = 25
         self.replacement_error = tk.StringVar()
-        self.excess_multiplier = tk.StringVar(value="5" if title in ACTIVE_REPLACEMENT_TABS else "1")
+        self.excess_multiplier = tk.StringVar(value="5" if title in PAINT_REPLACEMENT_TABS else "1")
         self.base_transfer_volume = base_transfer_volume if base_transfer_volume is not None else tk.StringVar(value="25")
         self.plate_name = plate_name
         self.variables: Dict[str, tk.BooleanVar] = {}
@@ -179,9 +183,14 @@ class SetView:
         self.panels = panels
         self._panel_cache = {}
 
-        scroll = ScrollFrame(parent)
-        scroll.pack(fill="both", expand=True)
-        toolbar = ttk.Frame(scroll.inner)
+        if scrollable:
+            scroll = ScrollFrame(parent)
+            scroll.pack(fill="both", expand=True)
+            content = scroll.inner
+        else:
+            content = ttk.Frame(parent)
+            content.pack(fill="both", expand=True)
+        toolbar = ttk.Frame(content)
         toolbar.pack(fill="x", padx=10, pady=(8, 2))
         ttk.Label(toolbar, text="{} replacement sheet".format(title)).pack(side="left")
         ttk.Label(toolbar, text="  Stock: {:g} µM".format(self.concentration_nm / 1000)).pack(side="left")
@@ -194,14 +203,14 @@ class SetView:
         ttk.Label(toolbar, textvariable=self.source_plate_label).pack(side="left", padx=5)
         ttk.Button(toolbar, text="Clear set", command=self.clear).pack(side="left", padx=(8, 0))
         if title == "LowConc PAINT R1":
-            ttk.Label(scroll.inner, text="D-Biotin: LowConc base plate SourcePlate8[8], wells P17–P24, stock 20 µM. "
+            ttk.Label(content, text="D-Biotin: LowConc base plate SourcePlate8[8], wells P17–P24, stock 20 µM. "
                       "Uses the plate default or a per-site concentration override.").pack(anchor="w", padx=12)
-        volume_bar = ttk.Frame(scroll.inner)
+        volume_bar = ttk.Frame(content)
         volume_bar.pack(fill="x", padx=12, pady=4)
         ttk.Label(volume_bar, text="Calculated base transfer (nL/staple, all manual tabs)").pack(side="left")
         ttk.Entry(volume_bar, textvariable=self.base_transfer_volume, state="readonly", width=8).pack(side="left", padx=8)
-        concentration_bar = ttk.Frame(scroll.inner)
-        concentration_bar.pack(fill="x", padx=12, pady=4)
+        concentration_bar = ttk.Frame(volume_bar)
+        concentration_bar.pack(side="left", padx=(12, 0))
         ttk.Label(concentration_bar, text="Plate default (nM)").pack(side="left")
         ttk.Entry(concentration_bar, textvariable=self.desired_concentration_nm, width=8).pack(side="left", padx=8)
         ttk.Label(concentration_bar, text="New selections (nM; blank = default)").pack(side="left")
@@ -210,12 +219,10 @@ class SetView:
         self.percentage_picker = ttk.Combobox(
             concentration_bar, textvariable=self.replacement_percentage, width=12, state="readonly")
         self.percentage_picker.pack(side="left", padx=8)
-        ttk.Label(scroll.inner, text="Selected sites keep their percentage and concentration override. Deselect and reselect to change or reset them.").pack(anchor="w", padx=12)
         self.available_levels = tk.StringVar()
-        ttk.Label(scroll.inner, textvariable=self.available_levels, wraplength=1000).pack(anchor="w", padx=12)
-        ttk.Label(scroll.inner, textvariable=self.replacement_error, foreground="#a40000", wraplength=1000).pack(anchor="w", padx=12)
+        ttk.Label(content, textvariable=self.replacement_error, foreground="#a40000", wraplength=1000).pack(anchor="w", padx=12)
         if self.title in COLOR_BITS:
-            encoding_bar = ttk.Frame(scroll.inner)
+            encoding_bar = ttk.Frame(content)
             encoding_bar.pack(fill="x", padx=12, pady=4)
             ttk.Checkbutton(encoding_bar, text="Include this color in run", variable=self.encoding_enabled,
                             command=self._encoding_changed).pack(side="left", padx=(0, 12))
@@ -225,9 +232,9 @@ class SetView:
                                       state="readonly", width=19)
                 picker.pack(side="left", padx=8)
                 picker.bind("<<ComboboxSelected>>", self._shift_changed)
-            ttk.Label(scroll.inner, text="Bits 1–2 identify the color; bits 3–6 follow the shift dropdowns. "
+            ttk.Label(content, text="Bits 1–2 identify the color; bits 3–6 follow the shift dropdowns. "
                       "Color bits stay displayed when excluded from the run; encoded sites are locked.").pack(anchor="w", padx=12)
-        panel_bar = ttk.Frame(scroll.inner)
+        panel_bar = ttk.Frame(content)
         panel_bar.pack(fill="x", padx=12, pady=(5, 2))
         ttk.Label(panel_bar, text="Panel:").pack(side="left")
         self.panel_var = tk.StringVar(value=str(self.panels[0]["label"]))
@@ -252,8 +259,8 @@ class SetView:
         ttk.Label(panel_bar, textvariable=self.orientation_summary, foreground="#3d626f").pack(
             side="left", padx=(12, 0)
         )
-        if self.title in {"Aptamers", "MB", "PAINT P1", "PAINT R1", "LowConc PAINT R1"} | ACTIVE_REPLACEMENT_TABS:
-            legend = tk.Frame(scroll.inner, background="#f0f0f0")
+        if self.title in {"Aptamers", "MB"} | PAINT_REPLACEMENT_TABS:
+            legend = tk.Frame(content, background="#f0f0f0")
             legend.pack(fill="x", padx=12, pady=(4, 2))
             self._legend_square(legend, self.SELECTABLE_BG, "").pack(side="left")
             tk.Label(legend, text=" Selectable", background="#f0f0f0").pack(side="left", padx=(0, 14))
@@ -262,14 +269,14 @@ class SetView:
             self._legend_square(legend, self.UNAVAILABLE_BG, "×", foreground="#62676b").pack(side="left")
             tk.Label(legend, text=" Not selectable", background="#f0f0f0").pack(side="left")
         if any(panel.get("spacing_x_nm") is not None for panel in self.panels):
-            radius_bar = ttk.Frame(scroll.inner)
+            radius_bar = ttk.Frame(content)
             radius_bar.pack(fill="x", padx=12, pady=4)
             ttk.Label(radius_bar, text="Circle radius (nm)").pack(side="left")
             ttk.Spinbox(radius_bar, from_=0.1, to=50.0, increment=0.5,
                         textvariable=self.circle_radius_var, width=8).pack(side="left", padx=8)
             ttk.Label(radius_bar, textvariable=self.circle_radius_error,
                       foreground="#a40000").pack(side="left")
-        self.panel_host = ttk.Frame(scroll.inner)
+        self.panel_host = ttk.Frame(content)
         self.panel_host.pack(fill="both", expand=True, padx=10, pady=6)
         self.refresh()
         self.circle_radius_var.trace_add("write", self._circle_radius_changed)
@@ -2024,11 +2031,10 @@ class PicklistApp(tk.Tk):
         storage_page = ttk.Frame(main_tabs)
         preview_page = ttk.Frame(main_tabs)
         main_tabs.add(replacement_page, text="1. Replacements")
-        main_tabs.add(template_page, text="2. Origami Templates")
-        main_tabs.add(settings_page, text="3. Run & Mixing Settings", state="disabled")
-        main_tabs.add(plate_page, text="4. Destination Plate")
-        main_tabs.add(storage_page, text="5. Storage")
-        main_tabs.add(preview_page, text="6. Results")
+        main_tabs.add(settings_page, text="2. Run & Mixing Settings", state="disabled")
+        main_tabs.add(plate_page, text="3. Destination Plate")
+        main_tabs.add(storage_page, text="4. Storage")
+        main_tabs.add(preview_page, text="5. Results")
         self.main_tabs = main_tabs
         self.replacement_page = replacement_page
         self.settings_page = settings_page
@@ -2046,7 +2052,10 @@ class PicklistApp(tk.Tk):
         )
         self.make_picklist_button.pack(side="bottom", fill="x", padx=12, pady=(6, 12))
         self._build_compatibility_footer(replacement_page)
-        hinge_controls = ttk.Frame(replacement_page, padding=(12, 8))
+        replacement_scroll = ScrollFrame(replacement_page)
+        replacement_scroll.pack(side="top", fill="both", expand=True)
+        replacement_content = replacement_scroll.inner
+        hinge_controls = ttk.Frame(replacement_content, padding=(12, 8))
         hinge_controls.pack(side="top", fill="x")
         self.hinge_type = tk.StringVar(
             value=HINGE_TYPES.get(str(self.config.get("hinge_type", "original")), HINGE_TYPES["original"])
@@ -2066,8 +2075,8 @@ class PicklistApp(tk.Tk):
         if BASE_PLATES[self.base_plate.get()][0] == "book_base_20uM_interleaved.csv":
             self.hinge_type.set(HINGE_TYPES["balanced_rigid"])
         self.transfer_volume = tk.StringVar(value=str(self.config.get("transfer_volume_nL", 25)))
-        set_tabs = ttk.Notebook(replacement_page)
-        set_tabs.pack(side="top", fill="both", expand=True)
+        set_tabs = ttk.Notebook(replacement_content)
+        set_tabs.pack(side="top", fill="x")
         for title, filename, plate_name, panels in panel_definitions():
             if title not in ACTIVE_REPLACEMENT_TABS:
                 continue
@@ -2083,6 +2092,7 @@ class PicklistApp(tk.Tk):
                     selection_changed=self._selections_changed,
                     template_requested=self._make_template_from_panel,
                     base_transfer_volume=self.transfer_volume,
+                    scrollable=False,
                 )
             )
 
@@ -2090,7 +2100,7 @@ class PicklistApp(tk.Tk):
             view.path_var.trace_add("write", lambda *_args: self._selections_changed())
         self._build_settings(settings_page, main_tabs, preview_page)
         self.base_plate.trace_add("write", self._base_plate_changed)
-        self._build_manual_synthesis(replacement_page, set_tabs)
+        self._build_manual_synthesis(replacement_content, set_tabs)
         plate_actions = ttk.Frame(plate_page, padding=(12, 10, 12, 0))
         plate_actions.pack(fill="x")
         ttk.Button(plate_actions, text="Start fresh plate", command=self._start_fresh_plate).pack(side="left")
@@ -2104,14 +2114,15 @@ class PicklistApp(tk.Tk):
         self._build_preview(preview_page)
         image_page = ttk.Frame(main_tabs)
         self.rgb_image_page = image_page
-        main_tabs.add(image_page, text="7. RGB Image")
+        main_tabs.add(image_page, text="6. RGB Image")
+        main_tabs.add(template_page, text="7. Origami Templates")
         image_scroll = ScrollFrame(image_page)
         image_scroll.pack(fill="both", expand=True)
         self.rgb_image_view = RGBImageView(image_scroll.inner, self, APP_DIR, STORAGE_STATE_PATH, PLATE_STATE_PATH)
         self.rgb_image_view.pack(fill="both", expand=True)
         from barcode_guard_view import BarcodeGuard
-        self.barcode_guard = BarcodeGuard(replacement_page, self, STORAGE_STATE_PATH.with_name("barcode_registry.json"))
-        self.barcode_guard.pack(side="top", fill="x", padx=12, before=hinge_controls)
+        self.barcode_guard = BarcodeGuard(replacement_content, self, STORAGE_STATE_PATH.with_name("barcode_registry.json"))
+        self.barcode_guard.pack(side="top", fill="x", padx=12, after=set_tabs)
         barcode_pool = ttk.Frame(self.rgb_image_view)
         barcode_pool.pack(fill="x", before=self.rgb_image_view.winfo_children()[0])
         ttk.Label(barcode_pool, text="Barcode experiment / pool (shared with Replacements)").pack(side="left")
@@ -2392,12 +2403,19 @@ class PicklistApp(tk.Tk):
         fields=(("Final volume (µL)",self.manual_final_volume),("Book-base target (nM)",self.manual_base_target),
                 ("Scaffold target (nM)",self.manual_scaffold_target),("Minimum transfer (nL)",self.manual_minimum_transfer),
                 ("Transfer increment (nL)",self.manual_transfer_increment))
+        fields_row = ttk.Frame(frame)
+        fields_row.grid(row=1,column=0,columnspan=8,sticky="ew",pady=(4,0))
         for index,(label,variable) in enumerate(fields):
-            row,col=1+index//3,(index%3)*2
-            ttk.Label(frame,text=label).grid(row=row,column=col,sticky="w",padx=4)
-            ttk.Entry(frame,textvariable=variable,width=9).grid(row=row,column=col+1,sticky="w",padx=4)
-        ttk.Label(frame,textvariable=self.base_path,wraplength=1000).grid(row=3,column=0,columnspan=8,sticky="w")
-        ttk.Label(frame,textvariable=self.manual_synthesis_status,wraplength=1000).grid(row=4,column=0,columnspan=8,sticky="w")
+            col=index*2
+            ttk.Label(fields_row,text=label).grid(row=0,column=col,sticky="w",padx=(4,0))
+            ttk.Entry(fields_row,textvariable=variable,width=9).grid(row=0,column=col+1,sticky="w",padx=(4,16))
+        status = ttk.Label(frame,textvariable=self.manual_synthesis_status,foreground="#a40000",wraplength=1000)
+        def show_synthesis_error(*_args):
+            if self.manual_synthesis_status.get():
+                status.grid(row=2,column=0,columnspan=8,sticky="w",pady=(4,0))
+            else:
+                status.grid_remove()
+        self.manual_synthesis_status.trace_add("write",show_synthesis_error)
         for variable in (self.manual_final_volume,self.manual_base_target,self.manual_scaffold_target):
             variable.trace_add("write",self._manual_synthesis_changed)
         for variable in (self.desired,self.staple,self.manual_minimum_transfer,self.manual_transfer_increment):
@@ -2436,7 +2454,7 @@ class PicklistApp(tk.Tk):
                 self.manual_stock_label.set("Base stock: {:g} µM".format(stock/1000))
                 volume=self._manual_base_transfer()
                 self.transfer_volume.set("{:g}".format(volume))
-                self.manual_synthesis_status.set("Calculated base transfer: {:g} nL per standard body staple. Each replacement/competitor follows its own target; all nonzero transfers obey the minimum and increment.".format(volume))
+                self.manual_synthesis_status.set("")
             except ValueError as exc:
                 self.transfer_volume.set("")
                 self.manual_synthesis_status.set(str(exc))

@@ -99,7 +99,7 @@ from origami_analysis import (
 from drift_analysis import undrift_rcc_with_lattice_suppression, memory_bounded_aim
 
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 
 APP_VERSION = "1.0.0"
@@ -192,6 +192,7 @@ ANALYSIS_STATE_FIELDS = (
     "origami_staged_candidates", "origami_staged_candidate_signature",
     "origami_source_candidate_fingerprint", "origami_type_count_order",
     "origami_selected_index", "origami_selected_match_index", "origami_gallery_view_limits",
+    "origami_composite_configuration",
 )
 ANALYSIS_GLOBAL_SETTINGS = ("pixel_size_nm", "exposure_ms", "link_radius_nm", "max_gap_frames",
                             "linking_source", "linking_scope", "render_disp_px_nm",
@@ -1629,7 +1630,7 @@ def _dark_overlay_paths(disks):
     return (MatplotlibPath(np.concatenate(vertices), np.concatenate(codes), readonly=True),)
 
 
-def draw_digital_dark_space(axis, params, transform=None):
+def draw_digital_dark_space(axis, params, transform=None, *, color="#38bdf8"):
     """Transform cached dark-mask paths without contouring or changing view limits."""
     groups = origami_alignment_dark_groups(params)
     disks = tuple(sorted(set((float(x), float(y), float(group["mask_radius_nm"]))
@@ -1641,10 +1642,10 @@ def draw_digital_dark_space(axis, params, transform=None):
         return []
     if transform is not None:
         paths = [MatplotlibPath(transform(path.vertices), path.codes) for path in paths]
-    fill = PathCollection(paths, facecolors=["#38bdf8"], edgecolors=["#38bdf8"],
+    fill = PathCollection(paths, facecolors=[color], edgecolors=[color],
                           linewidths=0, alpha=.25, hatch="///", zorder=5.8,
                           transform=axis.transData)
-    boundary = PathCollection(paths, facecolors="none", edgecolors=["#38bdf8"],
+    boundary = PathCollection(paths, facecolors="none", edgecolors=[color],
                               linewidths=1.1, zorder=6., transform=axis.transData)
     for artist in (fill, boundary):
         artist.set_in_layout(False)
@@ -1652,7 +1653,7 @@ def draw_digital_dark_space(axis, params, transform=None):
     return [fill, boundary]
 
 
-def draw_alignment_dark_boundary(axis, picks, transform=None):
+def draw_alignment_dark_boundary(axis, picks, transform=None, *, color="#22d3ee"):
     if picks is None:
         return []
     boundary = alignment_dark_boundary(
@@ -1662,7 +1663,7 @@ def draw_alignment_dark_boundary(axis, picks, transform=None):
     if len(boundary):
         if transform is not None:
             boundary = transform(boundary)
-        return axis.plot(boundary[:, 0], boundary[:, 1], color="#22d3ee", linestyle="--",
+        return axis.plot(boundary[:, 0], boundary[:, 1], color=color, linestyle="--",
                   linewidth=1.0, zorder=6.4, label="Exterior darkness boundary")
     return []
 
@@ -4060,6 +4061,9 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_source_density_artist: Any | None = None
         self.origami_source_colorbar: Any | None = None
         self.origami_plot_option = tk.StringVar(value="Individual origami gallery")
+        self.origami_colormap = tk.StringVar(value="Default")
+        self.origami_white_geometry = tk.BooleanVar(value=False)
+        self.origami_fiducial_color = tk.StringVar(value="#22d3ee")
         self.origami_workflow_stage = tk.StringVar(value="Source")
         self.origami_sidebar_visible = tk.BooleanVar(value=True)
         self.origami_fullscreen_plot = tk.BooleanVar(value=False)
@@ -4102,6 +4106,7 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_gallery_home_limits: tuple[tuple[float, float], tuple[float, float]] | None = None
         self.origami_gallery_page = tk.IntVar(value=1)
         self.origami_gallery_page_size = tk.StringVar(value="64")
+        self.origami_gallery_resolution = tk.StringVar(value="1×")
         self.origami_review_filter = tk.StringVar(value="All unclassified")
         self.origami_sweep_parameter = tk.StringVar(value="support")
         self.origami_sweep_values = tk.StringVar(value="")
@@ -5353,7 +5358,7 @@ class PaintAnalysisApp(tk.Tk):
             textvariable=self.origami_gallery_page_size,
             state="readonly",
             width=1,
-            values=("25", "64", "100", "256"),
+            values=("1", "4", "9", "16", "25", "64", "100", "256"),
         ).grid(row=9, column=1, sticky="ew", padx=(8, 0), pady=3)
         gallery_navigation = ttk.Frame(self.origami_overlay_advanced_frame)
         gallery_navigation.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(5, 0))
@@ -5427,11 +5432,15 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_primary_help.grid(row=1, column=0, sticky="ew", pady=(3, 0))
         analysis_files = ttk.Frame(sticky_actions)
         analysis_files.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        analysis_files.columnconfigure((0, 1), weight=1)
+        analysis_files.columnconfigure((0, 1), weight=1, uniform="analysis_files")
         ttk.Button(analysis_files, text="Save Analysis…", command=self.save_origami_analysis).grid(row=0, column=0, sticky="ew")
         ttk.Button(analysis_files, text="Load Analysis…", command=self.load_origami_analysis).grid(row=0, column=1, sticky="ew", padx=(5, 0))
+        ttk.Button(analysis_files, text="Load reconstruction from analysis",
+                   command=self.load_reconstruction_from_analysis).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+        ttk.Button(analysis_files, text="Open reconstruction session…",
+                   command=self.open_reconstruction_session).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0))
         ttk.Button(analysis_files, text="Classify Unclassified Only",
-                   command=self.reclassify_saved_measurements).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(5, 0))
+                   command=self.reclassify_saved_measurements).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(5, 0))
 
 
         self.origami_plot_area = ttk.Frame(self.origami_workspace, padding=(4, 4, 6, 4))
@@ -5532,6 +5541,12 @@ class PaintAnalysisApp(tk.Tk):
         )
         qc_display_specs = (
             (
+                "White digital pixels",
+                self.origami_white_geometry,
+                self._toggle_origami_white_geometry,
+                "Show digital pixels in white and fiducials in the selected fiducial color. Enables the bright and alignment overlays; density and diagnostic ON/OFF colors stay unchanged.",
+            ),
+            (
                 "Show coarse detection outlines",
                 self.origami_show_coarse_detection,
                 self._toggle_origami_coarse_detection,
@@ -5619,6 +5634,42 @@ class PaintAnalysisApp(tk.Tk):
             self.origami_qc_display_bar, text="Type-count x-axis order…",
             command=self._edit_origami_type_count_order)
         self.origami_type_order_button.grid(row=1 + math.ceil(len(qc_display_specs) / 3), column=0, sticky="w", pady=(5, 2))
+        colormap_row = 2 + math.ceil(len(qc_display_specs) / 3)
+        self.origami_colormap_label = ttk.Label(self.origami_qc_display_bar, text="Overlay colormap")
+        self.origami_colormap_label.grid(row=colormap_row, column=0, sticky="w", pady=(5, 2))
+        self.origami_colormap_combo = ttk.Combobox(
+            self.origami_qc_display_bar, textvariable=self.origami_colormap,
+            values=("Default", *sorted(matplotlib.colormaps)), state="readonly", width=20)
+        self.origami_colormap_combo.grid(row=colormap_row, column=1, sticky="w", pady=(5, 2))
+        self.origami_colormap_combo.bind("<<ComboboxSelected>>", self._on_origami_colormap_selection)
+        WidgetTooltip(self.origami_colormap_combo,
+                      "Matplotlib colormap for aligned density, site heatmaps, and origami density galleries. "
+                      "Default preserves each plot's original palette; _r names reverse a palette.")
+        gallery_controls = ttk.Frame(self.origami_qc_display_bar)
+        self.origami_gallery_display_controls = gallery_controls
+        gallery_controls.grid(row=colormap_row + 1, column=0, columnspan=3, sticky="w", pady=(5, 2))
+        ttk.Label(gallery_controls, text="Origami per panel").pack(side="left")
+        gallery_size = ttk.Combobox(
+            gallery_controls, textvariable=self.origami_gallery_page_size,
+            values=("1", "4", "9", "16", "25", "64", "100", "256"), state="readonly", width=5)
+        gallery_size.pack(side="left", padx=(6, 16))
+        gallery_size.bind("<<ComboboxSelected>>", self._on_origami_gallery_display_selection)
+        ttk.Label(gallery_controls, text="Gallery resolution").pack(side="left")
+        gallery_resolution = ttk.Combobox(
+            gallery_controls, textvariable=self.origami_gallery_resolution,
+            values=("1×", "2×", "4×"), state="readonly", width=5)
+        gallery_resolution.pack(side="left", padx=6)
+        gallery_resolution.bind("<<ComboboxSelected>>", self._on_origami_gallery_display_selection)
+        WidgetTooltip(gallery_resolution,
+                      "Render density tiles with 1×, 2×, or 4× as many pixels per side. "
+                      "Higher resolution also applies to gallery exports and uses more memory. "
+                      "Choose fewer origami per panel to see more detail.")
+        self.origami_fiducial_color_button = ttk.Button(
+            self.origami_qc_display_bar, text="Fiducial color…",
+            command=self._choose_origami_fiducial_color)
+        self.origami_fiducial_color_button.grid(row=colormap_row + 2, column=0, sticky="w", pady=(5, 2))
+        WidgetTooltip(self.origami_fiducial_color_button,
+                      "Choose the alignment fiducial overlay color. Also enables the alignment template overlay.")
         self.origami_qc_display_controls = tuple(qc_display_controls)
         for column in range(3):
             self.origami_qc_display_bar.columnconfigure(column, weight=1)
@@ -6157,6 +6208,7 @@ class PaintAnalysisApp(tk.Tk):
                 (self.origami_gallery_min_match, ""),
                 (self.origami_gallery_max_rms, ""),
                 (self.origami_gallery_page_size, "64"),
+                (self.origami_gallery_resolution, "1×"),
             )
             for variable, value in defaults:
                 variable.set(value)
@@ -6223,6 +6275,19 @@ class PaintAnalysisApp(tk.Tk):
             order_button = getattr(self, "origami_type_order_button", None)
             if order_button is not None:
                 order_button.grid_configure(row=1 + math.ceil(len(qc_controls) / column_count))
+            colormap_row = 2 + math.ceil(len(qc_controls) / column_count)
+            for name in ("origami_colormap_label", "origami_colormap_combo"):
+                control = getattr(self, name, None)
+                if control is not None:
+                    control.grid_configure(row=colormap_row)
+            gallery_controls = getattr(self, "origami_gallery_display_controls", None)
+            if gallery_controls is not None:
+                gallery_controls.grid_configure(row=colormap_row + 1, columnspan=column_count)
+            fiducial_button = getattr(self, "origami_fiducial_color_button", None)
+            if fiducial_button is not None:
+                fiducial_button.grid_configure(row=colormap_row + 2)
+
+
 
     def _toggle_origami_fullscreen_plot(self) -> None:
         if self.origami_fullscreen_plot.get():
@@ -7501,6 +7566,9 @@ class PaintAnalysisApp(tk.Tk):
         return "loaded", read_locs(source_path, self._load_progress_callback)
 
     def _on_close(self, *, analysis_saved: bool = False) -> None:
+        composite = self.__dict__.get("origami_composite_window")
+        if composite is not None and composite.prevent_close_during_session_io():
+            return
         if self.__dict__.get("analysis_io_busy"):
             messagebox.showinfo("Analysis file in progress", "Wait for saving or loading to finish before closing.")
             return
@@ -10065,14 +10133,14 @@ class PaintAnalysisApp(tk.Tk):
             if button is not None:
                 button.state(["!disabled" if enabled else "disabled"])
 
-    def _start_tiled_checkpoint(self, directory, run, *, initialize=False, completed_only=False):
+    def _start_tiled_checkpoint(self, directory, run, *, initialize=False, completed_only=False, window_limit=None):
         self._tiled_control = dict(directory=directory, run=run, pause=threading.Event(),
                                    state="preview" if completed_only else "running")
         self._refresh_tiled_pause_controls()
         if initialize:
             self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, initialize=True))
         elif completed_only:
-            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, completed_only=True))
+            self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run, completed_only=True, window_limit=window_limit))
         else:
             self._run_worker(lambda: self._checkpointed_tiled_worker(directory, run))
 
@@ -10114,7 +10182,7 @@ class PaintAnalysisApp(tk.Tk):
         self._refresh_tiled_pause_controls()
 
     @compute.timed
-    def _checkpointed_tiled_worker(self, directory, run, *, initialize=False, completed_only=False):
+    def _checkpointed_tiled_worker(self, directory, run, *, initialize=False, completed_only=False, window_limit=None):
         with checkpoint_lock(directory):
             if not completed_only:
                 check_system_disk_headroom()
@@ -10129,7 +10197,7 @@ class PaintAnalysisApp(tk.Tk):
                     if control is not None and control["run"] is not run:
                         control = None
                     kind, payload = self._tiled_origami_worker(**run["context"], checkpoint=checkpoint,
-                        completed_only=completed_only, disk_results=disk_results,
+                        completed_only=completed_only, disk_results=disk_results, window_limit=window_limit,
                         pause_event=control["pause"] if control is not None and not completed_only else None)
                     if control is not None:
                         payload["_tiled_control_id"] = run["run_id"]
@@ -10150,7 +10218,7 @@ class PaintAnalysisApp(tk.Tk):
         self._origami_analysis_io(loading=True, selected_path=Path(directory) / "run.paintanalysis",
                                   checkpoint_action="preview" if preview_only else "resume")
 
-    def _resume_tiled_checkpoint(self, directory, run, *, preview_only=False):
+    def _resume_tiled_checkpoint(self, directory, run, *, preview_only=False, window_limit=None):
         # Restore the embedded source and templates rather than mixing saved tiles
         # with whatever dataset/settings happen to be open in the current app.
         snapshot = run["analysis"]
@@ -10172,7 +10240,7 @@ class PaintAnalysisApp(tk.Tk):
             self.origami_figure.clear()
             self.origami_figure.text(0.5, 0.5, "Loading completed tiles…", ha="center", va="center")
             self.origami_canvas.draw_idle()
-            self._start_tiled_checkpoint(directory, run, completed_only=True)
+            self._start_tiled_checkpoint(directory, run, completed_only=True, window_limit=window_limit)
         else:
             self._start_tiled_checkpoint(directory, run)
 
@@ -10291,7 +10359,10 @@ class PaintAnalysisApp(tk.Tk):
         completed_only: bool = False,
         disk_results: StreamingTileResults | None = None,
         pause_event: threading.Event | None = None,
+        window_limit: int | None = None,
     ) -> tuple[str, Any]:
+        if window_limit is not None and (not completed_only or window_limit < 1):
+            raise ValueError("A positive window limit is only supported when viewing completed tiles.")
         identification_params = dict(identification_params)
         identification_params["_tiled_full_field_display"] = len(tile_indices) == len(tile_lattice)
         selected = source_locs
@@ -10315,7 +10386,11 @@ class PaintAnalysisApp(tk.Tk):
 
         tile_width = max(tile[1] - tile[0] for tile in tile_lattice)
         tile_height = max(tile[3] - tile[2] for tile in tile_lattice)
-        if disk_results is not None:
+        deferred_preview_index = completed_only and disk_results is not None
+        preview_tile_indices = []
+        if deferred_preview_index:
+            self._worker_status("Loading saved windows before locating their source rows…")
+        elif disk_results is not None:
             self._worker_status("Indexing source localizations in bounded chunks on disk…")
             sorted_indices, tile_offsets = disk_results.tile_index(
                 selected, pixelsize, tile_lattice,
@@ -10360,6 +10435,8 @@ class PaintAnalysisApp(tk.Tk):
         available_tile_count = len(tile_lattice)
         empty_tile_count = 0
         for selection_index, lattice_index_value in enumerate(tile_indices):
+            if window_limit is not None and analyzed_nonempty_tiles >= window_limit:
+                break
             # Honor pause only after a complete, checkpointed nonempty tile.
             # Finalize the existing builder, so preview does not reload tiles.
             if pause_event is not None and pause_event.is_set() and analyzed_nonempty_tiles:
@@ -10368,43 +10445,52 @@ class PaintAnalysisApp(tk.Tk):
                 self._worker_status("Paused at a saved tile boundary; preparing completed results…")
                 break
             lattice_index = int(lattice_index_value)
-            if disk_results is not None:
-                left, right = map(int, tile_offsets[lattice_index:lattice_index + 2])
-            else:
-                left = int(np.searchsorted(sorted_ids, lattice_index, side="left"))
-                right = int(np.searchsorted(sorted_ids, lattice_index, side="right"))
-            if right <= left:
-                empty_tile_count += 1
-                self._origami_identification_worker_progress(
-                    80.0 * (selection_index + 1) / selected_tile_count,
-                    f"Selected tile {selection_index + 1}/{selected_tile_count} "
-                    f"(lattice tile {lattice_index + 1}/{available_tile_count}): empty; skipped.",
-                )
-                continue
-            saved_preview = None
-            if completed_only:
+            if deferred_preview_index:
                 saved_preview = checkpoint.load(lattice_index, tile_lattice[lattice_index],
                                                 "multi" if multi_template_mode else "single") if checkpoint else None
                 if saved_preview is None:
                     continue
-            core_indices = sorted_indices[left:right]
-            core_x0, core_x1, core_y0, core_y1 = tile_lattice[lattice_index]
-            # Run the same spatial input through Steps 1-4 that a validation
-            # ROI uses.  The former footprint-sized halo was applied *before*
-            # coarse connected-component detection, so signal or noise in an
-            # adjacent tile could merge with an otherwise valid candidate and
-            # make tiled classification disagree with Step 4.
-            if disk_results is not None:
-                tile_points = np.column_stack((
-                    selected["x"].to_numpy(copy=False)[core_indices],
-                    selected["y"].to_numpy(copy=False)[core_indices],
-                )).astype(float) * pixelsize
+                preview_tile_indices.append(lattice_index)
+                core_x0, core_x1, core_y0, core_y1 = tile_lattice[lattice_index]
             else:
-                tile_points = np.column_stack((x_nm[core_indices], y_nm[core_indices])).astype(
-                    float, copy=False
-                )
+                if disk_results is not None:
+                    left, right = map(int, tile_offsets[lattice_index:lattice_index + 2])
+                else:
+                    left = int(np.searchsorted(sorted_ids, lattice_index, side="left"))
+                    right = int(np.searchsorted(sorted_ids, lattice_index, side="right"))
+                if right <= left:
+                    empty_tile_count += 1
+                    self._origami_identification_worker_progress(
+                        80.0 * (selection_index + 1) / selected_tile_count,
+                        f"Selected tile {selection_index + 1}/{selected_tile_count} "
+                        f"(lattice tile {lattice_index + 1}/{available_tile_count}): empty; skipped.",
+                    )
+                    continue
+                saved_preview = None
+                if completed_only:
+                    saved_preview = checkpoint.load(lattice_index, tile_lattice[lattice_index],
+                                                    "multi" if multi_template_mode else "single") if checkpoint else None
+                    if saved_preview is None:
+                        continue
+                core_indices = sorted_indices[left:right]
+                core_x0, core_x1, core_y0, core_y1 = tile_lattice[lattice_index]
+                # Run the same spatial input through Steps 1-4 that a validation
+                # ROI uses.  The former footprint-sized halo was applied *before*
+                # coarse connected-component detection, so signal or noise in an
+                # adjacent tile could merge with an otherwise valid candidate and
+                # make tiled classification disagree with Step 4.
+                if disk_results is not None:
+                    tile_points = np.column_stack((
+                        selected["x"].to_numpy(copy=False)[core_indices],
+                        selected["y"].to_numpy(copy=False)[core_indices],
+                    )).astype(float) * pixelsize
+                else:
+                    tile_points = np.column_stack((x_nm[core_indices], y_nm[core_indices])).astype(
+                        float, copy=False
+                    )
             analyzed_nonempty_tiles += 1
-            analyzed_source_indices.append(core_indices)
+            if not deferred_preview_index:
+                analyzed_source_indices.append(core_indices)
 
             def tile_progress(
                 percent: float,
@@ -10550,6 +10636,17 @@ class PaintAnalysisApp(tk.Tk):
                 del picks, saved_tile, saved_preview
             if selection_index % 10 == 0:
                 gc.collect()
+
+        if deferred_preview_index and preview_tile_indices:
+            self._worker_status(f"Locating source rows for {len(preview_tile_indices)} loaded windows…")
+            sorted_indices, tile_offsets = disk_results.tile_index(
+                selected, pixelsize, tile_lattice,
+                lambda done, total: self._worker_status(
+                    f"Locating source rows for loaded windows: {100 * done / total:.0f}%"),
+                included_tiles=preview_tile_indices)
+            analyzed_source_indices = [
+                sorted_indices[tile_offsets[index]:tile_offsets[index + 1]]
+                for index in preview_tile_indices]
 
         if disk_results is None:
             del x_nm, y_nm, sorted_ids
@@ -13230,7 +13327,6 @@ class PaintAnalysisApp(tk.Tk):
                         theoretical_grid_in_footprint(displayed_overlay_grid, corners)
                     )
                 if show_alignment and len(alignment_grid):
-                    self.origami_footprint_artists.extend(draw_alignment_dark_boundary(axis, picks, lambda points: theoretical_grid_in_footprint(points, picks.rectangle_corners_nm[region_index])))
                     alignment_positions.append(
                         theoretical_grid_in_footprint(alignment_grid, corners)
                     )
@@ -13450,7 +13546,7 @@ class PaintAnalysisApp(tk.Tk):
                     alignment_sites[:, 0],
                     alignment_sites[:, 1],
                     s=24,
-                    marker="s",
+                    marker="o",
                     facecolors="none",
                     edgecolors="#22d3ee",
                     linewidths=1.0,
@@ -14917,7 +15013,6 @@ class PaintAnalysisApp(tk.Tk):
                     )
                     theoretical_colors.extend(["#fde047" if inspection_preview else color] * len(displayed_overlay_grid))
                 if show_alignment and len(alignment_grid):
-                    self.origami_footprint_artists.extend(draw_alignment_dark_boundary(axis, picks, lambda points: theoretical_grid_in_footprint(points, picks.rectangle_corners_nm[region_index])))
                     alignment_positions.append(
                         theoretical_grid_in_footprint(
                             alignment_grid,
@@ -15246,7 +15341,7 @@ class PaintAnalysisApp(tk.Tk):
                 positions[:, 0],
                 positions[:, 1],
                 s=28,
-                marker="s",
+                marker="o",
                 facecolors="none",
                 edgecolors="#22d3ee",
                 linewidths=1.0,
@@ -15764,6 +15859,13 @@ class PaintAnalysisApp(tk.Tk):
         self.origami_gallery_current_indices = page_indices
         return page_indices, len(indices)
 
+    def _on_origami_gallery_display_selection(self, _event: Any = None) -> None:
+        self.origami_gallery_page.set(1)
+        self.origami_gallery_view_limits = None
+        if self.origami_plot_option.get() in {"Individual origami gallery", "Individual site assignments"}:
+            self.origami_last_rendered_plot_option = ""
+            self.render_origami_plot()
+
     def _apply_origami_gallery_view(self) -> None:
         self.origami_gallery_page.set(1)
         self.origami_gallery_view_limits = None
@@ -15864,7 +15966,7 @@ class PaintAnalysisApp(tk.Tk):
                                                         symmetrize_180=result.symmetrized_180)
                 payload["aligned_density_render"] = density
             image = axis.imshow(density["image"], extent=density["extent"], origin="lower",
-                                cmap="magma", aspect="equal", interpolation="none")
+                                cmap=self._origami_display_colormap("magma"), aspect="equal", interpolation="none")
             colorbar = self.origami_figure.colorbar(image, ax=axis, shrink=0.8, pad=0.03)
             colorbar.set_label("Mean points / origami / bin", fontsize=8)
             colorbar.ax.tick_params(labelsize=7)
@@ -15907,6 +16009,48 @@ class PaintAnalysisApp(tk.Tk):
         # starts the next. Switching away does not interrupt or select a class.
         if missing and not self.origami_multi_template_overlays_building:
             self.overlay_origamis(template_name=missing[0])
+
+    def _origami_geometry_color(self, default):
+        toggle = self.__dict__.get("origami_white_geometry")
+        return "white" if toggle is not None and toggle.get() else default
+
+    def _origami_alignment_color(self):
+        variable = self.__dict__.get("origami_fiducial_color")
+        color = variable.get() if variable is not None else "#22d3ee"
+        return color if matplotlib.colors.is_color_like(color) else "#22d3ee"
+
+    def _toggle_origami_white_geometry(self) -> None:
+        if self.origami_white_geometry.get():
+            self.origami_show_theoretical_overlay.set(True)
+            self.origami_show_alignment_overlay.set(True)
+        self._on_origami_geometry_color_selection()
+
+    def _choose_origami_fiducial_color(self) -> None:
+        _rgb, color = colorchooser.askcolor(
+            color=self._origami_alignment_color(), parent=self, title="Fiducial overlay color")
+        if color is None:
+            return
+        self.origami_fiducial_color.set(color)
+        self.origami_show_alignment_overlay.set(True)
+        self._on_origami_geometry_color_selection()
+
+    def _on_origami_geometry_color_selection(self) -> None:
+        if self.origami_last_rendered_plot_option in {
+            "Aligned density", "Individual origami gallery", "Individual site assignments", "Selected origami detail",
+        }:
+            self.render_origami_plot()
+
+    def _origami_display_colormap(self, default: str) -> str:
+        variable = self.__dict__.get("origami_colormap")
+        name = variable.get() if variable is not None else "Default"
+        return name if name in matplotlib.colormaps else default
+
+    def _on_origami_colormap_selection(self, _event: Any = None) -> None:
+        if self.origami_last_rendered_plot_option in {
+            "Aligned density", "Integrated density per site", "Mean site counts",
+            "Site occupancy", "Individual origami gallery", "Selected origami detail",
+        }:
+            self.render_origami_plot()
 
     def _cached_aligned_origami_density(
         self,
@@ -16042,7 +16186,7 @@ class PaintAnalysisApp(tk.Tk):
                 overlay_image,
                 extent=overlay_extent,
                 origin="lower",
-                cmap="magma",
+                cmap=self._origami_display_colormap("magma"),
                 aspect="equal",
                 interpolation="none",
             )
@@ -16725,6 +16869,7 @@ class PaintAnalysisApp(tk.Tk):
         vmin: float | None = None,
         vmax: float | None = None,
     ) -> None:
+        cmap_name = self._origami_display_colormap(cmap_name)
         image = axis.imshow(values, origin="upper", cmap=cmap_name, vmin=vmin, vmax=vmax, aspect="equal")
         self._add_centered_origami_result_colorbar(axis, image, colorbar_label)
         axis.set_title(title)
@@ -16837,7 +16982,7 @@ class PaintAnalysisApp(tk.Tk):
         legend_handles: list[Any] = []
         for visible_index, (group_id, contours) in enumerate(outlines):
             group_index = all_group_ids.index(group_id) if group_id in all_group_ids else visible_index
-            color = palette(group_index % 10)
+            color = matplotlib.colors.to_rgba(self._origami_geometry_color(palette(group_index % 10)))
             polygons = [
                 np.asarray(transform(contour), dtype=float)
                 for transform in transforms
@@ -17056,12 +17201,12 @@ class PaintAnalysisApp(tk.Tk):
         if enabled("theoretical_overlay"):
             handles = self._draw_digital_group_blobs(axis, grid)
             if model is None:
-                handles.append(axis.scatter(grid[:, 0], grid[:, 1], s=55, facecolors="none", edgecolors="#22d3ee", linewidths=1.2, label="analog sites", zorder=4))
+                handles.append(axis.scatter(grid[:, 0], grid[:, 1], s=55, facecolors="none", edgecolors=self._origami_geometry_color("#22d3ee"), linewidths=1.2, label="analog sites", zorder=4))
         if enabled("dark_overlay"):
             active = self._active_origami_picks_and_params()
             gap_params = dict(active[1] if active is not None else (self.origami_identification_params or {}))
-            if draw_digital_dark_space(axis, gap_params):
-                handles.append(matplotlib.patches.Patch(facecolor="#38bdf8", alpha=.25,
+            if draw_digital_dark_space(axis, gap_params, color=self._origami_geometry_color("#38bdf8")):
+                handles.append(matplotlib.patches.Patch(facecolor=self._origami_geometry_color("#38bdf8"), alpha=.25,
                                hatch="///", label="Expected dark space"))
         if handles:
             axis.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.78)
@@ -17072,10 +17217,9 @@ class PaintAnalysisApp(tk.Tk):
         if model is not None:
             params["digital_pixel_model"] = model
         if enabled("alignment_overlay"):
-            draw_alignment_dark_boundary(axis, active[0] if active is not None else None)
             sites = alignment_template_overlay_points(np.empty((0, 2)), params)
             if len(sites):
-                axis.scatter(sites[:, 0], sites[:, 1], s=35, marker="s", facecolors="none", edgecolors="#22d3ee", linewidths=0.8, zorder=6.1)
+                axis.scatter(sites[:, 0], sites[:, 1], s=35, marker="o", facecolors="none", edgecolors=self._origami_alignment_color(), linewidths=0.8, zorder=6.1)
         if enabled("detected_sites_overlay"):
             centers = [np.asarray(points) for points in result.cluster_centers_nm if len(points)]
             if centers:
@@ -17141,16 +17285,15 @@ class PaintAnalysisApp(tk.Tk):
         active = self._active_origami_picks_and_params()
         params = dict(active[1] if active is not None else (self.origami_identification_params or {}))
         if enabled("origami_show_dark_overlay"):
-            draw_digital_dark_space(axis, params, transform)
+            draw_digital_dark_space(axis, params, transform, color=self._origami_geometry_color("#38bdf8"))
         model = self._active_origami_digital_pixel_model()
         if model is not None:
             params["digital_pixel_model"] = model
         if enabled("origami_show_alignment_overlay"):
-            draw_alignment_dark_boundary(axis, active[0] if active is not None else None, transform)
             sites = alignment_template_overlay_points(np.empty((0, 2)), params)
             if len(sites):
                 sites = transform(sites)
-                axis.scatter(sites[:, 0], sites[:, 1], s=12, marker="s", facecolors="none", edgecolors="#22d3ee", linewidths=0.6, zorder=6.1)
+                axis.scatter(sites[:, 0], sites[:, 1], s=12, marker="o", facecolors="none", edgecolors=self._origami_alignment_color(), linewidths=0.6, zorder=6.1)
         if enabled("origami_show_detected_sites_overlay"):
             centers = np.asarray(result.cluster_centers_nm[index], dtype=float)
             if len(centers):
@@ -17228,7 +17371,7 @@ class PaintAnalysisApp(tk.Tk):
             gallery[y0 : y0 + tile_height, x0 : x0 + tile_width] = tile
             tile_origins.append((x0, y0))
 
-        colormap = matplotlib.colormaps["magma"].copy()
+        colormap = matplotlib.colormaps[self._origami_display_colormap("magma")].copy()
         colormap.set_bad("white")
         axis.imshow(gallery, origin="upper", cmap=colormap, vmin=0.0, vmax=1.0, interpolation="nearest")
         x_min, x_max, y_min, y_max = (float(value) for value in rendered[0]["extent"])
@@ -17281,7 +17424,7 @@ class PaintAnalysisApp(tk.Tk):
         for result_index, transform in zip(page_indices, transforms):
             self._draw_gallery_display_overlays(axis, result, int(result_index), digital_grid, transform)
         if show_analog_sites:
-            axis.scatter(expected_x, expected_y, s=9, facecolors="none", edgecolors="#22d3ee", linewidths=0.5)
+            axis.scatter(expected_x, expected_y, s=9, facecolors="none", edgecolors=self._origami_geometry_color("#22d3ee"), linewidths=0.5)
         if group_handles:
             axis.legend(
                 handles=group_handles,
@@ -17313,12 +17456,16 @@ class PaintAnalysisApp(tk.Tk):
             width_nm / 100.0,
             height_nm / 100.0,
         )
+        resolution_variable = self.__dict__.get("origami_gallery_resolution")
+        resolution = {"1×": 1, "2×": 2, "4×": 4}.get(
+            resolution_variable.get() if resolution_variable is not None else "1×", 1)
+        preview_pixel_nm /= resolution
         tile_width = max(1, int(np.ceil(width_nm / preview_pixel_nm)))
         tile_height = max(1, int(np.ceil(height_nm / preview_pixel_nm)))
         count = result.origami_count if item_count is None else max(1, int(item_count))
         columns = max(1, int(np.ceil(np.sqrt(count * tile_height / tile_width))))
         rows = int(np.ceil(count / columns))
-        return width_nm, height_nm, preview_pixel_nm, tile_width, tile_height, columns, rows, 3
+        return width_nm, height_nm, preview_pixel_nm, tile_width, tile_height, columns, rows, 3 * resolution
 
     def _plot_individual_origami_clusters(
         self,
@@ -17593,7 +17740,7 @@ class PaintAnalysisApp(tk.Tk):
             rendered["image"],
             extent=rendered["extent"],
             origin="lower",
-            cmap="gray_r",
+            cmap=self._origami_display_colormap("gray_r"),
             interpolation="nearest",
             aspect="equal",
         )
@@ -17979,6 +18126,7 @@ class PaintAnalysisApp(tk.Tk):
         record_diagnostic("analysis_install_source", path=str(state["loaded"].path))
         self._after_load(state["loaded"], render_raw=False)
         record_diagnostic("analysis_install_settings")
+        self.origami_composite_configuration = state.get("origami_composite_configuration")
         for key in ANALYSIS_STATE_FIELDS:
             if key in state:
                 setattr(self, key, state[key])
@@ -18109,9 +18257,16 @@ class PaintAnalysisApp(tk.Tk):
         buttons = ttk.Frame(dialog)
         buttons.pack(padx=15, pady=(0, 15))
         def choose(action):
+            if action == "partial":
+                limit = simpledialog.askinteger(
+                    "Load partial analysis", "Number of completed windows to load (in saved tile order):",
+                    parent=dialog, minvalue=1, initialvalue=10)
+                if limit is None:
+                    return
+                action = f"partial:{limit}"
             choice.set(action)
             dialog.destroy()
-        for text, action in (("View completed tiles", "preview"), ("Resume analysis", "resume"), ("Cancel", "cancel")):
+        for text, action in (("View completed tiles", "preview"), ("Load first N windows…", "partial"), ("Resume analysis", "resume"), ("Cancel", "cancel")):
             ttk.Button(buttons, text=text, command=lambda value=action: choose(value)).pack(side="left", padx=4)
         dialog.grab_set()
         self.wait_window(dialog)
@@ -18138,7 +18293,11 @@ class PaintAnalysisApp(tk.Tk):
                     if action == "cancel":
                         self.status.set("Checkpoint loading canceled.")
                         return
-                    if action == "preview":
+                    if action.startswith("partial:"):
+                        limit = int(action.split(":", 1)[1])
+                        self._resume_tiled_checkpoint(path.parent, analysis, preview_only=True, window_limit=limit)
+                        self.status.set(f"Loading up to {limit} completed windows; remaining tiles will not be read.")
+                    elif action == "preview":
                         self._resume_tiled_checkpoint(path.parent, analysis, preview_only=True)
                         self.status.set("Loading completed tiles for inspection; unfinished tiles will not run.")
                     else:
@@ -18222,6 +18381,40 @@ class PaintAnalysisApp(tk.Tk):
 
     def load_origami_analysis(self):
         self._origami_analysis_io(loading=True)
+
+    def open_reconstruction_session(self):
+        window = getattr(self, 'origami_composite_window', None)
+        if (self.__dict__.get('analysis_io_busy', False) or self.__dict__.get('active_worker_count', 0)
+                or self.__dict__.get('origami_identification_running', False)
+                or (window is not None and window.winfo_exists() and window.busy)):
+            messagebox.showinfo('Analysis busy', 'Wait for the current operation before opening a reconstruction session.')
+            return
+        path = filedialog.askopenfilename(
+            parent=self, title='Open reconstruction session',
+            initialdir=str(self._file_dialog_initial_dir()),
+            filetypes=[('Reconstruction session', '*.paintrecon')])
+        if not path:
+            return
+        self._remember_file_dialog_dir(Path(path))
+        self._open_origami_composite()
+        self.origami_composite_window.load_session(path)
+
+    def load_reconstruction_from_analysis(self):
+        window = getattr(self, 'origami_composite_window', None)
+        if (self.__dict__.get('analysis_io_busy', False) or self.__dict__.get('active_worker_count', 0)
+                or self.__dict__.get('origami_identification_running', False)
+                or (window is not None and window.winfo_exists() and window.busy)):
+            messagebox.showinfo('Analysis busy', 'Wait for the current operation before loading reconstruction inputs.')
+            return
+        path = filedialog.askopenfilename(
+            title='Load reconstruction from analysis (or run.paintanalysis)',
+            initialdir=str(self._file_dialog_initial_dir()),
+            filetypes=[('Saved analysis / tiled run', '*.paintanalysis'), ('All files', '*.*')])
+        if not path:
+            return
+        self._remember_file_dialog_dir(Path(path))
+        self._open_origami_composite()
+        self.origami_composite_window.load_analysis_reconstruction(path, localization_series_for_mode)
 
     def export_origami_csvs(self) -> None:
         result = self.origami_result

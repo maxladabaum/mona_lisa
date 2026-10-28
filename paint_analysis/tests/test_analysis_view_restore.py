@@ -410,3 +410,101 @@ def test_all_template_density_completion_does_not_switch_away_from_selected_view
     live.origami_plot_option.set('Aligned density')
     live.render_origami_plot()
     assert len(queued) == 1
+
+
+def test_overlay_colormap_updates_cached_density_and_session():
+    a = populate(app())
+    a.origami_template_result_view.set("A")
+    a.origami_plot_option.set("Aligned density")
+    a._on_origami_template_result_selection()
+    a.render_origami_plot()
+    original = np.asarray(a.origami_figure.axes[0].images[0].get_array()).copy()
+    cached_density = a.origami_density_cache
+    a.origami_colormap.set("cividis_r")
+    a._on_origami_colormap_selection()
+    image = a.origami_figure.axes[0].images[0]
+    assert image.get_cmap().name == "cividis_r"
+    np.testing.assert_array_equal(image.get_array(), original)
+    assert a.origami_density_cache is cached_density
+    assert a._capture_origami_analysis()["settings"]["origami_colormap"] == "cividis_r"
+    a.origami_template_result_view.set("All templates")
+    a.render_origami_plot()
+    images = [image for axis in a.origami_figure.axes for image in axis.images]
+    assert images
+    assert all(image.get_cmap().name == "cividis_r" for image in images)
+    a.origami_colormap.set("Default")
+    assert a._origami_display_colormap("magma") == "magma"
+    assert a._origami_display_colormap("viridis") == "viridis"
+
+
+@pytest.mark.parametrize("resolution,factor", [("2×", 2), ("4×", 4)])
+def test_gallery_resolution_and_small_panels(resolution, factor):
+    a = populate(app())
+    a.origami_template_result_view.set("A")
+    a.origami_plot_option.set("Individual origami gallery")
+    a._on_origami_template_result_selection()
+    a.origami_gallery_page_size.set("1")
+    a._on_origami_gallery_display_selection()
+    original_shape = a.origami_figure.axes[0].images[0].get_array().shape
+    assert len(a.origami_gallery_tile_hitboxes) == 1
+    assert a.origami_gallery_page_count == a.origami_result.origami_count
+    a.origami_gallery_view_limits = ((0, 1), (0, 1))
+    a.origami_gallery_resolution.set(resolution)
+    a._on_origami_gallery_display_selection()
+    image = a.origami_figure.axes[0].images[0]
+    assert image.get_array().shape == tuple(size * factor for size in original_shape)
+    assert a.origami_gallery_view_limits is None
+    x0, x1, y0, y1, index = a.origami_gallery_tile_hitboxes[0]
+    assert (y1 - y0, x1 - x0) == image.get_array().shape
+    a._change_origami_gallery_page(1)
+    assert a.origami_gallery_tile_hitboxes[0][-1] != index
+    settings = a._capture_origami_analysis()["settings"]
+    assert settings["origami_gallery_resolution"] == resolution
+    assert settings["origami_gallery_page_size"] == "1"
+
+
+def test_white_geometry_preserves_density_colormap():
+    a = populate(app())
+    a.origami_template_result_view.set("A")
+    a.origami_plot_option.set("Aligned density")
+    a._on_origami_template_result_selection()
+    a.origami_show_theoretical_overlay.set(True)
+    a.origami_show_alignment_overlay.set(True)
+    for name in ("site_diagnostics", "detected_sites_overlay", "localization_group_assignments", "prominence_geometry"):
+        getattr(a, "origami_show_" + name).set(False)
+    a.origami_colormap.set("plasma")
+    a.render_origami_plot()
+    density = np.asarray(a.origami_figure.axes[0].images[0].get_array()).copy()
+    a.origami_fiducial_color.set("#ff0000")
+    a.origami_white_geometry.set(True)
+    a._toggle_origami_white_geometry()
+    axis = a.origami_figure.axes[0]
+    assert axis.images[0].get_cmap().name == "plasma"
+    np.testing.assert_array_equal(axis.images[0].get_array(), density)
+    assert len(axis.collections) >= 2
+    colors_seen = set()
+    for collection in axis.collections:
+        for colors in (collection.get_facecolors(), collection.get_edgecolors()):
+            colors_seen.update(tuple(rgb) for rgb in colors[:, :3])
+    assert colors_seen == {(1., 1., 1.), (1., 0., 0.)}
+    assert not any(line.get_label() == "Exterior darkness boundary" for line in axis.lines)
+    assert a._capture_origami_analysis()["settings"]["origami_fiducial_color"] == "#ff0000"
+    assert a._capture_origami_analysis()["settings"]["origami_white_geometry"] is True
+    a.origami_white_geometry.set(False)
+    a._on_origami_geometry_color_selection()
+    assert any(np.any(collection.get_edgecolors()[:, :3] != 1)
+               for collection in a.origami_figure.axes[0].collections)
+
+
+def test_fiducial_color_picker_updates_overlay_and_cancel_preserves_color(monkeypatch):
+    a = app()
+    a._on_origami_geometry_color_selection = Mock()
+    monkeypatch.setattr(gui.colorchooser, 'askcolor', lambda **kwargs: ((255, 0, 255), '#ff00ff'))
+    a._choose_origami_fiducial_color()
+    assert a.origami_fiducial_color.get() == '#ff00ff'
+    assert a.origami_show_alignment_overlay.get()
+    a._on_origami_geometry_color_selection.assert_called_once()
+    monkeypatch.setattr(gui.colorchooser, 'askcolor', lambda **kwargs: (None, None))
+    a._choose_origami_fiducial_color()
+    assert a.origami_fiducial_color.get() == '#ff00ff'
+    a._on_origami_geometry_color_selection.assert_called_once()

@@ -58,12 +58,12 @@ def test_rgb_shifts_mean_and_missing_species():
     assert summed['density'][:, :, 0].sum() == 2
 
 
-def test_markers_and_ambiguous_overlapping_signal_excluded():
+def test_inner_markers_preserved_but_ambiguous_overlapping_signal_excluded():
     source = np.array([[4.5, 3.5], [6.5, 1.5]])
     results = dict(a=payload([footprint()]))
     excluded = reconstruct_composite(source, results, dict(a=mapping()), replace(settings(), exclusion_radius_nm=.2),
                                      dict(a=[[4.5, 3.5]]))
-    assert excluded['density'].sum() == 1
+    assert excluded['density'].sum() == 2
     overlap = reconstruct_composite(source, dict(a=payload([footprint(), footprint()])), dict(a=mapping()), settings())
     assert overlap['density'].sum() == 0
     assert overlap['report']['shared_localizations_excluded'] == 2
@@ -397,3 +397,295 @@ def test_whole_image_smoothing_defaults_off_for_old_settings():
 def test_invalid_whole_image_smoothing_is_rejected(sigma):
     with pytest.raises(ValueError):
         replace(settings(), global_sigma_nm=sigma).validate()
+
+
+def test_chunked_source_matches_full_tree_with_overlaps_and_rotations(monkeypatch):
+    import origami_composite as composite
+    rng = np.random.default_rng(418)
+    source = rng.uniform(-30, 30, (12000, 2)).astype(np.float32)
+    # Include duplicates and exact extraction boundaries.
+    source = np.concatenate((source, [[4, 4], [4, 4], [8, 0], [6, 2]]))
+    results = dict(a=payload([footprint(), footprint((1, 1)), footprint((10, 10), 73)]),
+                   b=payload([footprint((-12, -5), 123)]))
+    mappings = dict(a=mapping(), b=mapping('Blue', 4, 7))
+    exclusions = dict(a=[[5, 3]])
+    original = composite._reconstruction_source
+    monkeypatch.setattr(composite, '_reconstruction_source',
+                        lambda *args: original(*args, chunk_size=137))
+    messages = []
+    actual = reconstruct_composite(source, results, mappings, settings(), exclusions, messages.append)
+    monkeypatch.setattr(composite, '_reconstruction_source', lambda source, *args: source)
+    expected = reconstruct_composite(source, results, mappings, settings(), exclusions)
+    for key in ('density', 'coverage', 'rgb'):
+        np.testing.assert_array_equal(actual[key], expected[key])
+    assert actual['report'] == expected['report']
+    assert any('100%' in message for message in messages)
+
+
+def test_chunked_source_memmap_filters_distant_points_and_preserves_duplicates(tmp_path):
+    from origami_composite import _reconstruction_source
+    source = np.memmap(tmp_path / 'source.dat', mode='w+', dtype=np.float32, shape=(1003, 2))
+    source[:] = 10000
+    source[500:502] = [6, 2]
+    source[1002] = [4, 4]
+    result = _reconstruction_source(source, dict(a=payload([footprint()])), ['a'], settings(), chunk_size=100)
+    np.testing.assert_array_equal(result, [[6, 2], [6, 2], [4, 4]])
+    assert result.dtype == np.float64
+    assert source[0, 0] == 10000
+    source[-1] = np.nan
+    with pytest.raises(ValueError, match='finite'):
+        _reconstruction_source(source, dict(a=payload([footprint()])), ['a'], settings(), chunk_size=100)
+
+
+def test_no_nearby_source_produces_empty_composite():
+    result = reconstruct_composite(np.array([[10000, 10000]]), dict(a=payload([footprint()])),
+                                   dict(a=mapping()), settings())
+    assert result['density'].sum() == 0
+    assert result['report']['species'][0]['accepted_origami'] == 1
+    assert result['report']['shared_localizations_excluded'] == 0
+
+
+def test_build_progress_covers_preparation_rendering_and_finalization():
+    messages = []
+    reconstruct_composite(np.array([[4.5, 3.5]]), dict(a=payload([footprint()])),
+                          dict(a=mapping()), replace(settings(), sigma_nm=1, global_sigma_nm=1),
+                          progress=messages.append)
+    stages = ['Validating', 'Preparing extraction regions', 'Indexing 1 extraction-region',
+              'Scanning source coordinates', 'Assembling', 'nearby source coordinates for reconstruction',
+              'Allocating overlap', 'Checking shared signal', 'composite and coverage rasters',
+              'Rendering', 'Averaging and smoothing', 'Combining weighted signal',
+              'Smoothing the assembled', 'Applying final', 'Scaling RGB', 'Compiling',
+              'Composite reconstruction complete.']
+    positions = [next(i for i, message in enumerate(messages) if stage in message) for stage in stages]
+    assert positions == sorted(positions)
+    assert messages[-1] == 'Composite reconstruction complete.'
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_progress_heartbeat_updates_opaque_work_and_stops_on_exit(fail):
+    import threading
+    from origami_composite import _progress_heartbeat
+    tick = threading.Event()
+    threads = []
+    messages = []
+
+    def callback(message):
+        messages.append(message)
+        if 'working,' in message:
+            threads.append(threading.current_thread())
+            tick.set()
+
+    try:
+        with _progress_heartbeat(callback, interval=.01) as progress:
+            progress('Indexing test coordinates…')
+            assert tick.wait(2), 'No heartbeat during a blocked operation'
+            if fail:
+                raise ValueError('test failure')
+    except ValueError:
+        assert fail
+    assert any('Indexing test coordinates… · working,' in message for message in messages)
+    assert all(not thread.is_alive() for thread in threads)
+
+
+def test_export_progress_covers_every_output(tmp_path):
+    result = reconstruct_composite(np.array([[4.5, 3.5]]), dict(a=payload([footprint()])),
+                                   dict(a=mapping()), settings())
+    messages = []
+    export_composite(result, tmp_path / 'progress.png', progress=messages.append)
+    for step in range(1, 5):
+        assert any(f'({step}/4)' in message for message in messages)
+    assert messages[-1] == 'Composite export complete.'
+
+
+def test_excluded_section_can_be_replaced_by_uniform_half_green():
+    source = np.array([[4.5, 3.5], [24.5, 3.5]])
+    results = dict(red=payload([footprint()]), design_46_code_45=payload([footprint((20, 0))]))
+    mappings = dict(red=mapping(), design_46_code_45=dict(mapping('Green', 0, 40.8), include=False, fill_percent='50'))
+    cfg = replace(settings(), sigma_nm=1, global_sigma_nm=1, width_nm=6)
+    result = reconstruct_composite(source, results, mappings, cfg)
+    lower = np.array(result['report']['pre_rotation_origin_nm'])
+    xs = lower[0] + (np.arange(result['rgb'].shape[1]) + .5) * cfg.pixel_nm
+    ys = lower[1] + (np.arange(result['rgb'].shape[0]) + .5) * cfg.pixel_nm
+    section = (xs[None, :] >= 0) & (xs[None, :] < 6) & (ys[:, None] >= 40.8) & (ys[:, None] < 44.8)
+    assert section.sum() > 0
+    assert np.all(result['rgb'][:, :, 1][section] == 128)
+    assert not result['rgb'][:, :, 1][~section].any()
+    assert not result['coverage'][:, :, 1].any()
+    assert all(row['template'] != 'design_46_code_45' for row in result['report']['candidates'])
+    fill = result['report']['synthetic_replacements'][0]
+    assert fill['template'] == 'design_46_code_45'
+    assert fill['fill_percent'] == 50 and fill['synthetic']
+    assert fill['x_shift_nm'] == 0 and fill['y_shift_nm'] == 40.8
+
+
+def test_uniform_fill_preserves_other_channels_and_follows_display_orientation(tmp_path):
+    source = np.array([[4.5, 3.5], [24.5, 3.5]])
+    results = dict(red=payload([footprint()]), green=payload([footprint((20, 0))]))
+    mappings = dict(red=mapping(), green=dict(mapping('Green'), include=False))
+    original = reconstruct_composite(source, results, mappings, settings())
+    mappings['green']['fill_percent'] = 50
+    result = reconstruct_composite(source, results, mappings, settings())
+    np.testing.assert_array_equal(result['rgb'][:, :, 0], original['rgb'][:, :, 0])
+    np.testing.assert_array_equal(result['rgb'][:, :, 2], original['rgb'][:, :, 2])
+    np.testing.assert_array_equal(result['coverage'], original['coverage'])
+    assert np.all(result['rgb'][:, :, 1] == 128)
+    cfg = replace(settings(), rotation_deg=90, mirror_x=True)
+    rotated = reconstruct_composite(source, results, mappings, cfg)
+    np.testing.assert_array_equal(rotated['rgb'], np.fliplr(np.rot90(result['rgb'], -1)))
+    path = tmp_path / 'filled.png'
+    export_composite(result, path)
+    with np.load(path.with_suffix('.npz')) as archive:
+        np.testing.assert_array_equal(archive['density'], result['density'])
+    assert json.loads(path.with_suffix('.json').read_text())['synthetic_replacements'][0]['fill_percent'] == 50
+
+
+@pytest.mark.parametrize('percent', ['bad', -1, 101, float('nan'), float('inf')])
+def test_invalid_excluded_fill_names_template(percent):
+    from origami_composite import reconstruction_mapping_issues
+    mappings = dict(green=dict(mapping('Green'), include=False, fill_percent=percent))
+    assert reconstruction_mapping_issues({'green': {}}, mappings)[0][0] == 'green'
+
+
+def test_blank_fill_stays_excluded_and_fill_is_ignored_when_included():
+    source = np.array([[4.5, 3.5]])
+    results = dict(red=payload([footprint()]), green=payload([footprint()]))
+    mappings = dict(red=mapping(), green=dict(mapping('Green'), include=False, fill_percent=''))
+    result = reconstruct_composite(source, results, mappings, settings())
+    assert not result['rgb'][:, :, 1].any()
+    assert result['report']['synthetic_replacements'] == []
+    mappings['green'].update(include=True, fill_percent=50)
+    result = reconstruct_composite(source, results, mappings, settings())
+    assert result['report']['synthetic_replacements'] == []
+    assert result['report']['shared_localizations_excluded'] == 1
+
+
+def test_zero_fill_replaces_only_selected_channel():
+    source = np.array([[4.5, 3.5]])
+    results = dict(red=payload([footprint()]), green=payload([footprint()]))
+    mappings = dict(red=mapping(), green=dict(mapping('Green'), include=False, fill_percent=0))
+    result = reconstruct_composite(source, results, mappings, settings())
+    assert result['rgb'][:, :, 0].max() == 255
+    assert not result['rgb'][:, :, 1].any()
+    assert result['report']['synthetic_replacements'][0]['fill_percent'] == 0
+
+
+def test_gaussian_marker_transmission_and_disabled_exclusion():
+    from origami_composite import marker_exclusion_weights
+    points = np.column_stack((np.arange(5.), np.zeros(5)))
+    expected = 1 - np.exp(-.5 * np.arange(5.) ** 2)
+    np.testing.assert_allclose(marker_exclusion_weights(points, [[0, 0]], 1), expected)
+    np.testing.assert_array_equal(marker_exclusion_weights(points, [[0, 0]], 0), np.ones(5))
+    np.testing.assert_array_equal(marker_exclusion_weights(points, [], 1), np.ones(5))
+    # Multiple nearby markers use the nearest site's suppression.
+    assert marker_exclusion_weights([[1, 0]], [[0, 0], [2, 0]], 1)[0] == pytest.approx(expected[1])
+
+
+def test_inner_rectangle_ignores_markers_in_aligned_frame_and_report():
+    local = np.array([[4.5, 3.5], [5.5, 3.5], [6.5, 3.5], [7.5, 3.5]])
+    theta = np.deg2rad(73)
+    rotation = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    source = local @ rotation.T + [200, 100]
+    cfg = replace(settings(), exclusion_radius_nm=1)
+    result = reconstruct_composite(source, dict(a=payload([footprint((200, 100), 73)])),
+                                   dict(a=mapping()), cfg, dict(a=[[4.5, 3.5]]))
+    expected = np.ones(4)
+    np.testing.assert_allclose(result['density'][0, :, 0], expected, atol=1e-13)
+    assert result['report']['species'][0]['weighted_image_localizations'] == pytest.approx(expected.sum())
+    assert result['report']['candidates'][0]['weighted_image_localizations'] == pytest.approx(expected.sum())
+    assert 'Gaussian' in result['report']['marker_exclusion_meaning']
+
+
+def test_blend_rectangle_centering_and_gaussian_tails():
+    from origami_composite import section_blend_weights
+    cfg = replace(settings(), height_nm=45, blend_height_nm=55)
+    cfg.validate()
+    np.testing.assert_array_equal(cfg.blend_margin, [0, 5])
+    weights = section_blend_weights([[2, 0], [2, 45], [2, -5/3], [2, 50], [2, 51], [-1, 20]],
+                                    [4, 45], cfg.blend_margin)
+    np.testing.assert_allclose(weights, [1, 1, np.exp(-.5), np.exp(-4.5), 0, 0])
+    with pytest.raises(ValueError, match='Overlap blend'):
+        replace(cfg, blend_height_nm=44).validate()
+
+
+def test_adjacent_blends_use_extra_signal_without_bright_seam():
+    cfg = replace(settings(), blend_height_nm=10, normalize_overlap=True)
+    local = np.array([[x, y] for y in np.arange(-2.5, 7) for x in np.arange(4.5, 8)])
+    source = np.concatenate((local, local + [50, 0]))
+    result = reconstruct_composite(source, dict(a=payload([footprint()]), b=payload([footprint((50, 0))])),
+                                   dict(a=mapping(), b=mapping(y=4)), cfg)
+    red = result['density'][:, :, 0]
+    assert red.shape == (14, 4)
+    np.testing.assert_allclose(red[3:11], 1)
+    assert 0 < red[0, 0] < red[1, 0] < red[2, 0] < 1
+    assert result['report']['species'][0]['image_localizations'] == 40
+    assert result['report']['shared_localizations_excluded'] == 0
+    # Adjacent sections in a different color do not dilute each other.
+    separate = reconstruct_composite(source, dict(a=payload([footprint()]), b=payload([footprint((50, 0))])),
+                                     dict(a=mapping(), b=mapping('Green', y=4)), cfg)
+    np.testing.assert_allclose(separate['density'][3:7, :, 0], 1)
+    assert separate['density'][7, 0, 0] > 0
+
+
+@pytest.mark.parametrize('rotation', [0, 90, 180, 270])
+@pytest.mark.parametrize('mirror', [False, True])
+def test_blend_tails_follow_section_rotation_and_mirrors(rotation, mirror):
+    cfg = replace(settings(), blend_width_nm=8, blend_height_nm=10)
+    source = np.array([[3.5, 5.5], [4.5, 3.5], [8.5, -1.5]])
+    base = reconstruct_composite(source, dict(a=payload([footprint()])), dict(a=mapping()), cfg)
+    transformed = reconstruct_composite(source, dict(a=payload([footprint()])),
+                                        dict(a=dict(mapping(), rotation_deg=rotation, mirror_x=mirror)), cfg)
+    expected = np.rot90(base['density'], -rotation // 90)
+    if mirror:
+        expected = np.fliplr(expected)
+    np.testing.assert_allclose(transformed['density'], expected)
+    assert transformed['report']['species'][0]['image_localizations'] == 3
+
+
+def test_blend_validation_tolerates_roundoff_but_identifies_smaller_axis():
+    cfg = replace(settings(), height_nm=40.800000000000004, blend_height_nm=40.8)
+    cfg.validate()
+    np.testing.assert_array_equal(cfg.blend_margin, [0, 0])
+    with pytest.raises(ValueError, match='Overlap blend height is 5 nm; normal height is 40.8 nm'):
+        replace(cfg, blend_height_nm=5).validate()
+    with pytest.raises(ValueError, match='Overlap blend width is 3 nm; normal width is 4 nm'):
+        replace(cfg, blend_width_nm=3).validate()
+    with pytest.raises(ValueError, match='Overlap blend height'):
+        replace(cfg, blend_height_nm=-1e-12).validate()
+
+
+def test_overlap_default_adds_weighted_signals_without_normalizing():
+    cfg = replace(settings(), blend_height_nm=10)
+    assert not cfg.normalize_overlap
+    local = np.array([[x, y] for y in np.arange(-2.5, 7) for x in np.arange(4.5, 8)])
+    source = np.concatenate((local, local + [50, 0]))
+    results = dict(a=payload([footprint()]), b=payload([footprint((50, 0))]))
+    mappings = dict(a=mapping(), b=mapping(y=4))
+    combined = reconstruct_composite(source, results, mappings, cfg)
+    a_only = reconstruct_composite(source, results, dict(a=mappings['a'], b=dict(mappings['b'], brightness=0)), cfg)
+    b_only = reconstruct_composite(source, results, dict(a=dict(mappings['a'], brightness=0), b=mappings['b']), cfg)
+    np.testing.assert_allclose(combined['density'], a_only['density'] + b_only['density'])
+    assert combined['density'][6, 0, 0] == pytest.approx(1 + np.exp(-.5 * .5 ** 2))
+    assert combined['report']['settings']['normalize_overlap'] is False
+    from dataclasses import asdict
+    legacy = asdict(cfg)
+    legacy.pop('normalize_overlap')
+    assert not CompositeSettings(**legacy).normalize_overlap
+
+
+@pytest.mark.parametrize('angle', [0, 73])
+def test_marker_exclusion_only_affects_overlap_localizations(angle):
+    from origami_composite import image_region_weights
+    cfg = replace(settings(), blend_height_nm=10, exclusion_radius_nm=1)
+    local = np.array([[4.5, 3.5], [5.5, 5.5], [6.5, 5.5], [7.5, 5.5]])
+    markers = np.array([[4.5, 3.5], [5.5, 5.5]])
+    expected = np.array([1, 0, np.exp(-1.125) * (1 - np.exp(-.5)),
+                         np.exp(-1.125) * (1 - np.exp(-2))])
+    np.testing.assert_allclose(image_region_weights(local, markers, cfg), expected)
+    theta = np.deg2rad(angle)
+    rotation = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+    source = local @ rotation.T + [200, 100]
+    result = reconstruct_composite(source, dict(a=payload([footprint((200, 100), angle)])),
+                                   dict(a=mapping()), cfg, dict(a=markers))
+    assert result['density'].sum() == pytest.approx(expected.sum())
+    assert result['density'][3, 0, 0] == pytest.approx(1)
+    assert result['report']['species'][0]['weighted_image_localizations'] == pytest.approx(expected.sum())

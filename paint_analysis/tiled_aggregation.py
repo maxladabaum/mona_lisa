@@ -526,13 +526,17 @@ class StreamingTileResults:
             progress(len(locs.columns) + 1, len(locs.columns) + 1)
         return result
 
-    def tile_index(self, locs, pixelsize, lattice, progress=None, chunk_size=100_000):
+    def tile_index(self, locs, pixelsize, lattice, progress=None, chunk_size=100_000, included_tiles=None):
         """Bucket rows with bounded buffers, then assemble the index sequentially."""
         xs = np.unique([tile[0] for tile in lattice])
         ys = np.unique([tile[2] for tile in lattice])
         xmax = max(tile[1] for tile in lattice)
         ymax = max(tile[3] for tile in lattice)
         count = len(xs) * len(ys)
+        included = None
+        if included_tiles is not None:
+            included = np.zeros(count, dtype=bool)
+            included[np.asarray(included_tiles, dtype=int)] = True
 
         def chunks():
             for start in range(0, len(locs), chunk_size):
@@ -543,7 +547,12 @@ class StreamingTileResults:
                 ty = np.searchsorted(ys, y, side='right') - 1
                 valid = (np.isfinite(x) & np.isfinite(y) & (tx >= 0) & (ty >= 0)
                          & (x < xmax) & (y < ymax))
-                yield start, ty[valid] * len(xs) + tx[valid], np.flatnonzero(valid) + start
+                ids = ty[valid] * len(xs) + tx[valid]
+                positions = np.flatnonzero(valid) + start
+                if included is not None:
+                    keep = included[ids]
+                    ids, positions = ids[keep], positions[keep]
+                yield start, ids, positions
 
         counts = np.zeros(count, dtype=np.int64)
         # Scatter writes through a large writable mmap cause page faults and

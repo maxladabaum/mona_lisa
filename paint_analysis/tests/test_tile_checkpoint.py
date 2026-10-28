@@ -268,3 +268,42 @@ def test_gui_session_loader_maps_large_arrays_beside_archive(tmp_path):
     assert isinstance(restored['large_probe'], np.memmap)
     assert (tmp_path / '.analysis-cache').is_dir()
     np.testing.assert_equal(restored['large_probe'], payload['large_probe'])
+
+
+def test_partial_preview_reads_only_requested_completed_windows(tmp_path, monkeypatch):
+    live, run, payload = run_fixture()
+    live._identify_origami_worker = Mock(return_value=('origami_multi_picks', deepcopy(payload)))
+    live._checkpointed_tiled_worker(tmp_path, run, initialize=True)
+    before = {path.name: path.read_bytes() for path in tmp_path.glob('*.paintanalysis')}
+    original_load = TileCheckpoint.load
+    reads = []
+
+    def tracked_load(store, index, bounds, mode):
+        reads.append(index)
+        return original_load(store, index, bounds, mode)
+
+    from tiled_aggregation import StreamingTileResults
+    original_index = StreamingTileResults.tile_index
+
+    def selected_index(writer, *args, **kwargs):
+        assert reads == [0], "Source indexing must happen after loading the selected tile"
+        assert kwargs['included_tiles'] == [0]
+        return original_index(writer, *args, **kwargs)
+
+    monkeypatch.setattr(StreamingTileResults, 'tile_index', selected_index)
+    monkeypatch.setattr(TileCheckpoint, 'load', tracked_load)
+    live._identify_origami_worker = Mock(side_effect=AssertionError('Recomputed a tile'))
+    _, partial = live._checkpointed_tiled_worker(tmp_path, run, completed_only=True, window_limit=1)
+    assert reads == [0]
+    np.testing.assert_array_equal(partial['counts'], [12, 12])
+    assert partial['params']['_checkpoint_preview'] == {'completed': 1, 'planned': 2}
+    assert before == {path.name: path.read_bytes() for path in tmp_path.glob('*.paintanalysis')}
+    np.testing.assert_array_equal(run['context']['tile_indices'], [0, 1])
+
+
+def test_load_checkpoint_partial_choice_routes_with_limit(tmp_path):
+    live, run, _ = run_fixture()
+    live._choose_checkpoint_load_action = Mock(return_value='partial:3')
+    live._resume_tiled_checkpoint = Mock()
+    live._complete_origami_analysis_io(tmp_path / 'run.paintanalysis', True, run, None)
+    live._resume_tiled_checkpoint.assert_called_once_with(tmp_path, run, preview_only=True, window_limit=3)

@@ -13,7 +13,9 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-from origami_composite import CompositeSettings, encoding_codebook, reconstruct_composite, export_composite, reconstruction_mapping_issues, reorient_composite, saved_rgb_batch_mapping, image_region_defaults
+from reconstruction_analysis import load_reconstruction_from_analysis
+from composite_session import REGION_KEYS, save_reconstruction_session, load_reconstruction_session
+from origami_composite import image_region_weights, image_region_preview_points, RegionPreviewCancelled, _progress_heartbeat, CompositeSettings, encoding_codebook, reconstruct_composite, export_composite, reconstruction_mapping_issues, reorient_composite, saved_rgb_batch_mapping, image_region_defaults
 
 
 class CompositeWindow(tk.Toplevel):
@@ -23,8 +25,11 @@ class CompositeWindow(tk.Toplevel):
         self.title('Origami · Reconstruct composite image')
         self.geometry('1180x850')
         self.result = None
+        self.reconstruction_owner = None
+        self.batch_manifest = None
         self._closed = False
         self.busy = False
+        self.preview_cancel = None
         self.codebook = {}
         self.geometry_settings = {}
         self.rows = {}
@@ -32,7 +37,10 @@ class CompositeWindow(tk.Toplevel):
         self.events = queue.Queue()
         self.status = tk.StringVar(value='Assign each template a color and XY shift, then check the image region.')
         self.variables = {}
+        self.region_widgets = {}
         self.source_scope = tk.StringVar(value='')
+        # Keep progress visible even when the controls/preview are scrolled.
+        ttk.Label(self, textvariable=self.status, wraplength=1120, anchor='w', relief='sunken').pack(side='bottom', fill='x', padx=6, pady=4)
         # Keep the controls and a full-size preview in one scrollable page.
         viewport = ttk.Frame(self)
         viewport.pack(fill='both', expand=True)
@@ -60,6 +68,11 @@ class CompositeWindow(tk.Toplevel):
                                ('Load image encoding settings…', self.load_encoding),
                                ('Load mappings…', self.load_mappings), ('Save mappings…', self.save_mappings)]:
             ttk.Button(controls, text=label, command=command).pack(side='left', padx=3)
+        sessions = ttk.Frame(self.page, padding=8)
+        sessions.pack(fill='x')
+        ttk.Button(sessions, text='Save reconstruction session…', command=self.save_session).pack(side='left', padx=3)
+        ttk.Button(sessions, text='Open reconstruction session…', command=self.load_session).pack(side='left', padx=3)
+        ttk.Label(sessions, text='Reopen directly without loading the full analysis.').pack(side='left', padx=8)
         ttk.Label(self.page, text='Load image_manifest.json from a saved RGB picklist batch to fill color, XY placement, and image region. Unmatched templates need manual mapping.').pack(anchor='w', padx=12)
         container = ttk.Frame(self.page)
         container.pack(fill='x', padx=10)
@@ -89,6 +102,7 @@ class CompositeWindow(tk.Toplevel):
                        command=lambda x=horizontal, y=vertical: self.set_all_section_mirrors(x, y)).pack(side='left', padx=3)
         ttk.Label(self.page, text='Each barcode: rotate clockwise, then mirror left/right or top/bottom; XY shifts place its transformed upper-left corner. Rebuild after changes.').pack(anchor='w', padx=12)
         ttk.Label(self.page, text='Brightness ×: 1 = unchanged, 0.5 = half, 2 = double, 0 = no signal. RGB scales all sections together to the brightest pixel.').pack(anchor='w', padx=12)
+        ttk.Label(self.page, text='Excluded fill %: uncheck Include and enter 50 for a uniform half-brightness replacement in that section’s color. Blank leaves it excluded. Fills are synthetic and recorded in exports.', wraplength=1120).pack(anchor='w', padx=12)
         geometry_box = ttk.LabelFrame(self.page, text='Image-side rectangle in aligned coordinates (X right, Y up)', padding=6)
         geometry_box.pack(fill='x', padx=10, pady=5)
         params = self.first_params()
@@ -98,11 +112,13 @@ class CompositeWindow(tk.Toplevel):
         sx, sy = float(params.get('spacing_x_nm', 9.9)), float(params.get('spacing_y_nm', 5.1))
         defaults = dict(left_nm=(left + right) / 2, top_nm=top + sy / 2,
                         width_nm=(right - left + sx) / 2, height_nm=top - bottom + sy,
-                        pixel_nm=1, sigma_nm=1.5, global_sigma_nm=0, exclusion_radius_nm=2, rotation_deg=0)
+                        pixel_nm=1, sigma_nm=1.5, global_sigma_nm=0, exclusion_radius_nm=2, rotation_deg=0,
+                        blend_width_nm=0, blend_height_nm=0)
         labels = [('left_nm', 'Left X (nm)'), ('top_nm', 'Top Y (nm)'), ('width_nm', 'Width (nm)'),
                   ('height_nm', 'Height (nm)'), ('pixel_nm', 'Output pixel (nm)'), ('sigma_nm', 'Per-section Gaussian σ (nm)'),
-                  ('exclusion_radius_nm', 'Marker exclusion (nm)'), ('rotation_deg', 'Whole image rotation (°)'),
-                  ('global_sigma_nm', 'Whole-image Gaussian σ (nm)')]
+                  ('exclusion_radius_nm', 'Overlap marker exclusion σ (nm)'), ('rotation_deg', 'Whole image rotation (°)'),
+                  ('global_sigma_nm', 'Whole-image Gaussian σ (nm)'),
+                  ('blend_width_nm', 'Overlap total width (nm)'), ('blend_height_nm', 'Overlap total height (nm)')]
         for i, (key, label) in enumerate(labels):
             var = tk.StringVar(value=f'{defaults[key]:g}')
             self.variables[key] = var
@@ -113,15 +129,23 @@ class CompositeWindow(tk.Toplevel):
             else:
                 widget = ttk.Entry(geometry_box, textvariable=var, width=18)
                 var.trace_add('write', self.invalidate)
+            if key in REGION_KEYS:
+                self.region_widgets[key] = widget
             widget.grid(row=i // 4 * 2 + 1, column=i % 4, sticky='ew', padx=5)
         self.average = tk.BooleanVar(value=True)
         self.average.trace_add('write', self.invalidate)
         ttk.Checkbutton(geometry_box, text='Average signal per origami within each species', variable=self.average).grid(row=6, column=0, columnspan=3, sticky='w', pady=5)
         ttk.Label(geometry_box, text='Positive decoded shifts move right/down in the composite. Preview the rectangle before building; exclude barcode and fiducial signal.').grid(row=7, column=0, columnspan=4, sticky='w')
         ttk.Label(geometry_box, text='Whole-image smoothing blends across section boundaries after assembly. Set σ to 0 to disable; rebuild after changes.').grid(row=8, column=0, columnspan=4, sticky='w')
+        ttk.Label(geometry_box, text='Overlap uses total dimensions, not added margins: height 45 → total height 55 adds 5 nm per side. 0 follows normal size; Gaussian tails reach 3σ at the edges.').grid(row=9, column=0, columnspan=4, sticky='w')
+        self.normalize_overlap = tk.BooleanVar(value=False)
+        self.normalize_overlap.trace_add('write', self.invalidate)
+        ttk.Checkbutton(geometry_box, text='Normalize overlapping sections (optional; off adds Gaussian-weighted signals)',
+                        variable=self.normalize_overlap).grid(row=10, column=0, columnspan=4, sticky='w', pady=5)
         actions = ttk.Frame(self.page)
         actions.pack(fill='x', padx=10)
         ttk.Button(actions, text='Preview image region', command=self.preview_region).pack(side='left', padx=3)
+        ttk.Button(actions, text='Cancel preview', command=self.cancel_region_preview).pack(side='left', padx=3)
         ttk.Button(actions, text='Build composite', command=self.build).pack(side='left', padx=3)
         ttk.Button(actions, text='Export PNGs + densities + report…', command=self.export).pack(side='left', padx=3)
         self.view = tk.StringVar(value='Composite')
@@ -139,7 +163,6 @@ class CompositeWindow(tk.Toplevel):
             ttk.Checkbutton(orientation_bar, text=text, variable=variable).pack(side='left', padx=6)
             variable.trace_add('write', self.update_display_orientation)
         ttk.Button(orientation_bar, text='Reset orientation', command=self.reset_display_orientation).pack(side='left', padx=3)
-        ttk.Label(self.page, textvariable=self.status, wraplength=1120).pack(fill='x', padx=12, pady=5)
         self.figure = Figure(figsize=(10, 7.6), dpi=100, layout='constrained')
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.page)
         self.canvas.get_tk_widget().configure(height=760)
@@ -150,6 +173,10 @@ class CompositeWindow(tk.Toplevel):
             self.apply_configuration(saved)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.poll_after_id = self.after(100, self.poll)
+
+    @property
+    def data_owner(self):
+        return self.reconstruction_owner or self.owner
 
     def resize_page(self, _event=None):
         self.page_canvas.itemconfigure(
@@ -173,13 +200,15 @@ class CompositeWindow(tk.Toplevel):
             self.canvas.get_tk_widget().winfo_y() / max(1, self.page.winfo_height()))
 
     def first_params(self):
-        results = self.owner.origami_multi_template_results
+        results = self.data_owner.origami_multi_template_results
         if results:
             return next(iter(results.values()))['params']
-        templates = self.owner.origami_custom_templates
+        templates = self.data_owner.origami_custom_templates
         return templates[0] if templates else dict(rows=8, columns=12, spacing_x_nm=9.9, spacing_y_nm=5.1)
 
     def full_grid(self, params):
+        if '_reconstruction_grid_nm' in params:
+            return np.asarray(params['_reconstruction_grid_nm'], dtype=float)
         return self.grid_points(int(params.get('rows', 8)), int(params.get('columns', 12)),
                                 float(params.get('spacing_x_nm', 9.9)), float(params.get('spacing_y_nm', 5.1)), params)
 
@@ -196,15 +225,17 @@ class CompositeWindow(tk.Toplevel):
         self.source_scope.set(
             f"Partial analysis: {preview['completed']}/{preview['planned']} tiles. Composite uses completed tiles only."
             if preview else '')
+        if self.reconstruction_owner is not None:
+            self.source_scope.set('Standalone reconstruction: ' + self.reconstruction_owner.reconstruction_path + '\n' + self.source_scope.get())
         previous = self.mapping_values() if self.rows else {}
         for child in self.table.winfo_children():
             child.destroy()
         self.rows = {}
         self.row_widgets = {}
-        for col, label in enumerate(('Include', 'Barcode template', 'Code / binary codebook entry', 'Color', 'X shift (nm)', 'Y shift (nm)', 'Rotate CW (°)', 'Mirror ↔', 'Mirror ↕', 'Brightness ×', 'Accepted')):
+        for col, label in enumerate(('Include', 'Barcode template', 'Code / binary codebook entry', 'Color', 'X shift (nm)', 'Y shift (nm)', 'Rotate CW (°)', 'Mirror ↔', 'Mirror ↕', 'Brightness ×', 'Excluded fill %', 'Accepted')):
             ttk.Label(self.table, text=label).grid(row=0, column=col, padx=5, sticky='w')
-        templates = self.owner.origami_custom_templates
-        names = list(dict.fromkeys([str(t['name']) for t in templates] + list(self.owner.origami_multi_template_results)))
+        templates = self.data_owner.origami_custom_templates
+        names = list(dict.fromkeys([str(t['name']) for t in templates] + list(self.data_owner.origami_multi_template_results)))
         for row, name in enumerate(names, 1):
             saved = previous.get(name, {})
             values = dict(include=tk.BooleanVar(value=saved.get('include', True)),
@@ -215,7 +246,8 @@ class CompositeWindow(tk.Toplevel):
                           rotation_deg=tk.StringVar(value=saved.get('rotation_deg', '0')),
                           mirror_x=tk.BooleanVar(value=saved.get('mirror_x', False)),
                           mirror_y=tk.BooleanVar(value=saved.get('mirror_y', False)),
-                          brightness=tk.StringVar(value=saved.get('brightness', '1')))
+                          brightness=tk.StringVar(value=saved.get('brightness', '1')),
+                          fill_percent=tk.StringVar(value=saved.get('fill_percent', '')))
             self.rows[name] = values
             values['code']._applied_code = values['code'].get()
             ttk.Checkbutton(self.table, variable=values['include']).grid(row=row, column=0)
@@ -234,9 +266,10 @@ class CompositeWindow(tk.Toplevel):
             for col, key in ((7, 'mirror_x'), (8, 'mirror_y')):
                 ttk.Checkbutton(self.table, variable=values[key]).grid(row=row, column=col)
             ttk.Entry(self.table, textvariable=values['brightness'], width=8).grid(row=row, column=9, padx=5)
-            payload = self.owner.origami_multi_template_results.get(name)
+            ttk.Entry(self.table, textvariable=values['fill_percent'], width=8).grid(row=row, column=10, padx=5)
+            payload = self.data_owner.origami_multi_template_results.get(name)
             count = int(np.count_nonzero(payload['picks'].accepted_mask)) if payload else 'Run Step 4'
-            ttk.Label(self.table, text=str(count)).grid(row=row, column=10, padx=5)
+            ttk.Label(self.table, text=str(count)).grid(row=row, column=11, padx=5)
             for var in values.values():
                 var.trace_add('write', self.invalidate)
         for widget in (self.table_canvas, self.table, *self.table.winfo_children()):
@@ -316,7 +349,7 @@ class CompositeWindow(tk.Toplevel):
         try:
             rotation = float(self.variables['rotation_deg'].get())
             self.result = reorient_composite(self.result, rotation, self.mirror_x.get(), self.mirror_y.get())
-            self.owner.origami_composite_configuration = self.configuration()
+            self.data_owner.origami_composite_configuration = self.configuration()
             self.plot_result()
             self.status.set('Composite orientation updated. PNG and numerical exports use this orientation; no reconstruction rerun is needed.')
         except (ValueError, tk.TclError) as exc:
@@ -327,38 +360,53 @@ class CompositeWindow(tk.Toplevel):
 
     def settings(self):
         values = {key: float(var.get()) for key, var in self.variables.items()}
-        settings = CompositeSettings(**values, average_species=self.average.get(), mirror_x=self.mirror_x.get(), mirror_y=self.mirror_y.get())
+        settings = CompositeSettings(**values, normalize_overlap=self.normalize_overlap.get(), average_species=self.average.get(), mirror_x=self.mirror_x.get(), mirror_y=self.mirror_y.get())
         settings.validate()
+        if self.reconstruction_owner is not None and self.reconstruction_owner.reconstruction_region is not None:
+            region = self.reconstruction_owner.reconstruction_region
+            if any(getattr(settings, key) != region[key] for key in REGION_KEYS):
+                raise ValueError('This reconstruction session has a fixed image region. Save a new session from the full analysis to change it.')
         return settings
 
     def configuration(self):
         return dict(format='paint-composite-mappings-v1', mappings=self.mapping_values(),
                     settings=asdict(self.settings()), geometry=self.geometry_settings,
-                    codebook=self.codebook)
+                    codebook=self.codebook, rgb_batch_manifest=self.batch_manifest)
 
     def apply_configuration(self, document):
         if document.get('format') != 'paint-composite-mappings-v1':
             raise ValueError('This is not a saved composite mapping file.')
         settings = CompositeSettings(**document['settings'])
         settings.validate()
+        if self.reconstruction_owner is not None and self.reconstruction_owner.reconstruction_region is not None:
+            region = self.reconstruction_owner.reconstruction_region
+            if any(getattr(settings, key) != region[key] for key in REGION_KEYS):
+                raise ValueError('These mappings use a different image region than the reconstruction session.')
+        self.batch_manifest = document.get('rgb_batch_manifest')
         self.codebook = document.get('codebook', {})
         self.geometry_settings = document.get('geometry', {})
         self.refresh_templates()
         for name, values in document['mappings'].items():
             if name in self.rows:
                 for key, var in self.rows[name].items():
-                    var.set(values.get(key, {'rotation_deg': 0, 'mirror_x': False, 'mirror_y': False, 'brightness': 1}.get(key, var.get())))
+                    var.set(values.get(key, {'rotation_deg': 0, 'mirror_x': False, 'mirror_y': False, 'brightness': 1, 'fill_percent': ''}.get(key, var.get())))
                 self.rows[name]['code']._applied_code = values['code']
         for key, var in self.variables.items():
             var.set(getattr(settings, key))
         self.average.set(settings.average_species)
+        self.normalize_overlap.set(settings.normalize_overlap)
         self.mirror_x.set(settings.mirror_x)
         self.mirror_y.set(settings.mirror_y)
         missing = set(document['mappings']) - set(self.rows)
+        for widget in self.region_widgets.values():
+            widget.configure(state='readonly' if self.reconstruction_owner is not None and self.reconstruction_owner.reconstruction_region is not None else 'normal')
         self.status.set('Mappings loaded.' + (f' {len(missing)} saved templates are not currently loaded.' if missing else ''))
 
     def load_templates(self):
         if self.busy:
+            return
+        if self.reconstruction_owner is not None:
+            self.status.set('This session contains saved identifications. Close this window to return to the full analysis.')
             return
         self.owner._load_multiple_origami_custom_templates()
         self.refresh_templates()
@@ -374,20 +422,23 @@ class CompositeWindow(tk.Toplevel):
             geometry,codebook,mappings,defaults=saved_rgb_batch_mapping(document,self.rows,self.full_grid(params),params)
             if not self.rows:
                 raise ValueError('Load the barcode classification templates first, then load the saved RGB batch.')
+            self.batch_manifest = document
             self.geometry_settings,self.codebook=geometry,codebook
             self.refresh_templates()
             for name,row in self.rows.items():
                 # Prevent unrelated control origami from inheriting old placements.
+                row['fill_percent'].set('')
                 row['include'].set(name in mappings)
                 if name in mappings:
                     for key,var in row.items():
-                        var.set(mappings[name][key])
+                        var.set(mappings[name].get(key, '' if key == 'fill_percent' else var.get()))
                     row['code']._applied_code=mappings[name]['code']
                 else:
                     row['code'].set('')
                     row['color'].set('')
             for key,value in defaults.items():
-                self.variables[key].set(value)
+                if self.reconstruction_owner is None or self.reconstruction_owner.reconstruction_region is None or key not in REGION_KEYS:
+                    self.variables[key].set(value)
             self.mirror_x.set(False)
             self.mirror_y.set(False)
             self.invalidate()
@@ -416,7 +467,8 @@ class CompositeWindow(tk.Toplevel):
             self.geometry_settings, self.codebook = geometry, codebook
             self.refresh_templates()
             for key, value in defaults.items():
-                self.variables[key].set(value)
+                if self.reconstruction_owner is None or self.reconstruction_owner.reconstruction_region is None or key not in REGION_KEYS:
+                    self.variables[key].set(value)
             for name in self.rows:
                 self.apply_code(name)
             self.status.set(f'Loaded {len(codebook)} codes. Select the matching code for each template; color and shifts remain editable. Check the image-region preview.')
@@ -437,14 +489,19 @@ class CompositeWindow(tk.Toplevel):
             path = filedialog.asksaveasfilename(parent=self, defaultextension='.json', initialfile='barcode_image_mappings.json')
             if path:
                 Path(path).write_text(json.dumps(document, indent=2) + '\n')
-                self.owner.origami_composite_configuration = document
+                self.data_owner.origami_composite_configuration = document
         except Exception as exc:
             messagebox.showerror('Cannot save mappings', str(exc), parent=self)
 
-    def exclusions(self, results):
+    def exclusions(self, results, progress=None):
         excluded = {}
-        for name, payload in results.items():
+        for index, (name, payload) in enumerate(results.items(), 1):
+            if progress:
+                progress(f'Preparing exclusion sites: {name} ({index}/{len(results)} templates)')
             params = payload['params']
+            if '_reconstruction_exclusions_nm' in params:
+                excluded[name] = np.asarray(params['_reconstruction_exclusions_nm'], dtype=float).reshape(-1, 2)
+                continue
             sites = [self.alignment_points(np.empty((0, 2)), params)]
             model = params.get('logical_model') or {}
             cells = sorted({int(i) for group in model.get('bit_physical_cells', ()) for i in group})
@@ -453,50 +510,124 @@ class CompositeWindow(tk.Toplevel):
             excluded[name] = np.concatenate(sites).reshape(-1, 2)
         return excluded
 
+    def cancel_region_preview(self):
+        if self.preview_cancel is not None:
+            self.preview_cancel.set()
+            self.status.set('Stopping image-region preview…')
+
     def preview_region(self):
+        if self.busy:
+            return
         try:
             settings = self.settings()
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
-            params = self.first_params()
-            grid = self.full_grid(params)
-            ax.scatter(*grid.T, s=12, color='gray', label='Physical lattice')
-            results = self.owner.origami_multi_template_results
-            for payload in results.values():
-                picks = payload['picks']
-                selected = np.flatnonzero(picks.accepted_mask)
-                if len(selected):
-                    from origami_composite import pose_basis
-                    from scipy.spatial import cKDTree
-                    center, basis = pose_basis(picks.rectangle_corners_nm[selected[0]])
-                    source = self.owner.origami_source_points_nm
-                    radius = max(np.linalg.norm(grid, axis=1).max(), np.hypot(settings.left_nm, settings.top_nm) + np.hypot(settings.width_nm, settings.height_nm))
-                    ids = cKDTree(source).query_ball_point(center, radius)
-                    points = (source[ids] - center) @ basis
-                    ax.scatter(*points.T, s=2, alpha=.25, label='Example accepted origami')
-                    break
-            if results:
-                sites = next(iter(self.exclusions(results).values()))
-                ax.scatter(*sites.T, marker='x', color='red', label='Excluded barcode / fiducial sites')
-            ax.add_patch(Rectangle((settings.left_nm, settings.top_nm - settings.height_nm), settings.width_nm, settings.height_nm, fill=False, edgecolor='limegreen', linewidth=2, label='Image extraction region'))
-            ax.set(xlabel='Aligned X (nm)', ylabel='Aligned Y (nm)', title='Image-side extraction before decoded shifts')
-            ax.set_aspect('equal'); ax.legend(fontsize=8); ax.autoscale_view()
-            self.canvas.draw_idle()
+            results = self.data_owner.origami_multi_template_results
+            source = self.data_owner.origami_source_points_nm
+            fallback_params = self.first_params()
+            cancel = threading.Event()
+            self.preview_cancel = cancel
+            self.busy = True
+            self.status.set('Preparing image-region preview…')
+            def work():
+                try:
+                    with _progress_heartbeat(lambda text: self.events.put(('progress', text))) as report:
+                        report('Selecting an accepted origami for the image-region preview…')
+                        selected = None
+                        for name, payload in results.items():
+                            if cancel.is_set():
+                                raise RegionPreviewCancelled()
+                            mask = payload['picks'].accepted_mask
+                            if np.any(mask):
+                                selected = (name, payload, int(np.argmax(mask)))
+                                break
+                        # Match grid and marker sites to the selected example.
+                        name, payload = (selected[:2] if selected else
+                                         next(iter(results.items()), (None, None)))
+                        params = payload['params'] if payload is not None else fallback_params
+                        grid = self.full_grid(params)
+                        sites = (self.exclusions({name: payload}, report)[name]
+                                 if payload is not None else np.empty((0, 2)))
+                        points, count = np.empty((0, 2)), 0
+                        if selected:
+                            points, count = image_region_preview_points(
+                                source, payload['picks'].rectangle_corners_nm[selected[2]], grid, settings,
+                                report, cancel.is_set)
+                        if cancel.is_set():
+                            raise RegionPreviewCancelled()
+                        preview = dict(settings=settings, results=results, source=source, grid=grid,
+                                       sites=sites, points=points, count=count, example=name if selected else None)
+                    if not self._closed:
+                        self.events.put(('region_preview', preview))
+                except RegionPreviewCancelled:
+                    if not self._closed:
+                        self.events.put(('preview_cancelled', None))
+                except Exception as exc:
+                    if not self._closed:
+                        self.events.put(('preview_error', str(exc)))
+            threading.Thread(target=work, daemon=True).start()
         except Exception as exc:
+            self.busy = False
+            self.preview_cancel = None
+            self.status.set('Preview failed: ' + str(exc))
             messagebox.showerror('Cannot preview region', str(exc), parent=self)
+
+    def show_region_preview(self, preview):
+        try:
+            current_settings = self.settings()
+        except (ValueError, tk.TclError):
+            current_settings = None
+        if (preview['settings'] != current_settings
+                or preview['results'] is not self.data_owner.origami_multi_template_results
+                or preview['source'] is not self.data_owner.origami_source_points_nm):
+            self.status.set('Inputs changed during preview. Click Preview image region again.')
+            return
+        self.status.set('Drawing image-region preview…')
+        self.update_idletasks()
+        settings = preview['settings']
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.scatter(*preview['grid'].T, s=12, color='gray', label='Physical lattice')
+        if preview['example'] is not None:
+            weights = image_region_weights(preview['points'], preview['sites'], settings)
+            colors = np.zeros((len(weights), 4))
+            colors[:, :3] = [.12, .47, .71]
+            colors[:, 3] = .25 * weights
+            ax.scatter(*preview['points'].T, s=2, color=colors, label='Example (Gaussian weighted): ' + preview['example'])
+        if len(preview['sites']):
+            ax.scatter(*preview['sites'].T, marker='x', color='red', label='Marker sites (excluded only in overlap)')
+        ax.add_patch(Rectangle((settings.left_nm, settings.top_nm - settings.height_nm), settings.width_nm,
+                               settings.height_nm, fill=False, edgecolor='limegreen', linewidth=2,
+                               label='Image extraction region'))
+        mx, my = settings.blend_margin
+        if mx or my:
+            ax.add_patch(Rectangle((settings.left_nm - mx, settings.top_nm - settings.height_nm - my),
+                                   *settings.blend_size, fill=False, edgecolor='orange', linestyle='--',
+                                   label='Overlap blend rectangle (3σ)'))
+        ax.set(xlabel='Aligned X (nm)', ylabel='Aligned Y (nm)', title=f'Image-side extraction · marker exclusion σ = {settings.exclusion_radius_nm:g} nm')
+        ax.set_aspect('equal')
+        ax.legend(fontsize=8)
+        ax.autoscale_view()
+        self.canvas.draw_idle()
+        self.reveal_preview()
+        if preview['example'] is None:
+            self.status.set('No accepted origami; showing image-region geometry only.')
+        else:
+            self.status.set(f"Preview ready: {preview['example']}; showing {len(preview['points']):,} "
+                            f"of {preview['count']:,} nearby localizations. Display sampling does not affect reconstruction.")
 
     def build(self):
         record_diagnostic("composite_build_requested")
         if self.busy:
             return
+        self.status.set('Validating classification and capturing composite settings…')
+        self.update_idletasks()
         try:
-            if self.owner.origami_identification_running:
+            if self.data_owner.origami_identification_running:
                 raise ValueError('Wait for classification to finish before reconstruction.')
-            baseline = self.owner.origami_identification_baseline
-            if baseline is not None and self.owner._origami_identification_snapshot() != baseline:
+            baseline = self.data_owner.origami_identification_baseline
+            if baseline is not None and self.data_owner._origami_identification_snapshot() != baseline:
                 raise ValueError('Identification settings changed. Rerun classification before reconstruction.')
             settings = self.settings()
-            results = self.owner.origami_multi_template_results
+            results = self.data_owner.origami_multi_template_results
             if not results:
                 raise ValueError('Run Step 4 to classify templates before reconstruction.')
             if set(results) - set(self.rows):
@@ -507,19 +638,22 @@ class CompositeWindow(tk.Toplevel):
             if issues:
                 self.show_mapping_issues(issues)
                 return
-            exclusions = self.exclusions(results)
-            source = self.owner.origami_source_points_nm
+            source = self.data_owner.origami_source_points_nm
             configuration = self.configuration()
-            unclassified_count = int(self.owner.origami_multi_template_unclassified_count)
-            source_path = str(self.owner.origami_loaded_source_path)
-            self.owner.origami_composite_configuration = configuration
+            unclassified_count = int(self.data_owner.origami_multi_template_unclassified_count)
+            source_path = str(self.data_owner.origami_loaded_source_path)
+            self.data_owner.origami_composite_configuration = configuration
             self.busy = True
             self.result = None
             self.status.set('Extracting image-side localizations from accepted origami…')
             def work():
                 try:
+                    progress = lambda text: self.events.put(('progress', text))
+                    with _progress_heartbeat(progress) as report:
+                        exclusions = self.exclusions(results, report)
                     result = reconstruct_composite(source, results, mappings, settings, exclusions,
-                                                   lambda text: self.events.put(('progress', text)))
+                                                   progress)
+                    progress('Finalizing source and mapping metadata…')
                     result['report']['unclassified_origami'] = unclassified_count
                     result['report']['source'] = source_path
                     result['report']['encoding_codes_without_observed_species'] = sorted(
@@ -531,6 +665,8 @@ class CompositeWindow(tk.Toplevel):
                         self.events.put(('error', str(exc)))
             threading.Thread(target=work, daemon=True).start()
         except Exception as exc:
+            self.busy = False
+            self.status.set('Reconstruction failed: ' + str(exc))
             messagebox.showerror('Cannot reconstruct', str(exc), parent=self)
 
     def poll(self):
@@ -540,6 +676,63 @@ class CompositeWindow(tk.Toplevel):
                 record_diagnostic('composite_event', kind=kind, message=payload if kind in ('progress', 'error') else 'result ready')
                 if kind == 'progress':
                     self.status.set(payload)
+                elif kind in ('region_preview', 'preview_cancelled', 'preview_error'):
+                    cancelled = self.preview_cancel is not None and self.preview_cancel.is_set()
+                    self.busy = False
+                    self.preview_cancel = None
+                    if kind == 'preview_cancelled' or cancelled:
+                        self.status.set('Image-region preview cancelled.')
+                    elif kind == 'preview_error':
+                        self.status.set('Preview failed: ' + payload)
+                        messagebox.showerror('Cannot preview region', payload, parent=self)
+                    else:
+                        try:
+                            self.show_region_preview(payload)
+                        except Exception as exc:
+                            self.status.set('Preview failed: ' + str(exc))
+                            messagebox.showerror('Cannot preview region', str(exc), parent=self)
+                elif kind == 'analysis_reconstruction_loaded':
+                    self.busy = False
+                    try:
+                        self.install_analysis_reconstruction(payload)
+                    except Exception as exc:
+                        self.status.set('Cannot apply reconstruction inputs: ' + str(exc))
+                        messagebox.showerror('Cannot apply reconstruction inputs', str(exc), parent=self)
+                elif kind == 'session_loaded':
+                    self.busy = False
+                    self.result = None
+                    self.result_inputs = None
+                    self.reconstruction_owner = payload
+                    self._bulk_mapping_update = True
+                    try:
+                        self.status.set('Applying saved RGB mappings and reconstruction settings…')
+                        self.update_idletasks()
+                        self.apply_configuration(payload.origami_composite_configuration)
+                    except Exception as exc:
+                        self.finish_session_dialog()
+                        self.status.set('Cannot apply reconstruction session: ' + str(exc))
+                        messagebox.showerror('Cannot apply reconstruction session', str(exc), parent=self)
+                    else:
+                        self.finish_session_dialog()
+                        self.status.set('Reconstruction session loaded. RGB batch mappings applied; saved image region is fixed. Click Build composite.')
+                    finally:
+                        self._bulk_mapping_update = False
+                elif kind == 'session_saved':
+                    self.finish_session_dialog()
+                    self.busy = False
+                    self.status.set('Reconstruction session saved: ' + payload + '. Reopen it directly after restarting; no full analysis load is needed.')
+                elif kind == 'session_error':
+                    self.finish_session_dialog()
+                    self.busy = False
+                    self.status.set('Reconstruction session failed: ' + payload)
+                    messagebox.showerror('Cannot open/save reconstruction session', payload, parent=self)
+                elif kind == 'exported':
+                    self.busy = False
+                    self.status.set('Saved PNG, image with axes, numerical densities and coverage (.npz), and reconstruction report (.json).')
+                elif kind == 'export_error':
+                    self.busy = False
+                    self.status.set('Export failed: ' + payload)
+                    messagebox.showerror('Cannot export composite', payload, parent=self)
                 elif kind == 'error':
                     self.busy = False
                     self.status.set('Reconstruction failed: ' + payload)
@@ -551,18 +744,20 @@ class CompositeWindow(tk.Toplevel):
                         current_configuration = self.configuration()
                     except (ValueError, tk.TclError):
                         current_configuration = None
-                    if (configuration != current_configuration or results is not self.owner.origami_multi_template_results
-                            or source is not self.owner.origami_source_points_nm):
+                    if (configuration != current_configuration or results is not self.data_owner.origami_multi_template_results
+                            or source is not self.data_owner.origami_source_points_nm):
                         self.status.set('Inputs changed during reconstruction. Build again to use the updated inputs.')
                         continue
                     result['report']['mapping_configuration'] = configuration
                     self.result = result
                     self.result_inputs = (results, source)
                     species = result['report']['species']
-                    self.status.set(f"{sum(s['accepted_origami'] for s in species)} origami; {sum(s['missing'] for s in species)} missing species. "
-                                    'Per-template counts are included in the exported report.')
+                    self.status.set('Drawing composite preview…')
+                    self.update_idletasks()
                     self.plot_result()
                     self.reveal_preview()
+                    self.status.set(f"{sum(s['accepted_origami'] for s in species)} origami; {sum(s['missing'] for s in species)} missing species. "
+                                    f"{len(result['report'].get('synthetic_replacements', []))} synthetic replacements. Per-template counts are included in the exported report.")
         except queue.Empty:
             pass
         self.poll_after_id = self.after(100, self.poll)
@@ -585,32 +780,239 @@ class CompositeWindow(tk.Toplevel):
         ax.set(xlabel='Display X (nm)', ylabel='Display Y (nm)', title=mode + (' · extraction-region coverage' if mode == 'Coverage' else ' · shared RGB brightness scale'))
         self.canvas.draw_idle()
 
+    def load_analysis_reconstruction(self, path, filter_series=None):
+        if self.busy:
+            self.status.set('Wait for the current reconstruction operation to finish.')
+            return
+        self.busy = True
+        self.status.set('Loading only reconstruction inputs from analysis…')
+        def work():
+            try:
+                inputs = load_reconstruction_from_analysis(
+                    path, lambda text: self.events.put(('progress', text)), filter_series)
+                if not self._closed:
+                    self.events.put(('analysis_reconstruction_loaded', inputs))
+            except Exception as exc:
+                if not self._closed:
+                    self.events.put(('session_error', str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def install_analysis_reconstruction(self, inputs):
+        self.result = None
+        self.result_inputs = None
+        self.reconstruction_owner = inputs
+        self._bulk_mapping_update = True
+        try:
+            self.rows = {}
+            self.codebook = {}
+            self.geometry_settings = {}
+            self.batch_manifest = None
+            configuration = inputs.origami_composite_configuration
+            if configuration:
+                self.apply_configuration(configuration)
+            else:
+                self.refresh_templates()
+                params = self.first_params()
+                grid = self.full_grid(params)
+                sx, sy = float(params.get('spacing_x_nm', 9.9)), float(params.get('spacing_y_nm', 5.1))
+                left, right = grid[:, 0].min(), grid[:, 0].max()
+                bottom, top = grid[:, 1].min(), grid[:, 1].max()
+                defaults = CompositeSettings(left_nm=(left + right) / 2, top_nm=top + sy / 2,
+                                             width_nm=(right - left + sx) / 2, height_nm=top - bottom + sy)
+                for key, variable in self.variables.items():
+                    variable.set(getattr(defaults, key))
+                self.average.set(True)
+                self.normalize_overlap.set(False)
+                self.mirror_x.set(False)
+                self.mirror_y.set(False)
+                for widget in self.region_widgets.values():
+                    widget.configure(state='normal')
+            self.figure.clear()
+            self.canvas.draw_idle()
+        finally:
+            self._bulk_mapping_update = False
+        self.status.set('Reconstruction inputs loaded without restoring the full analysis. '
+                        + ('Saved RGB mappings restored. ' if configuration else 'Load the RGB picklist batch manifest. ')
+                        + 'Define the image region, then Build composite or Save reconstruction session for faster reopening.')
+
+    def load_session(self, path=None):
+        if self.busy:
+            return
+        if path is None:
+            path = filedialog.askopenfilename(parent=self, title='Open standalone reconstruction session',
+                                              filetypes=[('Reconstruction session', '*.paintrecon')])
+        if not path:
+            return
+        self.busy = True
+        self.status.set('Opening reconstruction session…')
+        try:
+            self.show_session_dialog(loading=True)
+        except Exception as exc:
+            self.busy = False
+            self.finish_session_dialog()
+            self.status.set('Cannot open reconstruction session: ' + str(exc))
+            messagebox.showerror('Cannot open reconstruction session', str(exc), parent=self)
+            return
+        def work():
+            try:
+                loaded = load_reconstruction_session(path, lambda text: self.events.put(('progress', text)))
+                if not self._closed:
+                    self.events.put(('session_loaded', loaded))
+            except Exception as exc:
+                if not self._closed:
+                    self.events.put(('session_error', str(exc)))
+        try:
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self.busy = False
+            self.finish_session_dialog()
+            self.status.set('Cannot open reconstruction session: ' + str(exc))
+            messagebox.showerror('Cannot open reconstruction session', str(exc), parent=self)
+
+    def show_session_dialog(self, loading=False):
+        self.session_io_busy = True
+        dialog = tk.Toplevel(self)
+        self.session_dialog = dialog
+        dialog.title('Loading reconstruction session' if loading else 'Saving reconstruction session')
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.protocol('WM_DELETE_WINDOW', self.prevent_close_during_session_io)
+        ttk.Label(dialog, text='Loading...' if loading else 'Saving...', font=('TkDefaultFont', 14)).pack(padx=25, pady=(20, 10))
+        ttk.Label(dialog, text='Please wait. This window will close when loading is complete.' if loading else 'Please wait. This window will close when saving is complete.').pack(padx=25, pady=(0, 10))
+        ttk.Label(dialog, textvariable=self.status, wraplength=460).pack(padx=25, pady=(0, 15))
+        progress = ttk.Progressbar(dialog, mode='indeterminate', length=400)
+        self.session_progress = progress
+        progress.pack(padx=25, pady=(0, 20))
+        progress.start()
+        dialog.grab_set()
+        dialog.focus_set()
+
+    def prevent_close_during_session_io(self):
+        if not self.__dict__.get('session_io_busy', False):
+            return False
+        dialog = self.__dict__.get('session_dialog')
+        if dialog is not None:
+            dialog.lift()
+            dialog.bell()
+        return True
+
+    def finish_session_dialog(self):
+        self.session_io_busy = False
+        progress = self.__dict__.pop('session_progress', None)
+        if progress is not None:
+            progress.stop()
+        dialog = self.__dict__.pop('session_dialog', None)
+        if dialog is not None:
+            dialog.grab_release()
+            dialog.destroy()
+
+    def save_session(self):
+        if self.busy:
+            return
+        try:
+            data = self.data_owner
+            if data.origami_identification_running:
+                raise ValueError('Wait for classification to finish before saving a reconstruction session.')
+            if (data.origami_identification_baseline is not None
+                    and data._origami_identification_snapshot() != data.origami_identification_baseline):
+                raise ValueError('Identification settings changed. Rerun classification before saving.')
+            results = data.origami_multi_template_results
+            if not results:
+                raise ValueError('Run Step 4 to classify templates before saving a reconstruction session.')
+            if not self.batch_manifest:
+                region_values = {key: self.variables[key].get() for key in REGION_KEYS}
+                self.load_picklist_batch()
+                # Saving uses the region the user defined, even when importing
+                # the required batch manifest as part of this action.
+                for key, value in region_values.items():
+                    self.variables[key].set(value)
+                if not self.batch_manifest:
+                    self.status.set('Load the RGB picklist batch to include it in the reconstruction session.')
+                    return
+            configuration = self.configuration()
+            issues = reconstruction_mapping_issues(results, configuration['mappings'])
+            if issues:
+                self.show_mapping_issues(issues)
+                return
+            path = filedialog.asksaveasfilename(parent=self, title='Save standalone reconstruction session',
+                                               defaultextension='.paintrecon', initialfile='image_reconstruction.paintrecon',
+                                               filetypes=[('Reconstruction session', '*.paintrecon')])
+            if not path:
+                return
+            source = data.origami_source_points_nm
+            source_path = str(data.origami_loaded_source_path)
+            unclassified_count = int(data.origami_multi_template_unclassified_count)
+            self.busy = True
+            self.status.set('Preparing reconstruction session…')
+            self.show_session_dialog()
+            def work():
+                try:
+                    progress = lambda text: self.events.put(('progress', text))
+                    with _progress_heartbeat(progress) as report:
+                        exclusions = self.exclusions(results, report)
+                        report('Preparing saved template geometry…')
+                        grids = {name: self.full_grid(result['params']) for name, result in results.items()}
+                    save_reconstruction_session(path, source, results, configuration, exclusions, grids,
+                                                source_path, unclassified_count, progress)
+                    if not self._closed:
+                        self.events.put(('session_saved', path))
+                except Exception as exc:
+                    if not self._closed:
+                        self.events.put(('session_error', str(exc)))
+            threading.Thread(target=work, daemon=True).start()
+        except Exception as exc:
+            self.busy = False
+            self.finish_session_dialog()
+            self.status.set('Cannot save reconstruction session: ' + str(exc))
+            messagebox.showerror('Cannot save reconstruction session', str(exc), parent=self)
+
     def export(self):
+        if self.busy:
+            return
         try:
             if self.result is None:
                 raise ValueError('Build the composite before exporting.')
-            if (self.result_inputs[0] is not self.owner.origami_multi_template_results
-                    or self.result_inputs[1] is not self.owner.origami_source_points_nm):
+            if (self.result_inputs[0] is not self.data_owner.origami_multi_template_results
+                    or self.result_inputs[1] is not self.data_owner.origami_source_points_nm):
                 raise ValueError('Classification or source changed. Build the composite again.')
-            baseline = self.owner.origami_identification_baseline
-            if baseline is not None and self.owner._origami_identification_snapshot() != baseline:
+            baseline = self.data_owner.origami_identification_baseline
+            if baseline is not None and self.data_owner._origami_identification_snapshot() != baseline:
                 raise ValueError('Identification settings changed. Rerun classification and rebuild before export.')
             path = filedialog.asksaveasfilename(parent=self, defaultextension='.png', initialfile='origami_composite.png', filetypes=[('PNG', '*.png')])
             if path:
-                export_composite(self.result, path)
-                self.status.set('Saved plain PNG and _axes.png with nanometre axes, numerical RGB densities and coverage (.npz), and reconstruction report (.json).')
+                result = self.result
+                self.busy = True
+                self.status.set('Preparing composite export…')
+                def work():
+                    try:
+                        export_composite(result, path, lambda text: self.events.put(('progress', text)))
+                        if not self._closed:
+                            self.events.put(('exported', None))
+                    except Exception as exc:
+                        if not self._closed:
+                            self.events.put(('export_error', str(exc)))
+                threading.Thread(target=work, daemon=True).start()
         except Exception as exc:
+            self.busy = False
+            self.status.set('Export failed: ' + str(exc))
             messagebox.showerror('Cannot export composite', str(exc), parent=self)
 
     def close(self):
+        if self.__dict__.get('session_io_busy', False):
+            self.prevent_close_during_session_io()
+            return
         try:
-            self.owner.origami_composite_configuration = self.configuration()
+            self.data_owner.origami_composite_configuration = self.configuration()
         except (ValueError, tk.TclError):
             pass
         self._closed = True
+        cancel = self.__dict__.get('preview_cancel')
+        if cancel is not None:
+            cancel.set()
         self.after_cancel(self.poll_after_id)
         self.result = None
         self.result_inputs = None
+        self.reconstruction_owner = None
         while True:
             try:
                 self.events.get_nowait()
