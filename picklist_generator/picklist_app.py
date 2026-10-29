@@ -49,6 +49,7 @@ from picklist_core import (
 )
 from image_encoding import BIT_SITES, COLOR_BITS, SHIFT_STATES, synthesis_base_volume_nl
 from rgb_image_view import RGBImageView
+from mirna_replacements import target_designs, anchor_position, replacement_positions
 from selection_report import write_replacement_selection_pdf, write_stored_runs_selection_pdf
 from template_generator import (
     EXTENSION_COLUMN_SPACING_NM,
@@ -159,6 +160,7 @@ class SetView:
         self.base_desired_concentration_nm = 50.0
         self.replacement_percentage = tk.StringVar(value="100%")
         self.site_fractions: Dict[str, float] = {}
+        self.smart_absorbed = set()
         self.site_concentrations_nm: Dict[str, float] = {}
         self.new_selection_concentration = tk.StringVar(value="")
         self.minimum_transfer_nl = 25.0
@@ -181,6 +183,7 @@ class SetView:
         self.selection_changed = selection_changed
         self.template_requested = template_requested
         self.panels = panels
+        self.r1_locations = {name: site for panel in panels for name, site in panel.get("r1_locations", {}).items()}
         self._panel_cache = {}
 
         if scrollable:
@@ -191,7 +194,7 @@ class SetView:
             content = ttk.Frame(parent)
             content.pack(fill="both", expand=True)
         toolbar = ttk.Frame(content)
-        toolbar.pack(fill="x", padx=10, pady=(8, 2))
+        toolbar.pack(fill="x", padx=10, pady=(3, 1))
         ttk.Label(toolbar, text="{} replacement sheet".format(title)).pack(side="left")
         ttk.Label(toolbar, text="  Stock: {:g} µM".format(self.concentration_nm / 1000)).pack(side="left")
         self.sheet_path_entry = ttk.Entry(toolbar, textvariable=self.path_var)
@@ -206,7 +209,7 @@ class SetView:
             ttk.Label(content, text="D-Biotin: LowConc base plate SourcePlate8[8], wells P17–P24, stock 20 µM. "
                       "Uses the plate default or a per-site concentration override.").pack(anchor="w", padx=12)
         volume_bar = ttk.Frame(content)
-        volume_bar.pack(fill="x", padx=12, pady=4)
+        volume_bar.pack(fill="x", padx=12, pady=1)
         ttk.Label(volume_bar, text="Calculated base transfer (nL/staple, all manual tabs)").pack(side="left")
         ttk.Entry(volume_bar, textvariable=self.base_transfer_volume, state="readonly", width=8).pack(side="left", padx=8)
         concentration_bar = ttk.Frame(volume_bar)
@@ -220,7 +223,15 @@ class SetView:
             concentration_bar, textvariable=self.replacement_percentage, width=12, state="readonly")
         self.percentage_picker.pack(side="left", padx=8)
         self.available_levels = tk.StringVar()
-        ttk.Label(content, textvariable=self.replacement_error, foreground="#a40000", wraplength=1000).pack(anchor="w", padx=12)
+        replacement_error_label = ttk.Label(content, textvariable=self.replacement_error,
+                                            foreground="#a40000", wraplength=1000)
+        def show_replacement_error(*_args):
+            if self.replacement_error.get():
+                replacement_error_label.pack(anchor="w", padx=12, after=volume_bar)
+            else:
+                replacement_error_label.pack_forget()
+        self.replacement_error.trace_add("write", show_replacement_error)
+        show_replacement_error()
         if self.title in COLOR_BITS:
             encoding_bar = ttk.Frame(content)
             encoding_bar.pack(fill="x", padx=12, pady=4)
@@ -235,49 +246,73 @@ class SetView:
             ttk.Label(content, text="Bits 1–2 identify the color; bits 3–6 follow the shift dropdowns. "
                       "Color bits stay displayed when excluded from the run; encoded sites are locked.").pack(anchor="w", padx=12)
         panel_bar = ttk.Frame(content)
-        panel_bar.pack(fill="x", padx=12, pady=(5, 2))
-        ttk.Label(panel_bar, text="Panel:").pack(side="left")
+        panel_bar.pack(fill="x", padx=12, pady=(2, 1))
+        ttk.Label(panel_bar, text="Left (01–06):" if title == "Aptamers" else "Panel:").pack(side="left")
         self.panel_var = tk.StringVar(value=str(self.panels[0]["label"]))
         self.panel_picker = ttk.Combobox(
             panel_bar,
             textvariable=self.panel_var,
-            values=[str(panel["label"]) for panel in self.panels],
+            values=[str(panel["label"]) for panel in self.panels
+                    if title != "Aptamers" or panel["label"] in {"PDGF-Apt", "Kana-Apt"}],
             state="readonly",
             width=24,
         )
         self.panel_picker.pack(side="left", padx=(6, 12))
         self.panel_picker.bind("<<ComboboxSelected>>", lambda _event: self._show_panel())
+        if title == "Aptamers":
+            right_labels = [str(panel["label"]) for panel in self.panels
+                            if panel["label"] not in {"PDGF-Apt", "Kana-Apt"}]
+            self.right_panel_var = tk.StringVar(value=right_labels[0])
+            ttk.Label(panel_bar, text="Right (07–12):").pack(side="left")
+            self.right_panel_picker = ttk.Combobox(
+                panel_bar, textvariable=self.right_panel_var, values=right_labels,
+                state="readonly", width=18,
+            )
+            self.right_panel_picker.pack(side="left", padx=(6, 12))
+            self.right_panel_picker.bind("<<ComboboxSelected>>", lambda _event: self._show_panel())
         if self.template_requested is not None:
             ttk.Button(
                 panel_bar,
-                text="Make template from this panel",
+                text="Left template" if title == "Aptamers" else "Make template from this panel",
                 command=self._request_template,
             ).pack(side="right")
+            if title == "Aptamers":
+                ttk.Button(panel_bar, text="Right template", command=lambda: self._request_template(
+                    next(panel for panel in self.panels if panel["label"] == self.right_panel_var.get())
+                )).pack(side="right")
         self.selection_summary = tk.StringVar(value="0 selected in this set")
-        ttk.Label(panel_bar, textvariable=self.selection_summary, foreground="#555555").pack(side="left")
+        summary_bar = panel_bar
+        if title == "Aptamers":
+            summary_bar = ttk.Frame(content)
+            summary_bar.pack(fill="x", padx=12)
+        ttk.Label(summary_bar, textvariable=self.selection_summary, foreground="#555555").pack(side="left")
         self.orientation_summary = tk.StringVar()
-        ttk.Label(panel_bar, textvariable=self.orientation_summary, foreground="#3d626f").pack(
+        ttk.Label(summary_bar, textvariable=self.orientation_summary, foreground="#3d626f").pack(
             side="left", padx=(12, 0)
         )
+        display_controls = ttk.Frame(content)
+        display_controls.pack(fill="x", padx=12, pady=1)
         if self.title in {"Aptamers", "MB"} | PAINT_REPLACEMENT_TABS:
-            legend = tk.Frame(content, background="#f0f0f0")
-            legend.pack(fill="x", padx=12, pady=(4, 2))
+            legend = tk.Frame(display_controls, background="#f0f0f0")
+            legend.pack(side="left")
             self._legend_square(legend, self.SELECTABLE_BG, "").pack(side="left")
             tk.Label(legend, text=" Selectable", background="#f0f0f0").pack(side="left", padx=(0, 14))
-            self._legend_square(legend, self.selection_color if any(panel.get("spacing_x_nm") is not None for panel in self.panels) else self.SELECTED_BG, "✓", foreground="#222222").pack(side="left")
+            self._legend_square(legend, self.selection_color if self.title == "Aptamers" or any(panel.get("spacing_x_nm") is not None for panel in self.panels) else self.SELECTED_BG, "✓", foreground="#222222").pack(side="left")
             tk.Label(legend, text=" Selected", background="#f0f0f0").pack(side="left", padx=(0, 14))
             self._legend_square(legend, self.UNAVAILABLE_BG, "×", foreground="#62676b").pack(side="left")
             tk.Label(legend, text=" Not selectable", background="#f0f0f0").pack(side="left")
-        if any(panel.get("spacing_x_nm") is not None for panel in self.panels):
-            radius_bar = ttk.Frame(content)
-            radius_bar.pack(fill="x", padx=12, pady=4)
-            ttk.Label(radius_bar, text="Circle radius (nm)").pack(side="left")
+        self.panel_area = ttk.Frame(content)
+        self.panel_area.pack(fill="both", expand=True, padx=10, pady=1)
+        self.panel_host = ttk.Frame(self.panel_area)
+        self.panel_host.pack(side="left", anchor="n")
+        if self.title == "Aptamers" or any(panel.get("spacing_x_nm") is not None for panel in self.panels):
+            radius_bar = ttk.Frame(self.panel_area)
+            radius_bar.pack(side="left", anchor="n", padx=(12, 0), pady=(24, 0))
+            ttk.Label(radius_bar, text="Circle radius (nm)").pack(anchor="w")
             ttk.Spinbox(radius_bar, from_=0.1, to=50.0, increment=0.5,
-                        textvariable=self.circle_radius_var, width=8).pack(side="left", padx=8)
+                        textvariable=self.circle_radius_var, width=8).pack(anchor="w", pady=(3, 0))
             ttk.Label(radius_bar, textvariable=self.circle_radius_error,
-                      foreground="#a40000").pack(side="left")
-        self.panel_host = ttk.Frame(content)
-        self.panel_host.pack(fill="both", expand=True, padx=10, pady=6)
+                      foreground="#a40000", wraplength=160).pack(anchor="w")
         self.refresh()
         self.circle_radius_var.trace_add("write", self._circle_radius_changed)
         self.desired_concentration_nm.trace_add("write", self._concentration_changed)
@@ -347,6 +382,8 @@ class SetView:
         return float(self.desired_concentration_nm.get())
 
     def _target_label(self, name: str) -> str:
+        if name in self.smart_absorbed:
+            return "via lock"
         try:
             target = self.site_target(name)
             return "{:g} nM".format(target) if math.isfinite(target) and target > 0 else "Invalid nM"
@@ -401,6 +438,7 @@ class SetView:
     def refresh(self) -> None:
         self._clear_panel_cache()
         self.variables.clear()
+        self.smart_absorbed.clear()
         self.site_fractions.clear()
         self.site_concentrations_nm.clear()
         self.buttons.clear()
@@ -437,6 +475,9 @@ class SetView:
         self._panel_cache.clear()
 
     def _show_panel(self) -> None:
+        if self.title == "Aptamers":
+            self._show_aptamer_panels()
+            return
         for child in self.panel_host.winfo_children():
             child.pack_forget()
         panel = self._current_panel()
@@ -449,7 +490,11 @@ class SetView:
             EXTENSION_COLUMN_SPACING_NM,
             EXTENSION_ROW_SPACING_NM,
         )
-        if panel.get("mirror_columns", False):
+        if self.title == "Aptamers":
+            orientation = "12 × 8 body grid plus outer edge sites: {}".format(pitch)
+        elif panel.get("coordinate_system") == "R1 replacement wells":
+            orientation = "Page {} · matched R1 replacement wells · columns 12 → 1".format(panel["page"][1:])
+        elif panel.get("mirror_columns", False):
             orientation = "U physical orientation: {} mirrored (12 → 1)".format(pitch)
         elif list(panel["columns"]) == COLS:
             orientation = "D physical orientation: {} (1 → 12)".format(pitch)
@@ -474,13 +519,42 @@ class SetView:
                 self._paint_square(name)
         self._update_selection_summary()
 
+    def _show_aptamer_panels(self) -> None:
+        family = self.panel_var.get().split("-", 1)[0]
+        right_labels = [str(panel["label"]) for panel in self.panels
+                        if str(panel["label"]).startswith(family + "-")
+                        and panel["label"] != family + "-Apt"]
+        self.right_panel_picker.configure(values=right_labels)
+        if self.right_panel_var.get() not in right_labels:
+            self.right_panel_var.set(right_labels[0])
+        for child in self.panel_host.winfo_children():
+            child.pack_forget()
+        visible_circles = {}
+        for label in (self.panel_var.get(), self.right_panel_var.get()):
+            panel = next(item for item in self.panels if item["label"] == label)
+            cached = self._panel_cache.get(label)
+            if cached is None:
+                self.buttons, self.circle_sites, self.color_frames = {}, {}, {}
+                self._build_panel(panel, self.available)
+                frame = self.panel_host.winfo_children()[-1]
+                cached = (frame, self.buttons, self.circle_sites, self.color_frames)
+                self._panel_cache[label] = cached
+            frame, _, circles, _ = cached
+            frame.pack(side="left", anchor="n", padx=(0, 8), pady=5)
+            visible_circles.update(circles)
+        self.buttons, self.circle_sites, self.color_frames = {}, visible_circles, {}
+        for name in self.circle_sites:
+            self._paint_square(name)
+        self.orientation_summary.set("Left 01–06 · Right 07–12 · outer edge sites included")
+        self._update_selection_summary()
+
     def _current_panel(self) -> Dict[str, object]:
         selected_label = self.panel_var.get()
         return next((item for item in self.panels if str(item["label"]) == selected_label), self.panels[0])
 
-    def _request_template(self) -> None:
-        panel = self._current_panel()
-        selected_names = set(self.selected())
+    def _request_template(self, panel=None) -> None:
+        panel = self._current_panel() if panel is None else panel
+        selected_names = set(self.selected()) | self.smart_absorbed
         selected_positions = panel_template_positions(panel, selected_names)
         if not selected_positions:
             messagebox.showinfo(
@@ -495,6 +569,9 @@ class SetView:
         label = str(panel["label"])
         frame = ttk.LabelFrame(self.panel_host, text=label)
         frame.pack(fill="x", pady=5)
+        if self.title == "Aptamers":
+            self._build_physical_panel(frame, aptamer_display_panel(panel, half=True), available)
+            return
         rows = list(panel["rows"])
         columns = panel_display_columns(panel)
         active = panel.get("active")
@@ -594,7 +671,10 @@ class SetView:
         columns = panel_display_columns(panel)
         rows = list(panel["rows"])
         sites = panel_circle_centers(panel)
-        left, top = 40.0 + radius * scale, 30.0 + radius * scale
+        extra_sites = panel.get("extra_sites", [])
+        sites += extra_sites
+        left = 40.0 + radius * scale - min(0.0, min(x for _, x, _ in sites)) * scale
+        top = 30.0 + radius * scale - min(0.0, min(y for _, _, y in sites)) * scale
         width = left + max(x for _, x, _ in sites) * scale + radius * scale + 15
         height = top + max(y for _, _, y in sites) * scale + radius * scale + 15
         canvas = tk.Canvas(frame, width=width, height=height,
@@ -610,9 +690,13 @@ class SetView:
         colors = panel.get("colors", {})
         targets = []
         for index, (name, x_nm, y_nm) in enumerate(sites):
-            ri, ci = divmod(index, len(columns))
-            position = (str(rows[ri]), str(columns[ci]))
-            configured = active is None or position in active
+            if index < len(rows) * len(columns):
+                ri, ci = divmod(index, len(columns))
+                position = (str(rows[ri]), str(columns[ci]))
+                configured = active is None or position in active
+            else:
+                position = None
+                configured = True
             selectable = configured and name in available
             x, y, r = left + x_nm * scale, top + y_nm * scale, radius * scale
             color = str(colors.get(position, "#34c6d3")) if selectable else "#62676b"
@@ -633,8 +717,9 @@ class SetView:
                 self.variables[name].set(not self.variables[name].get())
                 self._on_square_toggled(name)
         canvas.bind("<Button-1>", toggle)
-        ttk.Label(frame, text="Click near a site center to select it. Filled circles are selected; "
-                  "gray × sites are unavailable. Circles overlap at their physical spacing.").pack(anchor="w", padx=5)
+        help_text = "Click near a site center to select it. Filled circles are selected; gray × sites are unavailable. Circles overlap at their physical spacing."
+        ttk.Label(frame, text=help_text,
+                  wraplength=int(width) if extra_sites else 0).pack(anchor="w", padx=5)
 
     @staticmethod
     def _legend_square(parent: tk.Widget, background: str, text: str, foreground: str = "#222222") -> tk.Label:
@@ -717,14 +802,20 @@ class SetView:
             return
         button.configure(background=self.SELECTABLE_HOVER_BG if entering else self.SELECTABLE_BG)
 
-    def selected(self) -> List[str]:
+    def raw_selected(self) -> List[str]:
+        """Explicit UI choices, including R1 supplied by a combined lock."""
         if self.title in COLOR_BITS and not self.encoding_enabled.get():
             return []
         return [name for name, variable in self.variables.items() if variable.get()]
 
+    def selected(self) -> List[str]:
+        """Physical sources to generate, excluding R1 supplied by Smart locks."""
+        return [name for name in self.raw_selected() if name not in self.smart_absorbed]
+
     def _update_selection_summary(self) -> None:
-        count = len(self.selected())
-        self.selection_summary.set("{} selected in this set".format(count))
+        count = len(self.raw_selected())
+        suffix = " ({} via Smart common locks)".format(len(self.smart_absorbed)) if self.smart_absorbed else ""
+        self.selection_summary.set("{} selected in this set{}".format(count, suffix))
 
     def mark_conflicts(self, names: Set[str]) -> None:
         changed = self.conflicts.symmetric_difference(names)
@@ -737,6 +828,7 @@ class SetView:
         self.x_shift.set(next(iter(SHIFT_STATES)))
         self.y_shift.set(next(iter(SHIFT_STATES)))
         self.conflicts.clear()
+        self.smart_absorbed.clear()
         self.site_fractions.clear()
         self.site_concentrations_nm.clear()
         for name, variable in self.variables.items():
@@ -746,6 +838,81 @@ class SetView:
         self._update_selection_summary()
         if self.selection_changed is not None:
             self.selection_changed()
+
+
+class SmartMiRNASetView(SetView):
+    """Keep the user's lock selection while resolving its physical source variant."""
+
+    def __init__(self, parent, title, csv_path, plate_name, panels, **kwargs):
+        self.smart_variants = {name: variant for panel in panels
+                               for name, variant in panel.get("smart_variants", {}).items()}
+        self.smart_combined = set()
+        self.smart_status = tk.StringVar(master=parent)
+        super().__init__(parent, title, csv_path, plate_name, panels, **kwargs)
+        self._update_smart_status()
+
+    def refresh(self):
+        self.smart_combined.clear()
+        super().refresh()
+        self._update_smart_status()
+
+    def resolved_name(self, name):
+        return self.smart_variants[name]["name"] if name in self.smart_combined else name
+
+    def _sync_smart_metadata(self):
+        for plain, variant in self.smart_variants.items():
+            dual = variant["name"]
+            if plain in self.smart_combined:
+                self.site_fractions[dual] = self.site_fractions.get(plain, 1.0)
+                if plain in self.site_concentrations_nm:
+                    self.site_concentrations_nm[dual] = self.site_concentrations_nm[plain]
+                else:
+                    self.site_concentrations_nm.pop(dual, None)
+            else:
+                self.site_fractions.pop(dual, None)
+                self.site_concentrations_nm.pop(dual, None)
+
+    def selected(self):
+        self._sync_smart_metadata()
+        return [self.resolved_name(name) for name in super().selected()]
+
+    def upgrade_common_lock(self, plain):
+        variant = self.smart_variants[plain]
+        if variant["name"] not in self.available:
+            raise ValueError("Combined R1–lock staple is missing from the miRNA sheet: " + variant["name"])
+        self.smart_combined.add(plain)
+        self._sync_smart_metadata()
+        self._paint_square(plain)
+        self._update_smart_status()
+
+    def _update_smart_status(self):
+        conversions = ["{} → {} (lock + R1)".format(self.smart_variants[name]["source_well"],
+                        self.smart_variants[name]["combined_well"]) for name in sorted(self.smart_combined)]
+        self.smart_status.set(
+            "Smart common locks: " + ("; ".join(conversions) if conversions else "plain locks by default") +
+            ". Overlapping PAINT R1 / LowConc PAINT R1 selections are replaced by the combined staple, using the common lock's concentration and percentage. "
+            "R1 sites remain visibly selected. Deselect R1 to use the plain lock; deselect the lock to use standalone R1.")
+
+    def _on_square_toggled(self, name):
+        if name in self.smart_combined and not self.variables[name].get():
+            self.smart_combined.remove(name)
+            self._sync_smart_metadata()
+        super()._on_square_toggled(name)
+        self._update_smart_status()
+
+    def mark_conflicts(self, names):
+        inverse = {variant["name"]: plain for plain, variant in self.smart_variants.items()}
+        super().mark_conflicts({inverse.get(name, name) for name in names})
+
+    def _request_template(self, panel=None):
+        panel = dict(self._current_panel() if panel is None else panel)
+        panel["sequence_names"] = {site: self.resolved_name(name) for site, name in panel["sequence_names"].items()}
+        super()._request_template(panel)
+
+    def clear(self):
+        self.smart_combined.clear()
+        super().clear()
+        self._update_smart_status()
 
 
 def panel_sequence_name(panel: Dict[str, object], row: object, column: object) -> str:
@@ -794,6 +961,36 @@ def panel_template_positions(
     ]
 
 
+def aptamer_display_panel(panel, half=False):
+    """Place aptamer anchors on the body lattice and its outer edge staples.
+
+    Body columns advance 32 bases. Edge staples are at -3/470 bases,
+    versus 41/441 for the first/last body columns; edge helix pairs
+    0/1, 8/9, 16/17 lie half a row above the odd-helix body pairs.
+    Preserve the original CSV names and selection/export definitions.
+    """
+    label = str(panel["label"])
+    left = label in {"PDGF-Apt", "Kana-Apt"}
+    names = {
+        ("H07", "05" if left else "08"): label + ("_Mid-L2" if left else "_Mid-R2"),
+        ("H07", "06" if left else "07"): label + ("_Mid-L1" if left else "_Mid-R1"),
+    }
+    display = dense_panel(label, active=set(names))
+    if half:
+        display["columns"] = COLS[:6] if left else COLS[6:]
+    display["sequence_names"] = names
+    pitch_x, pitch_y = EXTENSION_COLUMN_SPACING_NM, EXTENSION_ROW_SPACING_NM
+    edge_x = (-44 / 32 * pitch_x if left else
+              11 * pitch_x + EXTENSION_EXTRA_COLUMN_GAP_NM + 29 / 32 * pitch_x)
+    if half and not left:
+        edge_x -= 6 * pitch_x + EXTENSION_EXTRA_COLUMN_GAP_NM
+    display["extra_sites"] = [
+        (label + "_" + row + ("-L3" if left else "-R3"), edge_x, offset * pitch_y)
+        for row, offset in (("Top", -0.5), ("Mid", 3.5), ("Bot", 7.5))
+    ]
+    return display
+
+
 def dense_panel(
     label: str,
     active: Optional[Set[Tuple[str, str]]] = None,
@@ -840,24 +1037,46 @@ def soyeon_mb_panels() -> List[Dict[str, object]]:
 
 
 def mirna_panels() -> List[Dict[str, object]]:
-    """Infer anchor sites from the H<helix>-<column> suffix, preserving CSV names."""
+    """Keep page-local names, and place each staple at its matching R1 base well."""
     records, _ = parse_source2(SHEET_DIR / "miRNA_replace.csv")
+    positions = replacement_positions(SHEET_DIR)
     panels = []
-    for group, label in (("p1", "p1 — Lock 3′ anchors"), ("p2", "p2 — Direct 5′ anchors")):
+
+    def add_panel(label, sequence_names, orange=False):
         names = {}
-        for record in records:
-            match = re.search(r"_" + group + r"_H(\d+)-(\d+)$", record["Name"])
-            if match:
-                helix, column = map(int, match.groups())
-                site = ("H{:02d}".format(helix), "{:02d}".format(column))
-                if site[0] not in ROWS or site[1] not in COLS:
-                    raise ValueError("miRNA anchor is outside the 8×12 grid: {}".format(record["Name"]))
-                if site in names:
-                    raise ValueError("Duplicate miRNA grid position: {}".format(record["Name"]))
-                names[site] = record["Name"]
-        panel = dense_panel(label, active=set(names))
+        pages = set()
+        for name in sequence_names:
+            site = positions[name]
+            if site in names:
+                raise ValueError("Duplicate miRNA grid position in {}: {}".format(label, site))
+            names[site] = name
+            pages.add(anchor_position(name)[0])
+        if len(pages) != 1:
+            raise ValueError("A miRNA panel must refer to one page: " + label)
+        panel = dense_panel(label, active=set(names), mirror_columns=True)
         panel["sequence_names"] = names
+        panel["page"] = next(iter(pages))
+        panel["coordinate_system"] = "R1 replacement wells"
+        if orange:
+            panel["colors"] = {site: "#e98a28" for site in names}
         panels.append(panel)
+
+    designs = target_designs(SHEET_DIR)
+    for target, design in designs.items():
+        add_panel(target, design["target_locks"])
+    design = next(iter(designs.values()))
+    add_panel("Smart common locks (p2)", design["common_locks"], orange=True)
+    smart = panels[-1]
+    by_name = {row["Name"]: row for row in records}
+    smart["smart_variants"] = {
+        plain: {"name": dual, "replace_well": by_name[plain]["Replace Well"],
+                "source_well": by_name[plain]["Well"], "combined_well": by_name[dual]["Well"]}
+        for plain, dual in zip(design["common_locks"], design["combined_locks"])
+    }
+    smart["r1_locations"] = {dual: "{}-{}".format(*positions[dual]) for dual in design["combined_locks"]}
+    for group, label in (("p1", "p1 — Lock 3′ anchors"), ("p2", "p2 — Direct 5′ anchors")):
+        add_panel(label, [record["Name"] for record in records
+                          if record["Well"].startswith("B") and anchor_position(record["Name"])[0] == group])
     return panels
 
 
@@ -2016,13 +2235,22 @@ class PicklistApp(tk.Tk):
                         padding=(24, 14), background="#218739", foreground="#ffffff")
         style.map("MakePicklist.TButton", background=[("pressed", "#146329"), ("active", "#2a9b46")],
                   foreground=[("active", "#ffffff")])
+        style.configure("Compact.MakePicklist.TButton", font=("TkDefaultFont", 12, "bold"),
+                        padding=(16, 5))
+        style.layout("Grouped.TNotebook.Tab", [])
+        style.configure("Navigation.TButton", padding=(8, 4))
+        style.map("Navigation.TButton", background=[("selected", "#c5dfd0")])
 
     def _build(self) -> None:
-        header = ttk.Frame(self, padding=(14, 10))
+        header = ttk.Frame(self, padding=(14, 5))
         header.pack(fill="x")
         ttk.Label(header, text=APP_TITLE, style="Title.TLabel").pack(side="left")
         ttk.Label(header, text="Select replacements, preview the run, then save it or send it to storage.").pack(side="left", padx=18)
-        main_tabs = ttk.Notebook(self)
+        navigation = ttk.Frame(self)
+        navigation.pack(fill="x", padx=12, pady=(0, 4))
+        navigation.columnconfigure(1, weight=1)
+        navigation.columnconfigure(3, weight=1)
+        main_tabs = ttk.Notebook(self, style="Grouped.TNotebook")
         main_tabs.pack(fill="both", expand=True, padx=12, pady=(0, 8))
         replacement_page = ttk.Frame(main_tabs)
         template_page = ttk.Frame(main_tabs)
@@ -2032,12 +2260,13 @@ class PicklistApp(tk.Tk):
         preview_page = ttk.Frame(main_tabs)
         main_tabs.add(replacement_page, text="1. Replacements")
         main_tabs.add(settings_page, text="2. Run & Mixing Settings", state="disabled")
-        main_tabs.add(plate_page, text="3. Destination Plate")
-        main_tabs.add(storage_page, text="4. Storage")
-        main_tabs.add(preview_page, text="5. Results")
+        main_tabs.add(preview_page, text="3. Results", state="disabled")
+        main_tabs.add(plate_page, text="4. Destination Plate")
+        main_tabs.add(storage_page, text="5. Storage")
         self.main_tabs = main_tabs
         self.replacement_page = replacement_page
         self.settings_page = settings_page
+        self.preview_page = preview_page
         self.template_page = template_page
 
         configured_output = Path(str(self.config.get("output_root_path", OUTPUT_DIR))).expanduser()
@@ -2047,15 +2276,15 @@ class PicklistApp(tk.Tk):
         self.template_view.pack(fill="both", expand=True)
 
         self.make_picklist_button = ttk.Button(
-            replacement_page, text="Make Picklist", style="MakePicklist.TButton",
+            replacement_page, text="Make Picklist", style="Compact.MakePicklist.TButton",
             command=self._make_picklist,
         )
-        self.make_picklist_button.pack(side="bottom", fill="x", padx=12, pady=(6, 12))
+        self.make_picklist_button.pack(side="bottom", fill="x", padx=12, pady=(2, 4))
         self._build_compatibility_footer(replacement_page)
         replacement_scroll = ScrollFrame(replacement_page)
         replacement_scroll.pack(side="top", fill="both", expand=True)
         replacement_content = replacement_scroll.inner
-        hinge_controls = ttk.Frame(replacement_content, padding=(12, 8))
+        hinge_controls = ttk.Frame(replacement_content, padding=(12, 3))
         hinge_controls.pack(side="top", fill="x")
         self.hinge_type = tk.StringVar(
             value=HINGE_TYPES.get(str(self.config.get("hinge_type", "original")), HINGE_TYPES["original"])
@@ -2083,7 +2312,7 @@ class PicklistApp(tk.Tk):
             page = ttk.Frame(set_tabs)
             set_tabs.add(page, text=title)
             self.set_views.append(
-                SetView(
+                (SmartMiRNASetView if title == "miRNA" else SetView)(
                     page,
                     title,
                     SHEET_DIR / filename,
@@ -2128,10 +2357,36 @@ class PicklistApp(tk.Tk):
         ttk.Label(barcode_pool, text="Barcode experiment / pool (shared with Replacements)").pack(side="left")
         ttk.Entry(barcode_pool, textvariable=self.barcode_guard.experiment, width=24).pack(side="left", padx=6)
         ttk.Button(barcode_pool, text="Barcode registry…", command=self.barcode_guard.show_registry).pack(side="left")
+        self.navigation_buttons = {}
+        groups = (
+            (replacement_page, settings_page, preview_page),
+            (plate_page, storage_page),
+            (image_page, template_page),
+        )
+        for index, pages in enumerate(groups):
+            group = ttk.Frame(navigation)
+            group.grid(row=0, column=index * 2, sticky="w" if index == 0 else "e")
+            for page in pages:
+                button = ttk.Button(
+                    group, text=main_tabs.tab(page, "text"), style="Navigation.TButton",
+                    command=lambda target=page: main_tabs.select(target),
+                )
+                button.pack(side="left", padx=1)
+                self.navigation_buttons[str(page)] = button
+        main_tabs.bind("<<NotebookTabChanged>>", self._sync_navigation, add="+")
+        self._sync_navigation()
         self._bind_config_updates()
         self._bind_preview_updates()
         self._refresh_plate_view()
         self.protocol("WM_DELETE_WINDOW", self._close_app)
+
+    def _sync_navigation(self, *_args) -> None:
+        selected = self.main_tabs.select()
+        for page, button in getattr(self, "navigation_buttons", {}).items():
+            button.state([
+                "disabled" if self.main_tabs.tab(page, "state") == "disabled" else "!disabled",
+                "selected" if page == selected else "!selected",
+            ])
 
     def _make_template_from_panel(
         self,
@@ -2143,8 +2398,8 @@ class PicklistApp(tk.Tk):
         self.main_tabs.select(self.template_page)
 
     def _build_compatibility_footer(self, page: ttk.Frame) -> None:
-        footer = ttk.LabelFrame(page, text="Selection compatibility", padding=8)
-        footer.pack(side="bottom", fill="x", padx=6, pady=(4, 6))
+        footer = ttk.LabelFrame(page, text="Selection compatibility", padding=3)
+        footer.pack(side="bottom", fill="x", padx=6, pady=(1, 2))
         top = ttk.Frame(footer)
         top.pack(fill="x")
         ttk.Button(top, text="Check selections", command=self.check_selections).pack(side="left")
@@ -2161,16 +2416,21 @@ class PicklistApp(tk.Tk):
             background="#f0f0f0",
         )
         self.compatibility_status.pack(side="left", padx=12)
+        details = ttk.Frame(footer)
+        details.pack(fill="x", pady=(2, 0))
         self.clash_text = tk.Text(
-            footer,
-            height=4,
+            details,
+            height=2,
             wrap="word",
             relief="solid",
             borderwidth=1,
             background="#ffffff",
             foreground="#333333",
         )
-        self.clash_text.pack(fill="x", pady=(6, 0))
+        scrollbar = ttk.Scrollbar(details, orient="vertical", command=self.clash_text.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.clash_text.configure(yscrollcommand=scrollbar.set)
+        self.clash_text.pack(side="left", fill="x", expand=True)
         self._set_clash_text("Select replacement wells, then click Check selections.")
 
     def clear_all_selections(self) -> None:
@@ -2187,6 +2447,7 @@ class PicklistApp(tk.Tk):
         panels = []
         for view in self.set_views:
             names_for_view = set(view.selected()) if selected_names is None else selected_names
+            resolve_name = getattr(view, "resolved_name", lambda name: name)
             if not names_for_view:
                 continue
             for panel in view.panels:
@@ -2203,7 +2464,11 @@ class PicklistApp(tk.Tk):
                 names = []
                 for row in rows:
                     for column in columns:
-                        name = panel_sequence_name(panel, row, column)
+                        raw_name = panel_sequence_name(panel, row, column)
+                        name = raw_name if raw_name in names_for_view else resolve_name(raw_name)
+                        variant = getattr(view, "smart_variants", {}).get(raw_name, {})
+                        if name not in names_for_view and variant.get("name") in names_for_view:
+                            name = variant["name"]
                         if name in names_for_view:
                             selected.append((row, column))
                             names.append(name)
@@ -2269,6 +2534,7 @@ class PicklistApp(tk.Tk):
         self.clash_text.configure(state="disabled")
 
     def _selections_changed(self) -> None:
+        self._resolve_smart_common_locks()
         self._invalidate_preview()
         if hasattr(self, "barcode_guard"):
             self.barcode_guard.refresh()
@@ -2282,6 +2548,7 @@ class PicklistApp(tk.Tk):
         if self.main_tabs.select() == str(self.settings_page):
             self.main_tabs.select(self.replacement_page)
         self.main_tabs.tab(self.settings_page, state="disabled")
+        self._sync_navigation()
 
     def _make_picklist(self) -> None:
         """Open run settings only after selected replacements pass the clash check."""
@@ -2299,12 +2566,57 @@ class PicklistApp(tk.Tk):
             return
         self.main_tabs.tab(self.settings_page, state="normal")
         self.main_tabs.select(self.settings_page)
+        self._sync_navigation()
+
+    def _resolve_smart_common_locks(self):
+        """Replace an explicitly chosen lock/R1 overlap with one combined source."""
+        smart_views = [view for view in self.set_views if isinstance(view, SmartMiRNASetView)]
+        r1_by_target = defaultdict(list)
+        for view in self.set_views:
+            if view.title not in {"PAINT R1", "LowConc PAINT R1"}:
+                continue
+            selected = {name for name in view.raw_selected() if name.endswith("_R1")}
+            if not selected:
+                continue
+            try:
+                records, _ = parse_source2(Path(view.path_var.get()))
+            except (OSError, ValueError):
+                continue  # The normal compatibility check reports unreadable source sheets.
+            for record in records:
+                if record["Name"] in selected:
+                    r1_by_target[record["Replace Well"].upper()].append((view, record["Name"]))
+        absorbed = {view: set() for view in self.set_views}
+        changed = False
+        for locks in smart_views:
+            combined = set()
+            for plain, variant in locks.smart_variants.items():
+                overlaps = r1_by_target.get(variant["replace_well"].upper(), [])
+                if plain not in locks.variables or not locks.variables[plain].get() or not overlaps or variant["name"] not in locks.available:
+                    continue
+                combined.add(plain)
+                for view, name in overlaps:
+                    absorbed[view].add(name)
+            changed |= locks.smart_combined != combined
+            locks.smart_combined = combined
+            locks._sync_smart_metadata()
+            locks._update_smart_status()
+            locks._update_selection_summary()
+        for view, names in absorbed.items():
+            repaint = view.smart_absorbed.symmetric_difference(names)
+            changed |= bool(repaint)
+            view.smart_absorbed = names
+            for name in repaint:
+                view._paint_square(name)
+            view._update_selection_summary()
+        if changed:
+            self._invalidate_preview()
 
     def check_selections(self) -> bool:
         """Highlight selections that replace the same base well and list every clash."""
         targets = defaultdict(list)
         conflicts_by_view = {view: set() for view in self.set_views}
         try:
+            self._resolve_smart_common_locks()
             for view in self.set_views:
                 selected_names = set(view.selected())
                 if not selected_names:
@@ -2395,7 +2707,7 @@ class PicklistApp(tk.Tk):
         self.manual_scaffold_target = tk.StringVar(value=parts[2] if len(parts)==6 else "10")
         self.manual_synthesis_status = tk.StringVar()
         self.manual_stock_label = tk.StringVar()
-        frame = ttk.LabelFrame(parent,text="Manual synthesis per run",padding=5)
+        frame = ttk.LabelFrame(parent,text="Manual synthesis per run",padding=3)
         frame.pack(side="top",fill="x",padx=12,before=before)
         ttk.Label(frame,text="Book-base plate").grid(row=0,column=0,sticky="w")
         ttk.Combobox(frame,textvariable=self.base_plate,values=tuple(BASE_PLATES),state="readonly",width=43).grid(row=0,column=1,columnspan=3,sticky="w",padx=5)
@@ -2404,7 +2716,7 @@ class PicklistApp(tk.Tk):
                 ("Scaffold target (nM)",self.manual_scaffold_target),("Minimum transfer (nL)",self.manual_minimum_transfer),
                 ("Transfer increment (nL)",self.manual_transfer_increment))
         fields_row = ttk.Frame(frame)
-        fields_row.grid(row=1,column=0,columnspan=8,sticky="ew",pady=(4,0))
+        fields_row.grid(row=1,column=0,columnspan=8,sticky="ew",pady=(1,0))
         for index,(label,variable) in enumerate(fields):
             col=index*2
             ttk.Label(fields_row,text=label).grid(row=0,column=col,sticky="w",padx=(4,0))
@@ -2639,6 +2951,11 @@ class PicklistApp(tk.Tk):
         self.destroy()
 
     def _build_settings(self, page: ttk.Frame, tabs: ttk.Notebook, preview_page: ttk.Frame) -> None:
+        self.generate_preview_button = ttk.Button(
+            page, text="Generate Preview", style="MakePicklist.TButton",
+            command=lambda: self.generate(tabs, preview_page),
+        )
+        self.generate_preview_button.pack(side="bottom", fill="x", padx=12, pady=(6, 12))
         scroll = ScrollFrame(page)
         scroll.pack(fill="both", expand=True)
         page = scroll.inner
@@ -2716,7 +3033,6 @@ class PicklistApp(tk.Tk):
         action = ttk.Frame(page, padding=14)
         action.grid(row=2, column=0, sticky="ew")
         self.status = tk.StringVar(value="Ready")
-        ttk.Button(action, text="Generate Preview", style="Generate.TButton", command=lambda: self.generate(tabs, preview_page)).pack(side="left")
         ttk.Button(action, text="Open latest output folder", command=self._open_latest_output).pack(side="left", padx=10)
         ttk.Label(action, textvariable=self.status).pack(side="left", padx=10)
 
@@ -2937,6 +3253,12 @@ class PicklistApp(tk.Tk):
         if not hasattr(self, "save_run_button"):
             return
         has_preview = bool(self.last_picklist and self.last_mix)
+        if not has_preview and self.main_tabs.select() == str(self.preview_page):
+            fallback = (self.settings_page if self.main_tabs.tab(self.settings_page, "state") == "normal"
+                        else self.replacement_page)
+            self.main_tabs.select(fallback)
+        self.main_tabs.tab(self.preview_page, state="normal" if has_preview else "disabled")
+        self._sync_navigation()
         self.save_run_button.configure(
             state="normal" if has_preview and not self.last_run_saved else "disabled"
         )
@@ -3196,6 +3518,15 @@ class PicklistApp(tk.Tk):
                     for path, plate, stock, source_names in SetView.replacement_sources(view, names):
                         selections.append(ReplacementSelection(
                             path, source_names, plate,
+                            replacement_tab=view.title,
+                            panel_names={
+                                name: str(panel["label"])
+                                for panel in view.panels
+                                for row in panel["rows"]
+                                for column in panel["columns"]
+                                for name in (getattr(view, "resolved_name", lambda value: value)(panel_sequence_name(panel, row, column)),)
+                                if name in source_names
+                            },
                             site_fractions={name: view.site_fractions.get(name, 1.0) for name in source_names},
                             concentration_nm=stock,
                             desired_concentration_nm=desired_concentration,

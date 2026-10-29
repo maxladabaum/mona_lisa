@@ -37,6 +37,8 @@ class ReplacementSelection:
     site_fractions: Optional[Dict[str, float]] = None
     concentration_nm: float = 200000.0
     site_concentrations_nm: Optional[Dict[str, float]] = None
+    replacement_tab: str = ""
+    panel_names: Optional[Dict[str, str]] = None
 
 
 def desired_concentration_ratio(
@@ -193,6 +195,7 @@ def parse_source1(path: Path, hinge_type: str = "original") -> Tuple[List[Dict[s
             "Well": well,
             "Replacement Well": replacement_key,
             "Sequence": row.get(sequence_column, ""),
+            "Hinge Type": row_hinge_type,
         }
     return [by_replacement_key[key] for key in key_order], _plate_name(rows, "SourcePlate1[1]")
 
@@ -330,6 +333,13 @@ def generate_picklist(
                 {
                     "Well": row["Well"],
                     "Sequence": row["Sequence"],
+                    "Sample Comments": (
+                        "Tab: {} | Panel: {} | Staple: {} | Sequence: {}".format(
+                            selection.replacement_tab,
+                            (selection.panel_names or {}).get(row["Name"], ""),
+                            row["Name"], row["Sequence"],
+                        ) if selection.replacement_tab else row["Sequence"]
+                    ),
                     "Source Plate Name": plate_name,
                     "Transfer Volume": replacement_volume,
                 }
@@ -337,6 +347,9 @@ def generate_picklist(
 
     active = [
         {"Well": row["Well"], "Sequence": row["Sequence"], "Source Plate Name": base_plate_name,
+         "Sample Comments": "Tab: Base | {}Sequence: {}".format(
+             "Hinge: {} | ".format("Flexible" if row["Hinge Type"] == "original" else "Rigid")
+             if row.get("Hinge Type") else "", row["Sequence"]),
          "Transfer Volume": retained_volumes.get(row.get("Replacement Well", row["Well"]).upper(), transfer_volume_nl)}
         for row in base_rows
         if retained_volumes.get(row.get("Replacement Well", row["Well"]).upper(), transfer_volume_nl) > 0
@@ -351,7 +364,7 @@ def generate_picklist(
                     "Source Plate Name": source["Source Plate Name"],
                     "Source Plate Type": source_plate_type,
                     "Source Well": source["Well"].upper(),
-                    "Sample Comments": source["Sequence"],
+                    "Sample Comments": source.get("Sample Comments", source["Sequence"]),
                     "Transfer Volume": source.get("Transfer Volume", transfer_volume_nl),
                 }
             )

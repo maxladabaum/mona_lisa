@@ -963,34 +963,14 @@ class RGBImageView(ttk.Frame):
             "Upright image: {display_columns} × {display_rows} pixels · {display_pixel_pitch_x_nm:.4g} × {display_pixel_pitch_y_nm:.4g} nm/pixel · "
             "{display_field_width_nm:g} × {display_field_height_nm:g} nm field · Origami {origami_rotation_degrees_clockwise}° clockwise".format(**info))
         if info.get("nonuniform_sampling"):
-            self.geometry_summary.set(self.geometry_summary.get() + " · nonuniform spacing (listed by quadrant below)")
+            self.geometry_summary.set(self.geometry_summary.get() + " · nonuniform spacing")
         self.prepare_button.configure(text="Prepare {} runs".format(info["design_count"]))
         self.store_button.configure(text="Send {} runs to storage".format(info["design_count"]))
         scheme = SELECTABLE_SCHEMES[self._scheme_id()]
-        meaning = ("All {} bits jointly identify color and XY shift.".format(scheme.bit_count) if scheme.joint
-                   else "2 color bits + {} X bits + {} Y bits{}.".format(
-                       (scheme.x_states-1).bit_length(), (scheme.y_states-1).bit_length(),
-                       " + 1 even-parity bit" if scheme.parity else ""))
-        if scheme.tiled and scheme.joint:
-            allocations = "; ".join("{}: {}×{} shifts ({:.3g}×{:.3g} nm)".format(name, q["x_states"],q["y_states"],q["pixel_pitch_x_nm"],q["pixel_pitch_y_nm"])
-                for name,q in zip(info["quadrant_order"],info["quadrant_sampling"]))
-            meaning = "Joint {}-bit color/quadrant/shift codebook. ".format(scheme.bit_count) + allocations + ". Equal physical quadrant areas; sampling density varies."
-        elif scheme.tiled:
-            meaning = "2 color bits + {} tile X bits + {} tile Y bits + {} local X bits + {} local Y bits. {}×{} tiles; {}×{} local shifts per tile. Brightness matching compensates for the {}× canvas area; it does not increase photon counts.".format(
-                (scheme.tile_columns-1).bit_length(), (scheme.tile_rows-1).bit_length(),
-                (scheme.x_counts[0]-1).bit_length(), (scheme.y_counts[0]-1).bit_length(),
-                scheme.tile_columns, scheme.tile_rows, scheme.x_counts[0], scheme.y_counts[0], scheme.tile_count)
-        if scheme.position_codebook:
-            meaning = "2 fixed color bits + {} bits jointly encoding tile/local shift. {}×{} tiles; local X {}, local Y {}.".format(
-                scheme.bit_count - 2, scheme.tile_columns, scheme.tile_rows, scheme.x_counts, scheme.y_counts)
-        meaning += " {} sites per bit.".format(info["sites_per_bit"])
-        if scheme.parity:
-            meaning += " Parity detects single-bit errors; it does not correct them."
         self.explanation.set(
             ("{} designs: 3 colors distributed across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
             + self._pixel_summary(self._scheme_id()) + "\n\n"
-            + meaning + " Barcode bits stay at 100% or 0%.\n\n"
-            "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode and fiducial sites are excluded.")
+            + "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode and fiducial sites are excluded.")
 
     def _scheme_changed(self, *_args):
         if SELECTABLE_SCHEMES[self._scheme_id()].bit_count != int(self.barcode_bit_count.get()):

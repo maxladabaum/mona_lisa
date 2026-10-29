@@ -72,7 +72,7 @@ class BarcodeGuard(ttk.LabelFrame):
         fractions={}
         for view in self.app.set_views:
             for name in view.selected():
-                site=location(name)
+                site=location(name) or getattr(view, 'r1_locations', {}).get(name)
                 if site:
                     value=view.site_fractions.get(name,1.0)
                     if site in fractions and fractions[site] != value:

@@ -109,17 +109,15 @@ transfer and increment settings, defaulting to 25 nL. Manual tabs split each sit
 percentage and account for the two stock concentrations. Color highlight opacity
 shows each site's replacement percentage; barcode sites stay fully on or off.
 
-The following auxiliary sheet definitions are retained in the code and bundled
-data; Mona Lisa's visible tabs are the PAINT and RGB tabs listed above.
-
 **miRNA** loads `replacement_sheets/miRNA_replace.csv` from the supplied Source [3]
-anchor sheet, using `Well` as the source well and `Replace` as the base replacement
-key. The source plate is `SourcePlate3[3]`. Its two 8×12 panels infer sites from
-the name suffix: `p1_H3-3` is H03, column 03, and `p2_H3-1` is H03, column 01.
-Both panels contain anchors at H03, H05, H07, H09, H11, and H13, with columns
-displayed 1 through 12. Names, sequences, wells, and replacement targets are
-preserved from the CSV. Toehold Lock and miR-21-DNA lack replacement targets
-and are excluded. Both H03 anchors target M13, so selecting both is a clash.
+anchor sheet, using `Well` as the source well and normalized `Replace Well` as
+the base replacement key. The source plate is `SourcePlate3[3]`. Independent
+target, Smart common-lock, and previous-design panels use an 8×12 grid
+aligned to PAINT R1: each anchor is placed at the R1 site with the same base
+replacement well. The original name's p1/p2 denotes its page and is retained;
+its page-local row/column suffix is not copied directly into the R1 grid.
+Columns are displayed 12 through 1, matching the R1 panel. Names, sequences,
+and source wells remain intact. Toehold Lock and miR-21-DNA are excluded.
 
 In **Replacements**, choose **Hinge type**: **Flexible hinges (original
 wells)** (the default) or **Rigid center connectors (F19–H24)**. Each option includes 18 hinges and
@@ -1329,6 +1327,59 @@ as incompatible, because uniqueness across different decoders is not established
 Use separate experiment names only for samples that are actually kept separate.
 
 ## Manual replacement synthesis settings
+
+### Independent miRNA panels
+
+The miRNA tab contains separate panels from `dongsung_mi_rna.xlsx`:
+
+- **miR-21, miR-141, miR-155, miR-210, miR-223:** three target-specific locks
+  per panel on page 1, mapped to R1 positions H07-01, H09-01, and H11-01.
+  Their original page-local names contain p1.H7-2, p1.H9-2, and p1.H11-2.
+  Source wells are columns 2, 4,
+  and 6 of rows C, D, E, F, and G, respectively.
+- **Smart common locks (p2):** C8, C10, C12 by default, mapped to H05-12,
+  H07-12, H09-12. Overlapping PAINT R1 selections convert these to C14, C16,
+  C18, respectively. The source names retain p2.H7-3, p2.H9-3, p2.H11-3.
+- The two **previous row-B panels**: page 1 maps to H03–H13 at column 02;
+  page 2 maps to H01–H11 at column 12 (odd helices only).
+
+Only one panel is displayed at a time. Every site starts unselected; each is
+selected individually. Browsing panels changes only the view and preserves the
+user's explicit selections. Unavailable positions show grey × marks. **Clear
+set** removes all selections in the miRNA tab.
+
+Select R1 sites in the existing **PAINT R1** or **LowConc PAINT R1** tab. When a
+selected Smart common lock and a selected R1 staple replace the same base well,
+the app upgrades the lock to its combined lock + R1 variant. Both sites remain
+visibly selected; the R1 site is labeled **via lock**. Only the combined staple
+is generated, with no separate R1 transfer. This works in either selection order
+and across both R1 tabs. The Smart panel displays the source-well conversion.
+A plain lock alone stays plain; R1 alone stays R1.
+
+The combined staple retains the common lock's selected concentration and
+replacement percentage, including per-site overrides. Transfer volume uses the
+miRNA stock (200 µM by default), even for LowConc PAINT R1 overlaps. Results,
+exports, and barcode checks use the combined staple. The original R1 settings
+are retained: deselecting the lock restores standalone R1 with those settings;
+deselecting R1 returns the lock to its plain variant. Clear set removes that
+tab's choices and recalculates any remaining Smart conversions.
+
+Other conflicting replacements still use the normal compatibility check. There
+is no shared R1 grid inside the miRNA tab, and no target locks are selected
+automatically. All miRNA panels use SourcePlate3[3].
+
+All panels preserve the **Name** column, including the page designation. Display
+coordinates are determined by matching `Replace Well` to the PAINT R1 sheet,
+including both row and column; the same mirrored orientation is used for both.
+An unmatched replacement well causes an error instead of a guessed position.
+The workbook's C21 base well maps to logical replacement key A08 (`Original Well
+Position` in the original base sheet). The imported CSV preserves C21 in
+`Workbook Replace Well` and uses A08 in `Replace Well`, removing the base staple
+at physical C21 on the original plate or E21 on the interleaved plate.
+Anchor rows H–L are retained in the source CSV for reference; only the five
+requested miRNA targets have target panels. Toehold-lock (`_TL`) wells are excluded.
+
+### Synthesis controls
 
 The **Replacements** tab now exposes **Manual synthesis per run**: book-base plate,
 actual base-stock concentration and source CSV, final volume, book-base target,
