@@ -3,16 +3,17 @@ from copy import deepcopy
 import math
 import numpy as np
 from PIL import Image, ImageOps
-from color_light import fit_linear_source, abundance_scale, canvas_area_gain
+from color_light import grayscale_signal, fit_linear_source, abundance_scale, canvas_area_gain
 from image_encoding import FIT_MODES, geometry, transfer_fraction_steps, set_site_fraction
 from optimization_regularization import regularization_weight
 from gaussian_reconstruction import render_gaussian_overlay, REFERENCE_AREA_NM2
 
 
-def fitted_target(path, mode, size, linear_light=False):
+def fitted_target(path, mode, size, linear_light=False, monochrome=False):
     """The upright source, fitted to the physical reconstruction raster."""
     if linear_light:
-        return fit_linear_source(path, mode, size)
+        values = fit_linear_source(path, mode, size)
+        return grayscale_signal(values) if monochrome else values
     with Image.open(path) as source:
         rgba = ImageOps.exif_transpose(source).convert('RGBA')
         background = Image.new('RGBA', rgba.size, (0, 0, 0, 255))
@@ -26,22 +27,27 @@ def fitted_target(path, mode, size, linear_light=False):
         image = image.resize(size, Image.Resampling.LANCZOS)
     else:
         raise ValueError('Unknown image fitting mode.')
-    return np.asarray(image, dtype=float) / 255
+    values = np.asarray(image, dtype=float) / 255
+    return grayscale_signal(values) if monochrome else values
 
 
-def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=False, normalize_designs=False, compensate_area=False, regularization_strength=0.0):
+def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=False, normalize_designs=False, compensate_area=False, regularization_strength=0.0, checkpoint=None):
     """Minimize unclipped RGB squared error; retain baseline if refinement is worse.
 
     Continuous projected gradient followed by quantized coordinate descent from
     both the rounded solution and baseline. This is a local, not global, optimum.
     Input designs and their binary barcode fractions are never mutated.
     """
+    if checkpoint:
+        checkpoint()
     baseline = render_gaussian_overlay(designs, fwhm_nm, exposure, linear_light, normalize_designs, compensate_area)
     target = np.asarray(target, dtype=float)
     if target.shape != baseline.density.shape or not np.all(np.isfinite(target)) or np.any((target < 0) | (target > 1)):
         raise ValueError('Target must be finite RGB in [0,1] on the reconstruction raster.')
     rotation = designs[0].get('origami_rotation_degrees_clockwise', 0)
     info = geometry(designs[0]['encoding_scheme'], rotation, designs[0].get('active_image_columns'))
+    if info['channel_count'] == 1:
+        target = grayscale_signal(target)
     local_target = np.rot90(target, rotation // 90)
     height, width = local_target.shape[:2]
     nx, ny = info['columns'], info['rows']
@@ -60,7 +66,9 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
     lipschitz = gain**2 * np.linalg.eigvalsh(gx)[-1] * np.linalg.eigvalsh(gy)[-1] + alpha
     diagonal = gain**2 * np.outer(np.diag(gy), np.diag(gx)) + alpha
     result = deepcopy(designs)
-    for channel in range(3):
+    for channel in range(info['channel_count']):
+        if checkpoint:
+            checkpoint()
         weights = np.zeros((ny,nx))
         steps = np.zeros((ny,nx))
         seen = set()
@@ -85,6 +93,8 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
         accelerated = w.copy()
         t = 1.
         for _ in range(300):
+            if checkpoint:
+                checkpoint()
             new = np.clip(accelerated-(hessian(accelerated)-b)/lipschitz,0,1)
             next_t = (1+math.sqrt(1+4*t*t))/2
             accelerated = new+(t-1)/next_t*(new-w)
@@ -93,6 +103,8 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
         for candidate in candidates:
             gradient = hessian(candidate)-b
             for _ in range(12):
+                if checkpoint:
+                    checkpoint()
                 changed = False
                 for y,x in np.ndindex(candidate.shape):
                     value = np.clip(np.rint((candidate[y,x]-gradient[y,x]/diagonal[y,x])*steps[y,x])/steps[y,x],0,1)

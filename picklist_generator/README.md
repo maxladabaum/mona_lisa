@@ -385,10 +385,43 @@ run or cleared; red shows bits 1 and 2, blue shows bit 1, and green shows neithe
 are included in the selection metadata saved with runs. Existing compatibility
 checks still apply to overlapping replacement sites across enabled tabs.
 
-### RGB images → selectable six-, seven-, and nine-bit encoding
+### RGB images → selectable barcode bit counts
 
-Open **7. RGB Image** and choose **Barcode bits** first: **6**, **7**, or **9**,
-matching the number of Digital bit groups in your schema. Encoding schemes and
+Choose **Image mode → Black & white** for a single grayscale channel using the
+**Grayscale concentration** control. The green/blue controls are hidden, and
+the design inspector uses neutral grayscale and a single gray-level column.
+The physical source remains R1 R internally. Switching back to RGB restores
+the three color controls. Each tile uses one design/barcode,
+instead of three in RGB: the same 48 barcodes can encode 48 grayscale tiles or
+16 RGB tiles. All barcode bits identify tile position; capacities are 64 tiles
+at 6 bits, 128 at 7 bits, 256 at 8 bits, and 384 at 9 or more bits (the current
+batch limit). Only tile layouts appear in the encoding dropdown.
+Color inputs are converted to luminance; this mode retains gray levels rather
+than thresholding to binary pixels. Previews are neutral grayscale and physical
+picklists contain only the single selected R1 R channel. The image mode is
+restored with the saved encoding scheme. Large mosaics automatically use chunked
+alignment for expected previews, finite-count examples, optimization, and exports.
+The 252-tile layout works at the original FWHM and alignment-error settings.
+Only extreme output resolutions or unusually broad error distributions can still
+exceed the output/cache budget. In that case, the app
+automatically renders a Gaussian-only preview in the background at the requested
+FWHM. The preview is labeled as ideal alignment. Gaussian overlap optimization and
+its before/after panels remain active when enabled; only alignment uncertainty
+is omitted. Exported metadata records the limitation. Tile designs remain
+available for preparation and export.
+
+Open **7. RGB Image** and type **Barcode bits** (a whole number from **2 to 48**),
+then press Enter or leave the field to apply it. Match the number of Digital bit
+groups in your schema. The upper limit is the 48 physical barcode sites.
+The encoding dropdown offers fixed-color and joint-color rectangular tile schemes
+from the available code capacity, within the existing 128-position production
+limit. Shift schemes are excluded from this dropdown; saved shift schemes remain
+readable. Fixed-color codes reserve two bits for color; joint codes allow
+up to `floor(2^bits / 3)` positions. Existing 6-, 7-, and 9-bit schemes retain
+their identifiers and layouts. New bit counts distribute the barcode region
+across the requested bits by default; edit the template to customize these sites.
+For more than 16 bits, exported geometry reports `reserved_code_count` and
+sets `reserved_codes` to null rather than enumerating the unused code space. Encoding schemes and
 tile counts are restricted to that bit count; choosing a tile count never
 silently increases it. Applying a visual template selects its bit count.
 The saved scheme restores the matching bit count on the next launch.
@@ -422,7 +455,7 @@ A seven-bit template applied to a direct tile layout automatically switches it
 to the matching seven-bit joint scheme.
 
 To create or edit the RGB barcode **visually**, click **Edit in Origami Templates…**
-in RGB Image. This loads the current six-, seven-, or nine-bit mapping into the existing
+in RGB Image. This loads the current bit-count mapping into the existing
 Origami Templates editor. Select a group, change its selected lattice sites, and
 click **Update group**. Use **Digital bit** groups named **Bit 1**, **Bit 2**, etc.
 for barcode bits; use **Alignment-only** groups for permanent fiducials.
@@ -820,6 +853,20 @@ color and abundance settings as their previews.
 On the RGB Image page, enable **Simulate alignment uncertainty** to model imperfect
 corner-fiducial alignment. Set the X and Y translation standard deviations (nm),
 angular standard deviation (degrees), and observed origami count per design.
+Press **Enter** in an alignment field to apply edits and run the simulation; typing
+or leaving the field does not start it. The loading bar shows the current stage
+and origami simulation progress while the interface remains responsive. A newer
+submitted change cancels the previous job and discards its results. Count-only
+changes reuse the alignment geometry and optimization matrix. An open original-scheme
+comparison is marked out of date; use **Refresh comparison** to recalculate it.
+Large alignment models use local raster blocks of at most 64 × 64 pixels, with
+an eight-sigma Gaussian margin around the sampled transformed sites. Overlapping
+contributions from neighboring tiles are accumulated in the same image, and the
+optimizer uses the matching adjoint and within-origami covariance. This avoids a
+full raster-by-sites matrix without changing FWHM, error distributions, sampling
+seeds, or tile boundaries. Chunked metadata records the backend, cutoff, raster
+pitch, and stored matrix bytes. Both training and independent validation use the
+same chunking rules. Preview jobs retain progress reporting and cancellation.
 The initial 1 nm / 1 nm / 1° errors and 20 origami/design are illustrative inputs,
 not measured instrument performance. Zero errors are valid. Independent,
 zero-mean Gaussian errors are assumed; systematic bias, correlated corner-fitting
@@ -839,8 +886,9 @@ realization without changing the assignments. Each design's signal is divided
 by its origami count so changing count changes uncertainty rather than exposure.
 These examples isolate alignment error: site intensities remain fractional;
 random staple occupancy, photon noise, and differing design abundances are not
-simulated. The alignment renderer uses a physical raster at most 0.75 nm per
-sample (finer for narrower Gaussians), separately from the ideal preview's
+simulated. The alignment renderer uses a 0.75 nm sampling target for small
+fields and an adaptive pitch for larger mosaics, always resolving FWHM with at
+least four samples. This is separate from the ideal preview's
 0.15 nm raster. Very narrow widths that would exceed the alignment model's
 memory limit are rejected with an explanatory message.
 
@@ -1287,7 +1335,7 @@ protection remains active independently.
 with **Load schema…** (RGB schema JSON or template logical-bit JSON) or **Use RGB
 schema**. Loading a schema, using the RGB schema, or successfully selecting an
 unused code enables manual barcode protection. You can turn it off again without
-changing your selections. Choose the matching six-, seven-, or nine-bit family. The **Experiment / pool**
+changing your selections. Enter the matching barcode bit count. The **Experiment / pool**
 name is shared with RGB Image; use the same name for all designs that will be
 pooled or decoded together. Changing destination wells does not make a barcode
 unique.

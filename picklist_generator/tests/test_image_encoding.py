@@ -779,7 +779,9 @@ class ImageWorkflowTests(unittest.TestCase):
             view.alignment_values["origami_per_design"].set("3")
             view.alignment_enabled.set(True)
             view.optimize_enabled.set(True)
-            view._volumes_changed()
+            view._apply_alignment_settings()
+            from test_rgb_simulation import pump
+            pump(self.app, lambda: view._simulation_cancel is None, timeout=60)
             self.assertEqual(len(view.designs),48)
             self.assertIsNotNone(view.alignment_example)
             metrics = view.optimization_metrics
@@ -816,10 +818,13 @@ class ImageWorkflowTests(unittest.TestCase):
             self.assertTrue((output / "ideal_alignment.png").exists())
             self.assertTrue(all(item["alignment_simulation"]["alignment"]["origami_per_design"]==3
                                 for item in load_json(view.storage_path,{})["items"]))
+            previous = view.reconstruction
             view.alignment_values["rotation_deg"].set("-1")
-            self.assertIsNone(view.reconstruction)
-            self.assertEqual(view.runs,[])
-            self.assertEqual(view.comparison_window.images,{})
+            view._apply_alignment_settings()
+            self.assertIs(view.reconstruction, previous)
+            self.assertIn("Check alignment settings", view.simulation_status.get())
+            self.assertTrue(view.runs)
+            self.assertTrue(view.comparison_window.images)
             view.alignment_enabled.set(False)
             view._volumes_changed()
             self.assertEqual(len(view.designs),48)

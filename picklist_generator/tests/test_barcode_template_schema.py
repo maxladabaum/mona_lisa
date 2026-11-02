@@ -24,8 +24,8 @@ def test_invalid_templates():
     with pytest.raises(ValueError): from_template(bad)
     bad=deepcopy(model); bad['logical_bits'][0]['label']='other'
     with pytest.raises(ValueError,match='Name every'): from_template(bad)
-    bad=deepcopy(model); bad['logical_bits'].pop()
-    with pytest.raises(ValueError,match='exactly 6, 7, or 9'): from_template(bad)
+    bad=deepcopy(model); bad['logical_bits'] = bad['logical_bits'][:1]
+    with pytest.raises(ValueError,match='between 2 and 48'): from_template(bad)
 
 def test_visual_edit_apply_and_saved_file(tmp_path,monkeypatch):
     import picklist_app

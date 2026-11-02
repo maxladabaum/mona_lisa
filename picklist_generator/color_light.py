@@ -18,6 +18,22 @@ def display_rgb(linear, linear_light):
     return Image.fromarray(np.rint(values * 255).astype(np.uint8))
 
 
+def grayscale_signal(values):
+    """Luminance in the caller's signal space, displayed as neutral RGB."""
+    values = np.asarray(values, dtype=float)
+    if values.shape[-1] == 1:
+        return np.repeat(values, 3, axis=-1)
+    gray = np.sum(values * np.array([.2126, .7152, .0722]), axis=-1, keepdims=True)
+    return np.repeat(gray, 3, axis=-1)
+
+
+def grayscale_pixels(pixels, linear_light=False):
+    values = np.asarray(pixels, dtype=float) / 255
+    if linear_light:
+        values = srgb_to_linear(values)
+    return np.asarray(display_rgb(grayscale_signal(values), linear_light)).tolist()
+
+
 def fit_linear_source(path, mode, size, bin_size=None):
     """Decode before alpha compositing/resampling. Assume input RGB is sRGB."""
     with Image.open(path) as source:
@@ -45,8 +61,8 @@ def abundance_scale(scheme_id, normalize_designs):
         return 1.0
     from image_encoding import encoding_scheme
     scheme = encoding_scheme(scheme_id)
-    # Fixed total weight relative to the original 16 shifts/color, not auto-exposure.
-    return 16.0 / (scheme.x_states * scheme.y_states)
+    # Fixed total weight relative to the original 48 RGB designs, not auto-exposure.
+    return 48.0 / scheme.design_count
 
 
 def canvas_area_gain(scheme_id, compensate_area):

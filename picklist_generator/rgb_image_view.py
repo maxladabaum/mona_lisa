@@ -5,6 +5,9 @@ import json
 import math
 import re
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from queue import SimpleQueue, Empty
+from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -15,13 +18,14 @@ from tkinter import filedialog, messagebox, ttk
 from destination_assignment import choose_destination_wells, assign_destination_wells
 from app_state import occupied_destination_wells, all_384_wells, create_run_output_directory, record_transfers, save_json
 from image_encoding import (
-    CHANNELS, FIT_MODES, ROWS, IMAGE_COLUMNS, active_columns, default_barcode_schema, validate_barcode_schema, fiducial_sites, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, TILE_COUNT_SCHEMES, SEVEN_BIT_TILE_SCHEMES, MAX_TILES_PER_COLOR, MAX_SEVEN_BIT_TILES, physical_raster_size,
+    BARCODE_SCHEMA_KEYS, encoding_scheme, validate_bit_count, CHANNELS, FIT_MODES, ROWS, IMAGE_COLUMNS, active_columns, default_barcode_schema, validate_barcode_schema, fiducial_sites, DEFAULT_SCHEME, ENCODING_SCHEMES, SELECTABLE_SCHEMES, TILE_COUNT_SCHEMES, SEVEN_BIT_TILE_SCHEMES, MAX_TILES_PER_COLOR, MAX_SEVEN_BIT_TILES, physical_raster_size,
     bin_image, compile_designs, geometry, prepare_runs, synthesis_base_volume_nl, rgb_replacement_options, reconstruct, site_name, rotate_point, physical_reference_raster, best_image_rotation, ranked_schemes, scheme_pixel_summary, schemes_for_bits, direct_tile_schemes,
 )
 from gaussian_reconstruction import DEFAULT_FWHM_NM, DEFAULT_EXPOSURE, render_gaussian_overlay
 from gaussian_optimization import fitted_target, optimize_designs
 from optimization_regularization import DEFAULT_REGULARIZATION, validate_regularization
-from alignment_reconstruction import AlignmentModel, AlignmentSettings, VALIDATION_SEED
+from alignment_reconstruction import needs_chunked_alignment, AlignmentCapacityError, AlignmentModel, AlignmentSettings, VALIDATION_SEED
+from rgb_simulation import cached_alignment_model, gaussian_capacity_preview, simulate_alignment
 from brightness_simulation import brightness_cases
 from picklist_core import HINGE_TYPES, PICKLIST_COLUMNS, combine_picklists, parse_vector, write_csv
 
@@ -96,6 +100,11 @@ class RGBImageView(ttk.Frame):
         self.optimization_summary = tk.StringVar()
         self.alignment_enabled = tk.BooleanVar(value=True)
         self.alignment_values = {key: tk.StringVar(value=str(value)) for key, value in vars(AlignmentSettings()).items()}
+        self._committed_alignment_settings = AlignmentSettings()
+        self._simulation_executor = None
+        self._simulation_cancel = None
+        self._simulation_poll = None
+        self.simulation_status = tk.StringVar(value="Edit alignment settings, then press Enter to simulate.")
         self.brightness_enabled = tk.BooleanVar(value=False)
         self.brightness_values = {key: tk.StringVar(value=value) for key,value in
             (("ratio","1.10"),("cv_percent","10"),("transfer_cv_percent","10"),("seed","42"))}
@@ -108,8 +117,12 @@ class RGBImageView(ttk.Frame):
         self.alignment_summary = tk.StringVar()
         self.barcode_experiment = tk.StringVar(value=app.config.get("barcode_experiment", "Default"))
         saved_scheme = app.config.get("image_encoding_scheme", DEFAULT_SCHEME)
-        if saved_scheme not in SELECTABLE_SCHEMES:
+        try:
+            encoding_scheme(saved_scheme)
+        except ValueError:
             saved_scheme = DEFAULT_SCHEME
+        self.image_mode = tk.StringVar(value="Black & white" if SELECTABLE_SCHEMES[saved_scheme].monochrome else "RGB")
+        self.image_mode_summary = tk.StringVar()
         self.barcode_bit_count = tk.StringVar(value=str(SELECTABLE_SCHEMES[saved_scheme].bit_count))
         self.scheme = tk.StringVar(value=SELECTABLE_SCHEMES[saved_scheme].label)
         self.tile_count = tk.StringVar()
@@ -133,21 +146,31 @@ class RGBImageView(ttk.Frame):
         self.auto_export_templates = tk.BooleanVar(value=app.config.get("image_auto_export_templates", True))
         self.alignment_template_directory = None
         self.design_name = tk.StringVar()
-        self.status = tk.StringVar(value="Upload an image to preview its color/shift designs.")
+        self.status = tk.StringVar(value="Upload an image to preview its designs.")
         toolbar = ttk.Frame(self)
         toolbar.pack(fill="x")
-        ttk.Button(toolbar, text="Upload RGB image…", command=self._upload).pack(side="left")
+        self.upload_button = ttk.Button(toolbar, text="Upload RGB image…", command=self._upload)
+        self.upload_button.pack(side="left")
         ttk.Label(toolbar, textvariable=self.image_path, width=55).pack(side="left", padx=10)
         fits = ttk.Combobox(toolbar, textvariable=self.fit_mode, values=FIT_MODES, state="readonly", width=24)
         fits.pack(side="right")
         fits.bind("<<ComboboxSelected>>", lambda _event: self._load())
+        mode_bar = ttk.Frame(self)
+        mode_bar.pack(fill="x", pady=(6, 0))
+        ttk.Label(mode_bar, text="Image mode").pack(side="left")
+        mode_picker = ttk.Combobox(mode_bar, textvariable=self.image_mode,
+                                   values=("RGB", "Black & white"), state="readonly", width=16)
+        mode_picker.pack(side="left", padx=8)
+        mode_picker.bind("<<ComboboxSelected>>", self._image_mode_changed)
+        ttk.Label(mode_bar, textvariable=self.image_mode_summary).pack(side="left")
         scheme_bar = ttk.Frame(self)
         scheme_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(scheme_bar, text="Barcode bits").pack(side="left")
-        self.bit_count_picker = ttk.Combobox(scheme_bar, textvariable=self.barcode_bit_count,
-                                             values=("6", "7", "9"), state="readonly", width=4)
+        self.bit_count_picker = ttk.Entry(scheme_bar, textvariable=self.barcode_bit_count, width=4)
         self.bit_count_picker.pack(side="left", padx=8)
-        self.bit_count_picker.bind("<<ComboboxSelected>>", self._bit_count_changed)
+        self.bit_count_picker.bind("<Return>", self._bit_count_changed)
+        self.bit_count_picker.bind("<FocusOut>", self._bit_count_changed)
+        ttk.Label(scheme_bar, text="(2–48; Enter to apply)").pack(side="left")
         ttk.Label(scheme_bar, text="Encoding scheme").pack(side="left")
         self.scheme_choice = tk.StringVar()
         self.scheme_picker = ttk.Combobox(scheme_bar, textvariable=self.scheme_choice,
@@ -160,7 +183,8 @@ class RGBImageView(ttk.Frame):
                   "Uses a square image until upload.").pack(anchor="w")
         tile_bar = ttk.Frame(self)
         tile_bar.pack(fill="x", pady=(6, 0))
-        ttk.Label(tile_bar, text="Tiles per color").pack(side="left")
+        self.tile_count_label = ttk.Label(tile_bar, text="Tiles per color")
+        self.tile_count_label.pack(side="left")
         self.tile_count_picker = ttk.Combobox(tile_bar, textvariable=self.tile_count,
             values=("Use encoding scheme", *map(str, range(1, MAX_TILES_PER_COLOR + 1))), state="readonly", width=20)
         self.tile_count_picker.pack(side="left", padx=8)
@@ -231,17 +255,21 @@ class RGBImageView(ttk.Frame):
         settings = ttk.Frame(self)
         settings.pack(fill="x")
         self.replacement_options = {}
+        self.concentration_groups = {}
+        self.concentration_labels = {}
         for color, view in self.color_views.items():
             group = ttk.Frame(settings)
             group.pack(side="left", fill="both", expand=True, padx=6)
-            ttk.Label(group, text=color + " site target (nM)").grid(row=0, column=0, sticky="w")
+            self.concentration_groups[color] = group
+            label = self.concentration_labels[color] = ttk.Label(group, text=color + " site target (nM)")
+            label.grid(row=0, column=0, sticky="w")
             ttk.Entry(group, textvariable=view.desired_concentration_nm, width=6).grid(row=0, column=1, padx=6)
             self.replacement_options[color] = tk.StringVar()
             ttk.Label(group, textvariable=self.replacement_options[color], wraplength=330).grid(
                 row=1, column=0, columnspan=2, sticky="w", pady=3)
         self._update_replacement_options()
         self._build_run_settings()
-        ttk.Label(self, text="Every RGB run includes 8 D-Biotin staples from the LowConc base plate at the independent biotin target. "
+        ttk.Label(self, text="Every image run includes 8 D-Biotin staples from the LowConc base plate at the independent biotin target. "
                   "Load P17–P24 at 20 µM for the default map; source settings are under Sources & mixing….",
                   wraplength=1050).pack(anchor="w", pady=3)
         reconstruction_bar = ttk.Frame(self)
@@ -255,7 +283,7 @@ class RGBImageView(ttk.Frame):
         ttk.Label(reconstruction_bar, textvariable=self.reconstruction_summary).pack(side="left", padx=8)
         light_bar = ttk.Frame(self)
         light_bar.pack(fill="x", pady=(6,0))
-        ttk.Checkbutton(light_bar, text="Linear-light image processing (sRGB input/output)",
+        ttk.Checkbutton(light_bar, text="Linear-light image processing",
                         variable=self.linear_light, command=self._light_changed).pack(side="left")
         ttk.Checkbutton(light_bar, text="Equal total signal across encoding schemes",
                         variable=self.normalize_designs, command=self._light_changed).pack(side="left", padx=12)
@@ -272,8 +300,14 @@ class RGBImageView(ttk.Frame):
         for index, (key, label) in enumerate(fields):
             row, column = 1 + index // 4, 2 * (index % 4)
             ttk.Label(alignment_bar, text=label).grid(row=row, column=column, sticky="w", padx=4)
-            ttk.Entry(alignment_bar, textvariable=self.alignment_values[key], width=8).grid(row=row, column=column+1, padx=4)
+            entry = ttk.Entry(alignment_bar, textvariable=self.alignment_values[key], width=8)
+            entry.grid(row=row, column=column+1, padx=4)
+            entry.bind("<Return>", self._apply_alignment_settings)
+            entry.bind("<KP_Enter>", self._apply_alignment_settings)
         ttk.Label(alignment_bar, text="Illustrative errors; center is relative to C6 H01 before shifts. Default center: full staple grid.").grid(row=3, column=0, columnspan=8, sticky="w")
+        self.simulation_progress = ttk.Progressbar(alignment_bar, mode="determinate", maximum=100)
+        self.simulation_progress.grid(row=4, column=0, columnspan=3, sticky="ew", padx=4, pady=4)
+        ttk.Label(alignment_bar, textvariable=self.simulation_status).grid(row=4, column=3, columnspan=5, sticky="w")
         brightness_bar = ttk.LabelFrame(self, text="R1/body competition error — preview only", padding=5)
         self.brightness_controls = brightness_bar
         ttk.Checkbutton(brightness_bar, text="Simulate stoichiometry errors", variable=self.brightness_enabled,
@@ -307,6 +341,8 @@ class RGBImageView(ttk.Frame):
             canvas = tk.Canvas(frame, width=300, height=214, background="#15191d", highlightthickness=0)
             canvas.pack()
             self.pixel_canvases.append(canvas)
+            if len(self.pixel_canvases) == 1:
+                self.binned_frame = frame
             self.prediction_frame = frame
         self.baseline_frame = ttk.LabelFrame(previews, text="Before optimization — Gaussian overlay")
         self.baseline_canvas = tk.Canvas(self.baseline_frame, width=300, height=214, background="#15191d", highlightthickness=0)
@@ -445,7 +481,8 @@ class RGBImageView(ttk.Frame):
             view.desired_concentration_nm.trace_add("write", self._save_rgb_targets)
 
     def _build_run_settings(self):
-        frame = ttk.LabelFrame(self, text="RGB run settings (saved independently)")
+        frame = self.run_settings_frame = ttk.LabelFrame(self, text="RGB run settings (saved independently)")
+        self.run_setting_labels = {}
         frame.pack(fill="x", pady=5)
         for index, (label, key) in enumerate((("Destination plate", "destination_plate"),
                 ("Max well volume (µL)", "max_volume"))):
@@ -486,7 +523,8 @@ class RGBImageView(ttk.Frame):
             details.add(page, text=title)
             page.columnconfigure(1, weight=1)
             for row, (label, key) in enumerate(fields):
-                ttk.Label(page, text=label).grid(row=row, column=0, sticky="w", padx=5)
+                field_label = self.run_setting_labels[key] = ttk.Label(page, text=label)
+                field_label.grid(row=row, column=0, sticky="w", padx=5)
                 if key == "hinge_type":
                     entry = ttk.Combobox(page, textvariable=self.hinge_type, values=list(HINGE_TYPES.values()), state="readonly")
                 else:
@@ -553,7 +591,7 @@ class RGBImageView(ttk.Frame):
                 text = "Available: {} ({} levels).\n100% PAINT: {:g} nL; 0% original: {:g} nL. Minimum {:g} nL; increment {:g} nL.".format(
                     ", ".join(levels), len(fractions), grid["full_replacement_nl"], grid["full_original_nl"], float(self.minimum_transfer_nl.get()), float(self.transfer_increment_nl.get()))
                 if not math.isclose(fractions[0], 0) or not math.isclose(fractions[-1], 1):
-                    text += " RGB unavailable: both 0% and 100% must be achievable."
+                    text += " Image unavailable: both 0% and 100% must be achievable."
                 self.replacement_options[color].set(text)
             except (ValueError, OverflowError) as exc:
                 self.replacement_options[color].set("No available levels: {}".format(exc))
@@ -576,7 +614,7 @@ class RGBImageView(ttk.Frame):
         vectors["desired"] = [float(self.final_volume.get()), self._base_concentration(), float(self.scaffold_target.get()),
                               *parse_vector(self.desired_buffer.get(), 3, "Final buffer")]
         if any(not math.isfinite(value) or value < 0 for values in vectors.values() for value in values):
-            raise ValueError("RGB mixing settings must contain finite, nonnegative values.")
+            raise ValueError("Image mixing settings must contain finite, nonnegative values.")
         if any(value <= 0 for value in vectors["desired"][:2]):
             raise ValueError("Final volume and book-base target must be positive.")
         return vectors
@@ -645,11 +683,15 @@ class RGBImageView(ttk.Frame):
                 self._draw_overlay(canvas,result)
             self.brightness_summary.set("R1/body ratio {}×; source ratio CV {}%; per-transfer volume CV {}%; seed {}. "
                 "Source errors shared across designs; transfers independent. Same draws in both random panels. {}".format(settings["ratio"],settings["cv_percent"],settings["transfer_cv_percent"],settings["seed"],
-                "Includes expected alignment uncertainty." if self.alignment_enabled.get() else "Ideal alignment."))
+                "Ideal alignment (layout size limit)." if any(r.metadata.get("alignment_fallback") for r in self.brightness_results)
+                else "Includes expected alignment uncertainty." if self.alignment_enabled.get() else "Ideal alignment."))
         except ValueError as exc:
             self.brightness_summary.set("Brightness settings: {}".format(exc))
 
     def _alignment_settings(self):
+        return self._committed_alignment_settings
+
+    def _read_alignment_settings(self):
         values = {key: float(var.get()) for key, var in self.alignment_values.items()}
         settings = AlignmentSettings(**values)
         settings.validate()
@@ -657,24 +699,103 @@ class RGBImageView(ttk.Frame):
         return AlignmentSettings(**values)
 
     def _alignment_changed(self, *_args):
-        self.alignment_models.clear()
-        if self.alignment_enabled.get():
-            self._volumes_changed()
+        self.simulation_status.set("Unapplied alignment edits — press Enter to simulate.")
 
-    def _alignment_model(self, designs, fwhm_nm=None):
-        settings = self._alignment_settings()
-        key = (designs[0]["encoding_scheme"], designs[0]["origami_rotation_degrees_clockwise"],
-               settings, float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm), float(self.gaussian_exposure.get()),
-               self.linear_light.get(), self.normalize_designs.get(), self.compensate_area.get(),
-               tuple(designs[0].get("active_image_columns", IMAGE_COLUMNS)))
-        if key not in self.alignment_models:
-            if len(self.alignment_models) >= 2:
-                self.alignment_models.clear()
-            self.alignment_models[key] = AlignmentModel(designs, settings, key[3], key[4], **self._light_options())
-        return self.alignment_models[key]
+    def _apply_alignment_settings(self, _event=None):
+        try:
+            settings = self._read_alignment_settings()
+        except (ValueError, OverflowError) as exc:
+            self.simulation_status.set("Check alignment settings: {}".format(exc))
+            return "break"
+        self._committed_alignment_settings = settings
+        if self.alignment_enabled.get():
+            self._volumes_changed(background=True)
+            if self.pixels is None:
+                self.simulation_status.set("Settings applied; upload an image to simulate.")
+        else:
+            self.simulation_status.set("Settings applied; alignment simulation is disabled.")
+        return "break"
+
+    def _alignment_model(self, designs, fwhm_nm=None, seed=None):
+        options = {} if seed is None else {"seed": seed}
+        return cached_alignment_model(
+            self.alignment_models, designs, self._alignment_settings(),
+            float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm),
+            float(self.gaussian_exposure.get()), self._light_options(), **options)
+
+    def _stop_simulation(self):
+        if self._simulation_cancel is not None:
+            self._simulation_cancel.set()
+            self._simulation_cancel = None
+            self.prepare_button.configure(state="normal")
+            self.simulation_progress.configure(value=0)
+            self.simulation_status.set("Simulation cancelled.")
+        if self._simulation_poll is not None:
+            self.after_cancel(self._simulation_poll)
+            self._simulation_poll = None
+
+    def destroy(self):
+        self._stop_simulation()
+        if self._simulation_executor is not None:
+            self._simulation_executor.shutdown(wait=False, cancel_futures=True)
+        super().destroy()
+
+    def _start_alignment_simulation(self):
+        if self._simulation_executor is None:
+            self._simulation_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rgb-simulation")
+        cancel, updates = Event(), SimpleQueue()
+        self._simulation_cancel = cancel
+        self.simulation_progress.configure(value=0)
+        self.simulation_status.set("Starting simulation…")
+        self.prepare_button.configure(state="disabled")
+        # Snapshot every Tk value on the main thread. Workers never access widgets.
+        future = self._simulation_executor.submit(
+            simulate_alignment, deepcopy(self.designs), self._alignment_settings(),
+            float(self.gaussian_fwhm.get()), float(self.gaussian_exposure.get()),
+            self._light_options(), self.image_path.get(), self.fit_mode.get(),
+            self.optimize_enabled.get(), self._regularization_value(), self.example_seed,
+            dict(self.alignment_models), cancel, lambda value, label: updates.put((value, label)))
+
+        def poll():
+            self._simulation_poll = None
+            if cancel.is_set() or self._simulation_cancel is not cancel:
+                return
+            latest = None
+            try:
+                while True:
+                    latest = updates.get_nowait()
+            except Empty:
+                pass
+            if latest:
+                self.simulation_progress.configure(value=latest[0])
+                self.simulation_status.set(latest[1])
+            if not future.done():
+                self._simulation_poll = self.after(50, poll)
+                return
+            try:
+                result = future.result()
+            except Exception as exc:
+                self._stop_simulation()
+                self.designs = []
+                self.simulation_status.set("Simulation failed: {}".format(exc))
+                return
+            self._volumes_changed(simulation_result=result)
+            self.simulation_progress.configure(value=100)
+            try:
+                pending = self._read_alignment_settings() != self._committed_alignment_settings
+            except (ValueError, OverflowError):
+                pending = True
+            fallback = result["reconstruction"].metadata.get("alignment_fallback")
+            completed = "Gaussian preview ready; alignment unavailable for this layout" if fallback else "Simulation complete"
+            self.simulation_status.set(completed + "; unapplied edits — press Enter to simulate." if pending else completed)
+
+        self._simulation_poll = self.after(50, poll)
 
     def _new_alignment_example(self):
         if not self.alignment_enabled.get() or not self.designs or self.reconstruction is None:
+            return
+        if self.reconstruction.metadata.get("alignment_fallback"):
+            self.simulation_status.set("An alignment example is unavailable for this layout; showing the Gaussian preview.")
             return
         self.example_seed += 1
         self.alignment_example = self._alignment_model(self.designs).example(self.designs, self.example_seed)
@@ -685,7 +806,11 @@ class RGBImageView(ttk.Frame):
     def _render_overlay(self, designs, fwhm_nm=None):
         fwhm_nm = float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm)
         if self.alignment_enabled.get():
-            return self._alignment_model(designs, fwhm_nm).expected(designs)
+            try:
+                return self._alignment_model(designs, fwhm_nm).expected(designs)
+            except AlignmentCapacityError as exc:
+                return gaussian_capacity_preview(designs, self._alignment_settings(), fwhm_nm,
+                                                 float(self.gaussian_exposure.get()), self._light_options(), str(exc))
         return render_gaussian_overlay(designs, fwhm_nm, float(self.gaussian_exposure.get()), **self._light_options())
 
     def _apply_barcode_schema(self, schema):
@@ -712,8 +837,8 @@ class RGBImageView(ttk.Frame):
         selected = {(row-1, col-1) for key in ("logical_bits", "alignment_groups")
                     for group in model[key] for row, col in group["physical_sites"]}
         editor._rebuild_grid(select_all=False, selected_sites=selected)
-        editor.source_name.set("RGB barcode editor: name digital groups Bit 1, Bit 2, etc. Alignment-only groups are permanent fiducials. C1–C12 = 01–12; R1–R8 = H01,H03,…,H15.")
-        editor.status.set("Edit site groups, then click Apply to RGB Image. Template bit ON/OFF checkboxes do not change the RGB codebook.")
+        editor.source_name.set("Image barcode editor: name digital groups Bit 1, Bit 2, etc. Alignment-only groups are permanent fiducials. C1–C12 = 01–12; R1–R8 = H01,H03,…,H15.")
+        editor.status.set("Edit site groups, then click Apply to RGB Image. Template bit ON/OFF checkboxes do not change the image codebook.")
         self.app.main_tabs.select(self.app.template_page)
 
     def _use_barcode_template(self):
@@ -771,9 +896,10 @@ class RGBImageView(ttk.Frame):
         else:
             self._refresh_comparison()
 
-    def _concentration_options(self):
+    def _concentration_options(self, scheme_id=None):
+        channels = CHANNELS if scheme_id is None else encoding_scheme(scheme_id).channels
         return dict(**self._transfer_limits(), barcode_schema=deepcopy(self.barcode_schema), active_image_columns=self._active_columns(), plate_defaults_nm={color: float(view.desired_concentration_nm.get())
-                                      for color, view in self.color_views.items()},
+                                      for color, view in self.color_views.items() if color in channels},
                     plate_relative_transfers=False,
                     base_desired_concentration_nm=self._base_concentration(),
                     base_concentration_nm=self.base_stock_concentration_nm(),
@@ -785,16 +911,17 @@ class RGBImageView(ttk.Frame):
             pixels, self._base_transfer_volume(),
             {color: 1.0 for color in self.color_views},
             scheme_id, int(self.rotation.get()), linear_light=self.linear_light.get(), validate_overlaps=False,
-            **self._concentration_options())
+            **self._concentration_options(scheme_id))
 
     def _optimize(self, designs, fwhm_nm=None):
         fwhm_nm = float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm)
         overlay = self._render_overlay(designs, fwhm_nm)
-        target = fitted_target(self.image_path.get(), self.fit_mode.get(), overlay.rgb.size, linear_light=self.linear_light.get())
+        target = fitted_target(self.image_path.get(), self.fit_mode.get(), overlay.rgb.size, linear_light=self.linear_light.get(),
+                               monochrome=encoding_scheme(designs[0]["encoding_scheme"]).monochrome)
         if self.alignment_enabled.get():
             model = self._alignment_model(designs, fwhm_nm)
             result, metrics = model.optimize(designs, target, regularization_strength=self._regularization_value())
-            validation = AlignmentModel(designs, model.settings, model.fwhm, model.exposure, seed=VALIDATION_SEED, **self._light_options())
+            validation = self._alignment_model(designs, model.fwhm, seed=VALIDATION_SEED)
             metrics["validation_seed"] = VALIDATION_SEED
             metrics["validation_baseline"] = validation.evaluate(designs, target)
             metrics["validation_optimized"] = validation.evaluate(result, target)
@@ -840,23 +967,40 @@ class RGBImageView(ttk.Frame):
             if self.tiling_window.stale:
                 self.tiling_window.refresh()
 
-    def _refresh_comparison(self):
+    def _refresh_comparison(self, defer=False):
         if self.tiling_window is not None and self.tiling_window.winfo_exists():
             self.tiling_window.mark_stale()
         if self.comparison_window is not None and self.comparison_window.winfo_exists():
-            self.comparison_window.refresh()
+            if defer:
+                self.comparison_window.mark_stale()
+            else:
+                self.comparison_window.refresh()
 
     def _scheme_id(self):
         return next(key for key, scheme in SELECTABLE_SCHEMES.items() if scheme.label == self.scheme.get())
 
+    def _image_mode_changed(self, _event=None):
+        current = SELECTABLE_SCHEMES[self._scheme_id()]
+        choices = self._tile_encoding_choices(current.bit_count, self.image_mode.get() == "Black & white")
+        matching = [key for key, scheme in choices.items()
+                    if (scheme.tile_columns, scheme.tile_rows) == (current.tile_columns, current.tile_rows)]
+        key = matching[-1] if matching else next(iter(choices))
+        self.scheme.set(choices[key].label)
+
     def _bit_count_changed(self, _event=None):
-        count = int(self.barcode_bit_count.get())
+        try:
+            count = validate_bit_count(int(self.barcode_bit_count.get()))
+        except ValueError:
+            self.barcode_bit_count.set(str(SELECTABLE_SCHEMES[self._scheme_id()].bit_count))
+            messagebox.showerror("Invalid barcode bits", "Enter a whole number from 2 to 48.", parent=self)
+            return
+        self.barcode_bit_count.set(str(count))
         current = SELECTABLE_SCHEMES[self._scheme_id()]
         if current.bit_count == count:
             self._update_scheme_controls()
             return
-        choices = schemes_for_bits(count)
-        matching = [key for key, scheme in direct_tile_schemes(count).items()
+        choices = self._tile_encoding_choices(count, current.monochrome)
+        matching = [key for key, scheme in choices.items()
                     if (scheme.tile_columns, scheme.tile_rows) == (current.tile_columns, current.tile_rows)
                     and current.x_states == current.tile_columns and current.y_states == current.tile_rows]
         key = matching[-1] if matching else next(iter(choices))
@@ -866,14 +1010,24 @@ class RGBImageView(ttk.Frame):
         return scheme_pixel_summary(key, getattr(self, "_ranking_image_size", (1, 1)),
                                     self.fit_mode.get(), self._active_columns())
 
+    @staticmethod
+    def _tile_encoding_choices(bit_count, monochrome=False):
+        return {key: scheme for key, scheme in direct_tile_schemes(bit_count, monochrome).items()
+                if "shift" not in scheme.label.lower()}
+
     def _refresh_scheme_choices(self):
-        self._display_scheme_ids = self._rank_scheme_ids()
+        scheme = SELECTABLE_SCHEMES[self._scheme_id()]
+        self._display_scheme_ids = self._rank_scheme_ids(self._tile_encoding_choices(scheme.bit_count, scheme.monochrome))
         labels = [self._pixel_summary(key) + " · " + SELECTABLE_SCHEMES[key].label
                   for key in self._display_scheme_ids]
         self.scheme_picker.configure(values=labels)
         current = self._scheme_id()
         if current in self._display_scheme_ids:
             self.scheme_choice.set(labels[self._display_scheme_ids.index(current)])
+        else:
+            # Existing saved/comparison schemes remain readable, but are not
+            # offered as choices in the tile-only encoding dropdown.
+            self.scheme_choice.set(self._pixel_summary(current) + " · " + SELECTABLE_SCHEMES[current].label)
         self.pixel_capacity_summary.set(self._pixel_summary(current) + " (usable estimate uses best orientation)")
 
     def _scheme_choice_changed(self, _event=None):
@@ -882,7 +1036,8 @@ class RGBImageView(ttk.Frame):
             self.scheme.set(SELECTABLE_SCHEMES[self._display_scheme_ids[index]].label)
 
     def _rank_scheme_ids(self, keys=None):
-        allowed = schemes_for_bits(int(self.barcode_bit_count.get()))
+        current = SELECTABLE_SCHEMES[self._scheme_id()]
+        allowed = schemes_for_bits(current.bit_count, current.monochrome)
         keys = allowed if keys is None else [key for key in keys if key in allowed]
         return ranked_schemes(keys, getattr(self, "_ranking_image_size", (1, 1)),
                               self.fit_mode.get(), self._active_columns())
@@ -896,14 +1051,15 @@ class RGBImageView(ttk.Frame):
 
     def _tile_layouts(self, count, bit_count=None):
         if bit_count is None:
-            bit_count = int(self.barcode_bit_count.get())
-        schemes = direct_tile_schemes(bit_count)
+            bit_count = SELECTABLE_SCHEMES[self._scheme_id()].bit_count
+        schemes = direct_tile_schemes(bit_count, SELECTABLE_SCHEMES[self._scheme_id()].monochrome)
         keys = self._rank_scheme_ids([key for key, s in schemes.items() if s.tile_count == count])
         return {"{} × {}".format(schemes[key].tile_columns, schemes[key].tile_rows): key for key in keys}
 
     def _tile_count_changed(self, _event=None):
         if self.tile_count.get() == "Use encoding scheme":
-            self.scheme.set(next(iter(schemes_for_bits(int(self.barcode_bit_count.get())).values())).label)
+            current = SELECTABLE_SCHEMES[self._scheme_id()]
+            self.scheme.set(next(iter(self._tile_encoding_choices(current.bit_count, current.monochrome).values())).label)
             return
         layouts = self._tile_layouts(int(self.tile_count.get()))
         if not layouts:
@@ -925,7 +1081,7 @@ class RGBImageView(ttk.Frame):
         scheme = SELECTABLE_SCHEMES[key]
         # Existing saved sweep layouts can also have one design per color per
         # tile. Expose their grid without forcing the user to reselect a count.
-        direct_tiles = key in direct_tile_schemes(scheme.bit_count)
+        direct_tiles = key in direct_tile_schemes(scheme.bit_count, scheme.monochrome)
         if direct_tiles:
             self.tile_count.set(str(scheme.tile_count))
             layouts = self._tile_layouts(scheme.tile_count, scheme.bit_count)
@@ -938,6 +1094,7 @@ class RGBImageView(ttk.Frame):
                 if (candidate.tile_count == scheme.tile_count
                         and candidate.design_count == scheme.design_count
                         and candidate.bit_count == scheme.bit_count
+                        and candidate.monochrome == scheme.monochrome
                         and candidate.joint == scheme.joint
                         and candidate.parity == scheme.parity):
                     label = "{} × {}".format(candidate.tile_columns, candidate.tile_rows)
@@ -950,8 +1107,38 @@ class RGBImageView(ttk.Frame):
         self.tile_layout_picker.configure(values=tuple(layouts), state="readonly")
         self.tile_layout.set(current)
 
+    def _update_image_mode_controls(self):
+        monochrome = SELECTABLE_SCHEMES[self._scheme_id()].monochrome
+        for color, group in self.concentration_groups.items():
+            group.pack_forget()
+            if not monochrome or color == "R1 R":
+                group.pack(side="left", fill="both", expand=True, padx=6)
+            self.concentration_labels[color].configure(
+                text="Grayscale concentration (nM)" if monochrome else color + " site target (nM)")
+        self.upload_button.configure(text="Upload black & white image…" if monochrome else "Upload RGB image…")
+        self.binned_frame.configure(text="Binned grayscale" if monochrome else "Binned RGB")
+        self.prediction_frame.configure(text="Predicted {} — Gaussian overlay".format("grayscale" if monochrome else "RGB"))
+        self.run_settings_frame.configure(text="{} run settings (saved independently)".format("Grayscale" if monochrome else "RGB"))
+        for key, mono_label, rgb_label in (
+                ("replacement_path", "Grayscale source CSV", "RGB source CSV (all colors)"),
+                ("replacement_plate", "Grayscale source plate name", "RGB source plate name"),
+                ("replacement_stock", "Grayscale stock (nM)", "RGB stock (nM)")):
+            self.run_setting_labels[key].configure(text=mono_label if monochrome else rgb_label)
+        self.site_tree.heading("RGB", text="Gray level" if monochrome else "RGB")
+        self.design_canvas.configure(background="#181818" if monochrome else "#15191d")
+
     def _update_scheme_controls(self):
-        counts = sorted({scheme.tile_count for scheme in direct_tile_schemes(int(self.barcode_bit_count.get())).values()})
+        self._update_image_mode_controls()
+        bit_count = SELECTABLE_SCHEMES[self._scheme_id()].bit_count
+        schema_key = BARCODE_SCHEMA_KEYS[bit_count]
+        if schema_key not in self.barcode_schema:
+            self.barcode_schema[schema_key] = default_barcode_schema(bit_count)[schema_key]
+        current = SELECTABLE_SCHEMES[self._scheme_id()]
+        counts = sorted({scheme.tile_count for scheme in direct_tile_schemes(current.bit_count, current.monochrome).values()})
+        self.tile_count_label.configure(text="Tiles" if current.monochrome else "Tiles per color")
+        self.image_mode_summary.set(
+            "Grayscale · 1 barcode per tile · up to {} tiles".format(max(counts))
+            if current.monochrome else "3 color channels · 3 barcodes per tile")
         self.tile_count_picker.configure(values=("Use encoding scheme", *map(str, counts)))
         self._refresh_scheme_choices()
         self._sync_tile_controls()
@@ -968,15 +1155,19 @@ class RGBImageView(ttk.Frame):
         self.store_button.configure(text="Send {} runs to storage".format(info["design_count"]))
         scheme = SELECTABLE_SCHEMES[self._scheme_id()]
         self.explanation.set(
-            ("{} designs: 3 colors distributed across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
+            ("{} designs: one grayscale channel across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.monochrome else
+               "{} designs: 3 colors distributed across {} tiles.\n\n".format(scheme.design_count, scheme.tile_count) if scheme.tiled else "{design_count} designs: 3 colors × {x_states} X-shifts × {y_states} Y-shifts.\n\n".format(**info))
             + self._pixel_summary(self._scheme_id()) + "\n\n"
-            + "Overlay: shifted Gaussian signals weighted by each site’s replacement percentage. Assumes equal design abundance and channel brightness; barcode and fiducial sites are excluded.")
+            + "Overlay: Gaussian signals weighted by each site’s replacement percentage. "
+            + ("Assumes equal design abundance; barcode and fiducial sites are excluded." if scheme.monochrome else
+               "Assumes equal design abundance and channel brightness; barcode and fiducial sites are excluded."))
 
     def _scheme_changed(self, *_args):
         if SELECTABLE_SCHEMES[self._scheme_id()].bit_count != int(self.barcode_bit_count.get()):
             self.scheme.set(SELECTABLE_SCHEMES[self._last_valid_scheme].label)
             messagebox.showerror("Different barcode bit count", "Choose the matching Barcode bits before selecting this scheme.", parent=self)
             return
+        self.image_mode.set("Black & white" if SELECTABLE_SCHEMES[self._scheme_id()].monochrome else "RGB")
         self._update_scheme_controls()
         self.app.config["image_encoding_scheme"] = self._scheme_id()
         self.app._schedule_config_save()
@@ -984,9 +1175,10 @@ class RGBImageView(ttk.Frame):
         if self.image_path.get():
             self._load(auto_rotate=True)
         else:
-            self.status.set("Upload an image to preview {} color/shift designs.".format(self.image_geometry["design_count"]))
+            self.status.set("Upload an image to preview {} designs.".format(self.image_geometry["design_count"]))
 
     def _invalidate(self, *_args):
+        self._stop_simulation()
         self.alignment_template_directory = None
         if hasattr(self, "open_templates_button"):
             self.open_templates_button.configure(state="disabled")
@@ -1000,7 +1192,7 @@ class RGBImageView(ttk.Frame):
             self.status.set("Preview ready. Prepare {} runs to allocate separate unused wells using the current settings.".format(self.image_geometry["design_count"]))
 
     def _upload(self):
-        path = filedialog.askopenfilename(parent=self, title="Choose RGB image", filetypes=[
+        path = filedialog.askopenfilename(parent=self, title="Choose image", filetypes=[
             ("Images", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp *.webp"), ("All files", "*")])
         if path:
             self.image_path.set(path)
@@ -1038,9 +1230,13 @@ class RGBImageView(ttk.Frame):
             self._refresh_comparison()
             messagebox.showerror("Cannot import image", str(exc), parent=self)
 
-    def _volumes_changed(self, *_args):
+    def _volumes_changed(self, *_args, background=False, simulation_result=None):
+        baseline_visible = self.baseline_frame.winfo_manager() == "pack"
         self._update_replacement_options()
         self._invalidate()
+        if not self.alignment_enabled.get():
+            self.simulation_progress.configure(value=0)
+            self.simulation_status.set("Alignment simulation off.")
         self.optimization_metrics = None
         self.optimization_summary.set("")
         self.baseline_frame.pack_forget()
@@ -1054,44 +1250,81 @@ class RGBImageView(ttk.Frame):
             return
         self._draw_pixels(self.pixel_canvases[0], self.pixels)
         try:
-            self.designs = self._compile_scheme(self.pixels, self._scheme_id())
+            self.designs = (simulation_result["designs"] if simulation_result is not None
+                            else self._compile_scheme(self.pixels, self._scheme_id()))
+            if self.alignment_enabled.get() and simulation_result is None and not background:
+                if needs_chunked_alignment(self.designs, float(self.gaussian_fwhm.get())):
+                    background = True
+                else:
+                    try:
+                        self._alignment_model(self.designs)
+                    except AlignmentCapacityError:
+                        background = True
+            if background and self.alignment_enabled.get():
+                if baseline_visible:
+                    self.baseline_frame.pack(side="left", padx=(0, 12), before=self.prediction_frame)
+                self._start_alignment_simulation()
+                return
+            if simulation_result is not None:
+                self.alignment_models = simulation_result["cache"]
+            fallback = (simulation_result["reconstruction"].metadata.get("alignment_fallback")
+                        if simulation_result is not None else None)
             if self.optimize_enabled.get():
                 self.optimization_summary.set("Optimizing…")
                 self.update_idletasks()
-                baseline = self._render_overlay(self.designs)
-                self.designs, self.optimization_metrics = self._optimize(self.designs)
+                if simulation_result is None:
+                    baseline = self._render_overlay(self.designs)
+                    self.designs, self.optimization_metrics = self._optimize(self.designs)
+                else:
+                    baseline = simulation_result["baseline"]
+                    self.optimization_metrics = simulation_result["metrics"]
                 self.baseline_frame.pack(side="left", padx=(0, 12), before=self.prediction_frame)
                 self._draw_overlay(self.baseline_canvas, baseline)
                 metrics = self.optimization_metrics
-                self.optimization_summary.set("RGB RMSE {:.4f} → {:.4f} · squared error reduced {:.1%}".format(
-                    metrics["baseline_rmse"], metrics["optimized_rmse"], metrics["mse_reduction_fraction"]))
+                self.optimization_summary.set("{} RMSE {:.4f} → {:.4f} · squared error reduced {:.1%}".format(
+                    "Grayscale" if SELECTABLE_SCHEMES[self._scheme_id()].monochrome else "RGB", metrics["baseline_rmse"], metrics["optimized_rmse"], metrics["mse_reduction_fraction"]))
+                if fallback:
+                    self.optimization_summary.set(self.optimization_summary.get() + " · Gaussian-only optimization; alignment unavailable")
                 if "validation_optimized" in metrics:
                     self.optimization_summary.set(self.optimization_summary.get() + " · held-out RMSE {:.4f} → {:.4f}".format(
                         metrics["validation_baseline"]["expected_mse"]**.5, metrics["validation_optimized"]["expected_mse"]**.5))
             self.design_picker.configure(values=[design["name"] for design in self.designs])
             if self.design_name.get() not in {design["name"] for design in self.designs}:
                 self.design_name.set(self.designs[0]["name"])
-            self.reconstruction = self._render_overlay(self.designs)
+            self.reconstruction = (simulation_result["reconstruction"] if simulation_result is not None
+                                   else self._render_overlay(self.designs))
             self._draw_overlay(self.pixel_canvases[1], self.reconstruction)
             self.reconstruction_summary.set("{:.1%} of display pixels clipped".format(self.reconstruction.metadata["clipped_pixel_fraction"]))
-            if self.alignment_enabled.get():
-                self.prediction_frame.configure(text="Predicted RGB — expected alignment result")
+            if self.alignment_enabled.get() and not fallback:
+                self.prediction_frame.configure(text="Predicted {} — expected alignment result".format(
+                    "grayscale" if SELECTABLE_SCHEMES[self._scheme_id()].monochrome else "RGB"))
                 model = self._alignment_model(self.designs)
-                self.ideal_reconstruction = render_gaussian_overlay(self.designs, model.fwhm, model.exposure, **self._light_options())
-                self.alignment_example = model.example(self.designs, self.example_seed)
+                self.ideal_reconstruction = (simulation_result["ideal"] if simulation_result is not None else
+                                             render_gaussian_overlay(self.designs, model.fwhm, model.exposure, **self._light_options()))
+                self.alignment_example = (simulation_result["example"] if simulation_result is not None else
+                                          model.example(self.designs, self.example_seed))
                 self.alignment_previews.pack(fill="x", pady=5, before=self.brightness_controls)
                 self.alignment_details.pack(fill="x", before=self.brightness_controls)
                 for canvas, result in zip(self.alignment_canvases, (self.ideal_reconstruction, self.reconstruction, self.alignment_example)):
                     self._draw_overlay(canvas, result)
-                self.alignment_summary.set("{} independent origami/design · zero-mean Gaussian rigid errors · 32 sampled transforms for expectation. "
+                self.alignment_summary.set(("Chunked alignment · " if model.chunked else "") + "{} independent origami/design · zero-mean Gaussian rigid errors · 32 sampled transforms for expectation. "
                     "Fractional signals; example simulates alignment only, not occupancy or photon noise. Error axes rotate with the origami.".format(model.settings.origami_per_design))
             else:
-                self.prediction_frame.configure(text="Predicted RGB — Gaussian overlay")
+                mode = "grayscale" if SELECTABLE_SCHEMES[self._scheme_id()].monochrome else "RGB"
+                self.prediction_frame.configure(text="Predicted {} — Gaussian overlay{}".format(
+                    mode, " (alignment unavailable)" if fallback else ""))
+                if fallback:
+                    self.reconstruction_summary.set(self.reconstruction_summary.get() + " · Ideal alignment only")
+                    self.alignment_summary.set("Showing a Gaussian preview at your requested FWHM. Alignment uncertainty exceeds this layout's size limit; Gaussian overlap optimization remains available.")
+                    self.alignment_details.pack(fill="x", before=self.brightness_controls)
             area_gain = self.reconstruction.metadata.get("canvas_area_gain", 1)
             self.reconstruction_summary.set(self.reconstruction_summary.get() + " · canvas exposure compensation {:g}×".format(area_gain))
             self._draw_design()
             self._brightness_changed()
         except ValueError as exc:
+            self._stop_simulation()
+            if background or simulation_result is not None:
+                self.simulation_status.set("Simulation failed: {}".format(exc))
             self.designs = []
             self.reconstruction = None
             self.baseline_frame.pack_forget()
@@ -1109,7 +1342,7 @@ class RGBImageView(ttk.Frame):
             self.design_summary.set("")
             self.design_canvas.delete("all")
             self.site_tree.delete(*self.site_tree.get_children())
-        self._refresh_comparison()
+        self._refresh_comparison(defer=simulation_result is not None)
 
     def _pixel_bounds(self, x, y, info=None, draw_width=288):
         info = self.image_geometry if info is None else info
@@ -1171,8 +1404,11 @@ class RGBImageView(ttk.Frame):
                 design["local_x_shift"], design["local_y_shift"]))
         canvas = self.design_canvas
         canvas.delete("all")
-        color = [0, 0, 0]
-        color[design["channel"]] = 255
+        monochrome = encoding_scheme(design["encoding_scheme"]).monochrome
+        color = [255, 255, 255] if monochrome else [0, 0, 0]
+        if not monochrome:
+            color[design["channel"]] = 255
+        background = (24, 24, 24) if monochrome else (21, 25, 29)
         rotation = int(self.rotation.get())
         portrait = rotation in (90, 270)
         canvas.configure(width=260 if portrait else 590, height=570 if portrait else 235)
@@ -1188,7 +1424,7 @@ class RGBImageView(ttk.Frame):
                 if c == 0:
                     canvas.create_text(*position(-8, r * 5.1), text=row, fill="white")
                 fraction = design["site_fractions"].get(site_name(row, "{:02d}".format(12-c)), 0)
-                shade = "#{:02x}{:02x}{:02x}".format(*(round(bg*(1-fraction)+fg*fraction) for bg, fg in zip((21,25,29),color)))
+                shade = "#{:02x}{:02x}{:02x}".format(*(round(bg*(1-fraction)+fg*fraction) for bg, fg in zip(background,color)))
                 canvas.create_oval(x-8, y-8, x+8, y+8, fill=shade, outline="#748087",
                                    tags=("site_{}_{:02d}".format(row, 12-c),))
                 if [row, "{:02d}".format(12-c)] in design.get("always_on_sites", []):
@@ -1199,7 +1435,7 @@ class RGBImageView(ttk.Frame):
         for site in design["image_sites"]:
             self.site_tree.insert("", "end", values=(
                 site["row"], site["column"],
-                ",".join(map(str, site["rgb"])), "{:.4g}".format(site["replacement_fraction"]*100),
+                site["channel_value"] if monochrome else ",".join(map(str, site["rgb"])), "{:.4g}".format(site["replacement_fraction"]*100),
                 site["replacement_nl"], site["original_nl"]))
 
     def _highlight_selected_site(self, _event=None):
@@ -1288,6 +1524,9 @@ class RGBImageView(ttk.Frame):
             self.app._open_path(self.alignment_template_directory)
 
     def _prepare(self):
+        if self._simulation_cancel is not None:
+            self.status.set("Wait for the simulation to finish before preparing runs.")
+            return
         if not self.designs:
             messagebox.showinfo("Image required", "Upload an image and enter valid transfer volumes first.", parent=self)
             return
@@ -1296,14 +1535,14 @@ class RGBImageView(ttk.Frame):
             wells = all_384_wells()
             plate = self.destination_plate.get().strip()
             if not plate or not self.source_plate_type.get().strip() or not self.replacement_plate.get().strip() or not self.biotin_plate.get().strip():
-                raise ValueError("Enter RGB destination/source plate names and source plate type.")
+                raise ValueError("Enter destination/source plate names and source plate type.")
             used = self._used_wells(plate)
             available = [well for well in wells if well not in used]
             settings = {**self._transfer_limits(), "destination_plate_name": plate, "source_plate_type": self.source_plate_type.get().strip(),
                         "max_destination_volume_ul": float(self.max_volume.get()),
                         "transfers_per_source": 1, "hinge_type": next(key for key, label in HINGE_TYPES.items() if label == self.hinge_type.get())}
             if not math.isfinite(settings["max_destination_volume_ul"]) or settings["max_destination_volume_ul"] <= 0:
-                raise ValueError("RGB maximum well volume must be finite and positive.")
+                raise ValueError("Maximum well volume must be finite and positive.")
             mixing = self._mixing_settings()
             runs = prepare_runs(self.designs, self.base_path.get(),
                                 {color: (view.path_var.get(), view.plate_name) for color, view in self.color_views.items()},
@@ -1346,8 +1585,8 @@ class RGBImageView(ttk.Frame):
                              "quantized_rgb_role": "per-site intensity reference; predicted appearance is gaussian_reconstruction",
                              "gaussian_reconstruction": deepcopy(self.reconstruction.metadata),
                              "optimization": deepcopy(self.optimization_metrics),
-                             "alignment_simulation": deepcopy(self.reconstruction.metadata) if self.alignment_enabled.get() else None,
-                             "alignment_example_seed": self.example_seed if self.alignment_enabled.get() else None,
+                             "alignment_simulation": deepcopy(self.reconstruction.metadata) if self.alignment_example is not None else None,
+                             "alignment_example_seed": self.example_seed if self.alignment_example is not None else None,
                              "settings": settings, "mixing": mixing,
                              "rgb_run_settings": {key: variable.get() for key, variable in self.run_variables.items()},
                              "designs": deepcopy(self.designs)}
@@ -1436,7 +1675,7 @@ class RGBImageView(ttk.Frame):
                 example_seed=self.example_seed, regularization_strength=self._regularization_value())
             settings.validate()
             self.status.set("Choose a filename for the {}.".format(label))
-            destination = filedialog.asksaveasfilename(parent=parent, title="Run similarity optimization" if robustness else "Export similarity graph" if similarity else "Export exhaustive RGB report",
+            destination = filedialog.asksaveasfilename(parent=parent, title="Run similarity optimization" if robustness else "Export similarity graph" if similarity else "Export exhaustive image report",
                 defaultextension=".pdf", filetypes=[("PDF report", "*.pdf")],
                 initialfile="rgb_similarity_optimization.pdf" if robustness else "rgb_similarity_comparison.pdf" if similarity else "exhaustive_rgb_report.pdf")
             if destination:
@@ -1613,6 +1852,7 @@ class EncodingComparison(tk.Toplevel):
         loading = ttk.Frame(self)
         loading.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Button(loading, text="Compare tiling / local-shift sweeps…", command=owner._compare_tiling).pack(anchor="w")
+        ttk.Button(loading, text="Refresh comparison", command=self.refresh).pack(anchor="w")
         self.progress_text = tk.StringVar(value="Ready to compare")
         ttk.Label(loading, textvariable=self.progress_text).pack(anchor="w")
         self.progress = ttk.Progressbar(loading, mode="determinate", maximum=len(ENCODING_SCHEMES))
@@ -1663,6 +1903,12 @@ class EncodingComparison(tk.Toplevel):
     def use_scheme(self, scheme_id):
         if self.owner._scheme_id() != scheme_id:
             self.owner.scheme.set(ENCODING_SCHEMES[scheme_id].label)
+
+    def mark_stale(self):
+        self.progress_text.set("Alignment settings changed — click Refresh comparison to update these previews.")
+        self.summary.set("These comparison previews use the previous settings.")
+        for button in self.buttons.values():
+            button.configure(state="disabled")
 
     def _show_progress(self, completed, message):
         self.progress.configure(value=completed)

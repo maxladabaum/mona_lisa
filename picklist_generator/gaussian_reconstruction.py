@@ -79,8 +79,10 @@ def render_gaussian_overlay(designs, fwhm_nm=DEFAULT_FWHM_NM, exposure=DEFAULT_E
             weights[index_y[y], index_x[x], channel] += fraction
         kernel_x = np.exp(-.5 * ((xs[:, None] - np.asarray(source_x)[None, :]) / sigma)**2)
         kernel_y = np.exp(-.5 * ((ys[:, None] - np.asarray(source_y)[None, :]) / sigma)**2)
-        for channel in range(3):
+        for channel in range(info['channel_count']):
             density[:, :, channel] = (kernel_y @ weights[:, :, channel] @ kernel_x.T) / (2 * math.pi * sigma**2)
+    if info['channel_count'] == 1:
+        density = np.repeat(density[..., :1], 3, axis=2)
     density = np.rot90(density, -(rotation // 90)).copy()
     scale = abundance_scale(scheme_id, normalize_designs)
     area_gain = canvas_area_gain(scheme_id, compensate_area)
@@ -90,6 +92,7 @@ def render_gaussian_overlay(designs, fwhm_nm=DEFAULT_FWHM_NM, exposure=DEFAULT_E
     portrait = rotation in (90, 270)
     metadata = {
         "model": "sum_of_unit_integral_isotropic_gaussians",
+        "image_mode": info['image_mode'], "channel_count": info['channel_count'],
         "linear_light": linear_light, "normalize_designs": normalize_designs,
         "compensate_area": compensate_area, "canvas_area_gain": area_gain,
         "design_abundance_scale": scale, "linear_rgb_gain": gain,

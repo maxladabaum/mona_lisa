@@ -13,13 +13,13 @@ def from_template(payload, current=None):
     model = normalize_logical_bit_schema(raw, 8, 12)
     groups = model['logical_bits']
     count = len(groups)
-    if count not in (6, 7, 9):
-        raise ValueError('RGB needs exactly 6, 7, or 9 Digital bit groups on an 8-row × 12-column template.')
+    if count not in BARCODE_SCHEMA_KEYS:
+        raise ValueError('RGB needs between 2 and 48 Digital bit groups on an 8-row × 12-column template.')
     # Named bits remain stable when the editor removes and re-appends an edited
     # group. Unnumbered legacy schemas retain their explicit logical_bits order.
     numbers = []
     for group in groups:
-        match = re.fullmatch(r'bit[\s_-]*([1-9])', group['label'], re.IGNORECASE)
+        match = re.fullmatch(r'bit[\s_-]*([1-9][0-9]*)', group['label'], re.IGNORECASE)
         numbers.append(int(match[1]) if match else None)
     if any(n is not None for n in numbers):
         if set(numbers) != set(range(1, count+1)):
