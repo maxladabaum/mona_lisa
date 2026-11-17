@@ -1,5 +1,9 @@
 # DNA PAINT Picasso-Style ROI Analyzer
 
+For installation, a feature overview, and the complete picklist-to-analysis
+workflow, start with the [repository user guide](../README.md). This manual
+provides detailed controls, algorithms, and export conventions.
+
 Mona Lisa edition, synced with the standard local repository at `a0c23d0`
 (2026-10-11). Retains composite reconstruction, vertical template mirroring,
 0°/180° orientation checks and ambiguity exclusion, and coarse-detection overlays.

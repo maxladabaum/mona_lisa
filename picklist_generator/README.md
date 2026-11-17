@@ -1,5 +1,9 @@
 # Echo Picklist Generator
 
+For installation, a feature overview, and the complete picklist-to-analysis
+workflow, start with the [repository user guide](../README.md). This manual
+provides detailed source mappings, encoding options, and export conventions.
+
 Version **1.0.1** — corrected PAINT P1 and PAINT R1 row-15 replacement targets.
 
 Mona Lisa edition of the standard Echo picklist tools. The visible replacement
@@ -142,13 +146,17 @@ uses for its desktop interface.
   distribution's `python3-tk` package first.
 - Terminal: run `python3 picklist_app.py` from this folder.
 
-The launchers create a local `.venv` on first use. There are no third-party
-Python packages to download. Generated files default to `generated_output/`.
+The launchers create a local `.venv` on first use and install `requirements.txt`
+when their image-library import check fails. Image processing, plotting, and
+research features use Pillow, NumPy, Matplotlib, and SciPy. After updating an
+existing environment, run `python -m pip install -r requirements.txt` with that
+environment active to install any newly required dependencies.
+Generated files default to `generated_output/`.
 Every successful generation creates a new date-and-time folder, for example
 `generated_output/2026-08-10_14-32-07/`, containing that run's picklist and
 mixing recipe. A numeric suffix is added if two runs occur in the same second.
 
-On first launch, the app creates two local JSON files automatically from the
+On first launch, the app creates three local JSON files automatically from the
 bundled `.example.json` defaults:
 
 - `config.json` stores the most recent output paths, the wells used by the last
