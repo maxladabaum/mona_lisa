@@ -122,6 +122,7 @@ class RGBImageView(ttk.Frame):
         except ValueError:
             saved_scheme = DEFAULT_SCHEME
         self.image_mode = tk.StringVar(value="Black & white" if SELECTABLE_SCHEMES[saved_scheme].monochrome else "RGB")
+        self.redundancy = tk.StringVar(value=str(SELECTABLE_SCHEMES[saved_scheme].redundancy))
         self.image_mode_summary = tk.StringVar()
         self.barcode_bit_count = tk.StringVar(value=str(SELECTABLE_SCHEMES[saved_scheme].bit_count))
         self.scheme = tk.StringVar(value=SELECTABLE_SCHEMES[saved_scheme].label)
@@ -163,6 +164,14 @@ class RGBImageView(ttk.Frame):
         mode_picker.pack(side="left", padx=8)
         mode_picker.bind("<<ComboboxSelected>>", self._image_mode_changed)
         ttk.Label(mode_bar, textvariable=self.image_mode_summary).pack(side="left")
+        self.redundancy_controls = ttk.Frame(self)
+        self.redundancy_controls.pack(fill="x", pady=(6, 0))
+        ttk.Label(self.redundancy_controls, text="Redundancy (unique barcodes per location)").pack(side="left")
+        self.redundancy_picker = ttk.Entry(self.redundancy_controls, textvariable=self.redundancy, width=5)
+        self.redundancy_picker.pack(side="left", padx=8)
+        self.redundancy_picker.bind("<Return>", self._redundancy_changed)
+        self.redundancy_picker.bind("<FocusOut>", self._redundancy_changed)
+        ttk.Label(self.redundancy_controls, text="Enter to apply · each copy uses a separate synthesis well").pack(side="left")
         scheme_bar = ttk.Frame(self)
         scheme_bar.pack(fill="x", pady=(6, 0))
         ttk.Label(scheme_bar, text="Barcode bits").pack(side="left")
@@ -723,6 +732,16 @@ class RGBImageView(ttk.Frame):
             float(self.gaussian_fwhm.get()) if fwhm_nm is None else float(fwhm_nm),
             float(self.gaussian_exposure.get()), self._light_options(), **options)
 
+    def _open_split_pool(self):
+        from split_pool_view import SplitPoolWindow
+        window = getattr(self, "_split_pool_window", None)
+        if window is None or not window.winfo_exists():
+            self._split_pool_window = SplitPoolWindow(self)
+            self._split_pool_window.pack(fill="both", expand=True)
+        notebook = getattr(self, "_rgb_subtabs", None)
+        if notebook is not None and notebook.select() != str(self._split_pool_page):
+            notebook.select(self._split_pool_page)
+
     def _stop_simulation(self):
         if self._simulation_cancel is not None:
             self._simulation_cancel.set()
@@ -735,6 +754,9 @@ class RGBImageView(ttk.Frame):
             self._simulation_poll = None
 
     def destroy(self):
+        window = getattr(self, "_split_pool_window", None)
+        if window is not None and window.winfo_exists():
+            window.close()
         self._stop_simulation()
         if self._simulation_executor is not None:
             self._simulation_executor.shutdown(wait=False, cancel_futures=True)
@@ -979,6 +1001,25 @@ class RGBImageView(ttk.Frame):
     def _scheme_id(self):
         return next(key for key, scheme in SELECTABLE_SCHEMES.items() if scheme.label == self.scheme.get())
 
+    def _redundancy_changed(self, _event=None):
+        current = SELECTABLE_SCHEMES[self._scheme_id()]
+        if not current.monochrome:
+            return
+        try:
+            value = int(self.redundancy.get())
+            choices = schemes_for_bits(current.bit_count, True, value)
+            key = next((key for key, scheme in choices.items()
+                        if (scheme.tile_columns, scheme.tile_rows) == (current.tile_columns, current.tile_rows)), None)
+            if key is None:
+                raise ValueError("This tile layout needs {} barcodes. Reduce Tiles or increase Barcode bits first (maximum 384 runs).".format(current.tile_count * value))
+        except ValueError as exc:
+            self.redundancy.set(str(current.redundancy))
+            messagebox.showerror("Invalid redundancy", str(exc), parent=self)
+            return
+        self.redundancy.set(str(value))
+        if value != current.redundancy:
+            self.scheme.set(choices[key].label)
+
     def _image_mode_changed(self, _event=None):
         current = SELECTABLE_SCHEMES[self._scheme_id()]
         choices = self._tile_encoding_choices(current.bit_count, self.image_mode.get() == "Black & white")
@@ -999,6 +1040,8 @@ class RGBImageView(ttk.Frame):
         if current.bit_count == count:
             self._update_scheme_controls()
             return
+        if current.monochrome and current.redundancy > min(1 << count, 384):
+            self.redundancy.set("1")
         choices = self._tile_encoding_choices(count, current.monochrome)
         matching = [key for key, scheme in choices.items()
                     if (scheme.tile_columns, scheme.tile_rows) == (current.tile_columns, current.tile_rows)
@@ -1010,9 +1053,8 @@ class RGBImageView(ttk.Frame):
         return scheme_pixel_summary(key, getattr(self, "_ranking_image_size", (1, 1)),
                                     self.fit_mode.get(), self._active_columns())
 
-    @staticmethod
-    def _tile_encoding_choices(bit_count, monochrome=False):
-        return {key: scheme for key, scheme in direct_tile_schemes(bit_count, monochrome).items()
+    def _tile_encoding_choices(self, bit_count, monochrome=False):
+        return {key: scheme for key, scheme in direct_tile_schemes(bit_count, monochrome, int(self.redundancy.get()) if monochrome else 1).items()
                 if "shift" not in scheme.label.lower()}
 
     def _refresh_scheme_choices(self):
@@ -1037,7 +1079,7 @@ class RGBImageView(ttk.Frame):
 
     def _rank_scheme_ids(self, keys=None):
         current = SELECTABLE_SCHEMES[self._scheme_id()]
-        allowed = schemes_for_bits(current.bit_count, current.monochrome)
+        allowed = schemes_for_bits(current.bit_count, current.monochrome, current.redundancy)
         keys = allowed if keys is None else [key for key in keys if key in allowed]
         return ranked_schemes(keys, getattr(self, "_ranking_image_size", (1, 1)),
                               self.fit_mode.get(), self._active_columns())
@@ -1052,7 +1094,8 @@ class RGBImageView(ttk.Frame):
     def _tile_layouts(self, count, bit_count=None):
         if bit_count is None:
             bit_count = SELECTABLE_SCHEMES[self._scheme_id()].bit_count
-        schemes = direct_tile_schemes(bit_count, SELECTABLE_SCHEMES[self._scheme_id()].monochrome)
+        current = SELECTABLE_SCHEMES[self._scheme_id()]
+        schemes = direct_tile_schemes(bit_count, current.monochrome, current.redundancy)
         keys = self._rank_scheme_ids([key for key, s in schemes.items() if s.tile_count == count])
         return {"{} × {}".format(schemes[key].tile_columns, schemes[key].tile_rows): key for key in keys}
 
@@ -1081,7 +1124,7 @@ class RGBImageView(ttk.Frame):
         scheme = SELECTABLE_SCHEMES[key]
         # Existing saved sweep layouts can also have one design per color per
         # tile. Expose their grid without forcing the user to reselect a count.
-        direct_tiles = key in direct_tile_schemes(scheme.bit_count, scheme.monochrome)
+        direct_tiles = key in direct_tile_schemes(scheme.bit_count, scheme.monochrome, scheme.redundancy)
         if direct_tiles:
             self.tile_count.set(str(scheme.tile_count))
             layouts = self._tile_layouts(scheme.tile_count, scheme.bit_count)
@@ -1109,6 +1152,7 @@ class RGBImageView(ttk.Frame):
 
     def _update_image_mode_controls(self):
         monochrome = SELECTABLE_SCHEMES[self._scheme_id()].monochrome
+        self.redundancy_picker.configure(state="normal" if monochrome else "disabled")
         for color, group in self.concentration_groups.items():
             group.pack_forget()
             if not monochrome or color == "R1 R":
@@ -1134,10 +1178,10 @@ class RGBImageView(ttk.Frame):
         if schema_key not in self.barcode_schema:
             self.barcode_schema[schema_key] = default_barcode_schema(bit_count)[schema_key]
         current = SELECTABLE_SCHEMES[self._scheme_id()]
-        counts = sorted({scheme.tile_count for scheme in direct_tile_schemes(current.bit_count, current.monochrome).values()})
+        counts = sorted({scheme.tile_count for scheme in self._tile_encoding_choices(current.bit_count, current.monochrome).values()})
         self.tile_count_label.configure(text="Tiles" if current.monochrome else "Tiles per color")
         self.image_mode_summary.set(
-            "Grayscale · 1 barcode per tile · up to {} tiles".format(max(counts))
+            "Grayscale · {} barcodes per tile · up to {} tiles".format(current.redundancy, max(counts))
             if current.monochrome else "3 color channels · 3 barcodes per tile")
         self.tile_count_picker.configure(values=("Use encoding scheme", *map(str, counts)))
         self._refresh_scheme_choices()
@@ -1167,6 +1211,7 @@ class RGBImageView(ttk.Frame):
             self.scheme.set(SELECTABLE_SCHEMES[self._last_valid_scheme].label)
             messagebox.showerror("Different barcode bit count", "Choose the matching Barcode bits before selecting this scheme.", parent=self)
             return
+        self.redundancy.set(str(SELECTABLE_SCHEMES[self._scheme_id()].redundancy))
         self.image_mode.set("Black & white" if SELECTABLE_SCHEMES[self._scheme_id()].monochrome else "RGB")
         self._update_scheme_controls()
         self.app.config["image_encoding_scheme"] = self._scheme_id()

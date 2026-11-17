@@ -1,0 +1,4 @@
+__pycache__/
+.pytest_cache/
+# Reproducible experimental artifacts are local; retain source/configuration.
+results/

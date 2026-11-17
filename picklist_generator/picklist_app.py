@@ -2345,10 +2345,23 @@ class PicklistApp(tk.Tk):
         self.rgb_image_page = image_page
         main_tabs.add(image_page, text="6. RGB Image")
         main_tabs.add(template_page, text="7. Origami Templates")
-        image_scroll = ScrollFrame(image_page)
+        self.rgb_subtabs = ttk.Notebook(image_page)
+        self.rgb_subtabs.pack(fill="both", expand=True)
+        generator_page = ttk.Frame(self.rgb_subtabs)
+        analysis_page = ttk.Frame(self.rgb_subtabs)
+        self.rgb_subtabs.add(generator_page, text="Image generator")
+        self.rgb_subtabs.add(analysis_page, text="Split–pool encoding analysis")
+        image_scroll = ScrollFrame(generator_page)
         image_scroll.pack(fill="both", expand=True)
         self.rgb_image_view = RGBImageView(image_scroll.inner, self, APP_DIR, STORAGE_STATE_PATH, PLATE_STATE_PATH)
         self.rgb_image_view.pack(fill="both", expand=True)
+        analysis_scroll = ScrollFrame(analysis_page)
+        analysis_scroll.pack(fill="both", expand=True)
+        self.rgb_image_view._split_pool_parent = analysis_scroll.inner
+        self.rgb_image_view._split_pool_page = analysis_page
+        self.rgb_image_view._rgb_subtabs = self.rgb_subtabs
+        self.rgb_subtabs.bind("<<NotebookTabChanged>>", lambda event:
+            self.rgb_image_view._open_split_pool() if self.rgb_subtabs.select() == str(analysis_page) and self.rgb_image_view.winfo_exists() else None)
         from barcode_guard_view import BarcodeGuard
         self.barcode_guard = BarcodeGuard(replacement_content, self, STORAGE_STATE_PATH.with_name("barcode_registry.json"))
         self.barcode_guard.pack(side="top", fill="x", padx=12, after=set_tabs)

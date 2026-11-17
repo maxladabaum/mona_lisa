@@ -149,7 +149,10 @@ def test_gui_restores_saved_mappings_and_locks_region(tmp_path):
     save_reconstruction_session(path, *inputs())
     owner = load_reconstruction_session(path)
     config = owner.origami_composite_configuration
-    window = SimpleNamespace(reconstruction_owner=owner,
+    from binary_occupancy import MODES
+    restored_occupancy = []
+    window = SimpleNamespace(reconstruction_owner=owner, reconstruction_mode=Variable(MODES[2]),
+                             apply_occupancy_settings=restored_occupancy.append,
                              variables={key: Variable(0) for key in asdict(settings())
                                         if key not in ('average_species', 'mirror_x', 'mirror_y', 'normalize_overlap')},
                              average=Variable(False), normalize_overlap=Variable(False), mirror_x=Variable(False), mirror_y=Variable(False),
@@ -157,8 +160,10 @@ def test_gui_restores_saved_mappings_and_locks_region(tmp_path):
                              refresh_templates=lambda: None, status=Variable(''))
     states = []
     window.region_widgets = {key: SimpleNamespace(configure=lambda **kwargs: states.append(kwargs['state'])) for key in REGION_KEYS}
-    apply = window_method('apply_configuration', dict(CompositeSettings=CompositeSettings, REGION_KEYS=REGION_KEYS))
+    apply = window_method('apply_configuration', dict(CompositeSettings=CompositeSettings, REGION_KEYS=REGION_KEYS, MODES=MODES))
     apply(window, config)
+    assert window.reconstruction_mode.get() == MODES[0]
+    assert restored_occupancy == [{}]
     assert window.batch_manifest == config['rgb_batch_manifest']
     assert {key: var.get() for key, var in window.rows['red'].items()} == config['mappings']['red']
     assert states == ['readonly'] * len(REGION_KEYS)

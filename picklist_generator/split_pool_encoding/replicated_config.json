@@ -1,0 +1,6 @@
+{
+  "bits": 8, "positions": 40, "seed": 17,
+  "restarts": 3, "alternations": 6, "maxiter": 80,
+  "realizations": 2, "measurement_repeats": 20,
+  "compare_fixed": true, "figures": false
+}

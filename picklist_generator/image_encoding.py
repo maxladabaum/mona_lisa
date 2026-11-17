@@ -171,6 +171,7 @@ class EncodingScheme:
     tiles_y: int = 0
     position_codebook: bool = False
     monochrome: bool = False
+    redundancy: int = 1
 
     @property
     def tile_columns(self):
@@ -206,7 +207,7 @@ class EncodingScheme:
 
     @property
     def design_count(self):
-        return len(self.channels) * self.x_states * self.y_states
+        return len(self.channels) * self.x_states * self.y_states * self.redundancy
 
 
 DEFAULT_SCHEME = "fixed_4x4"
@@ -315,23 +316,27 @@ SELECTABLE_SCHEMES = {**ENCODING_SCHEMES, **SWEEP_SCHEMES, **TILE_COUNT_SCHEMES,
 _generated_bit_counts = {6, 7, 9}
 
 
-def schemes_for_bits(bit_count, monochrome=False):
+def schemes_for_bits(bit_count, monochrome=False, redundancy=1):
     validate_bit_count(bit_count)
+    if type(redundancy) is not int or not 1 <= redundancy <= min(1 << bit_count, 384):
+        raise ValueError("Redundancy must be a whole number within the barcode capacity (maximum 384).")
+    if not monochrome and redundancy != 1:
+        raise ValueError("Redundancy is only available in black & white mode.")
     if monochrome:
-        if (bit_count, "mono") not in _generated_bit_counts:
-            for count in range(1, min(1 << bit_count, 3 * MAX_TILES_PER_COLOR) + 1):
+        if (bit_count, "mono", redundancy) not in _generated_bit_counts:
+            for count in range(1, min(1 << bit_count, 3 * MAX_TILES_PER_COLOR) // redundancy + 1):
                 for columns in range(1, count + 1):
                     if count % columns:
                         continue
                     rows = count // columns
-                    key = "mono_{}_tiles_{}x{}".format(bit_count, columns, rows)
+                    key = "mono_{}_tiles_{}x{}".format(bit_count, columns, rows) + ("_r{}".format(redundancy) if redundancy > 1 else "")
                     SELECTABLE_SCHEMES[key] = EncodingScheme(
-                        "{}-bit black & white · {} tiles · {}×{} grid · {} runs".format(bit_count, count, columns, rows, count),
+                        "{}-bit black & white · {} tiles · {}×{} grid · {} runs".format(bit_count, count, columns, rows, count * redundancy) + (" · {} copies per tile".format(redundancy) if redundancy > 1 else ""),
                         columns, rows, bit_count=bit_count, tiled=count > 1,
-                        tiles_x=columns, tiles_y=rows, monochrome=True)
-            _generated_bit_counts.add((bit_count, "mono"))
+                        tiles_x=columns, tiles_y=rows, monochrome=True, redundancy=redundancy)
+            _generated_bit_counts.add((bit_count, "mono", redundancy))
         return {key: scheme for key, scheme in SELECTABLE_SCHEMES.items()
-                if scheme.bit_count == bit_count and scheme.monochrome}
+                if scheme.bit_count == bit_count and scheme.monochrome and scheme.redundancy == redundancy}
     if bit_count not in _generated_bit_counts:
         # Bound image/run sizes to the existing 128-position production limit.
         # Fixed codes reserve two color bits; joint codes share the whole budget.
@@ -355,15 +360,15 @@ def schemes_for_bits(bit_count, monochrome=False):
     return {key: scheme for key, scheme in SELECTABLE_SCHEMES.items() if scheme.bit_count == bit_count and not scheme.monochrome}
 
 
-def direct_tile_schemes(bit_count, monochrome=False):
-    return {key: scheme for key, scheme in schemes_for_bits(bit_count, monochrome).items()
+def direct_tile_schemes(bit_count, monochrome=False, redundancy=1):
+    return {key: scheme for key, scheme in schemes_for_bits(bit_count, monochrome, redundancy).items()
             if scheme.x_states == scheme.tile_columns and scheme.y_states == scheme.tile_rows}
 
 
 def encoding_scheme(scheme_id=DEFAULT_SCHEME):
-    mono = re.fullmatch(r"mono_(\d+)_tiles_\d+x\d+", scheme_id)
+    mono = re.fullmatch(r"mono_(\d+)_tiles_\d+x\d+(?:_r(\d+))?", scheme_id)
     if mono and scheme_id not in SELECTABLE_SCHEMES:
-        schemes_for_bits(int(mono[1]), monochrome=True)
+        schemes_for_bits(int(mono[1]), monochrome=True, redundancy=int(mono[2] or 1))
     match = re.fullmatch(r"bits_(\d+)_(joint|fixed)_(tiles|shifts)_\d+x\d+", scheme_id)
     if match and scheme_id not in SELECTABLE_SCHEMES:
         schemes_for_bits(int(match[1]))
@@ -373,10 +378,15 @@ def encoding_scheme(scheme_id=DEFAULT_SCHEME):
         raise ValueError("Unknown image encoding scheme: {}".format(scheme_id)) from exc
 
 
-def barcode_bits(color, x_shift, y_shift, scheme_id=DEFAULT_SCHEME):
+def barcode_bits(color, x_shift, y_shift, scheme_id=DEFAULT_SCHEME, replica_index=0):
     scheme = encoding_scheme(scheme_id)
     if color not in scheme.channels or not 0 <= x_shift < scheme.x_states or not 0 <= y_shift < scheme.y_states:
         raise ValueError("Color or shift is outside the selected encoding scheme.")
+    if type(replica_index) is not int or not 0 <= replica_index < scheme.redundancy:
+        raise ValueError("Replica index is outside the selected encoding scheme.")
+    if scheme.monochrome:
+        code = replica_index * scheme.x_states * scheme.y_states + y_shift * scheme.x_states + x_shift
+        return [(code >> shift) & 1 for shift in range(scheme.bit_count - 1, -1, -1)]
     if scheme.position_codebook:
         code = y_shift * scheme.x_states + x_shift
         return list(map(int, COLOR_BITS[color])) + [(code >> bit) & 1 for bit in range(scheme.bit_count - 3, -1, -1)]
@@ -541,13 +551,14 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=
     rotate_point(0, 0, 0, 0, rotation_degrees)
     portrait = rotation_degrees in (90, 270)
     codebook = []
-    for color in scheme.channels:
-        for y in range(scheme.y_states):
-            for x in range(scheme.x_states):
-                bits = barcode_bits(color, x, y, scheme_id)
-                codebook.append({"code": int("".join(map(str, bits)), 2), "bits": bits,
-                                 "color": color, "x_shift": x, "y_shift": y,
-                                 **placement(scheme,x,y,columns)})
+    for replica_index in range(scheme.redundancy):
+        for color in scheme.channels:
+            for y in range(scheme.y_states):
+                for x in range(scheme.x_states):
+                    bits = barcode_bits(color, x, y, scheme_id, replica_index)
+                    codebook.append({"code": int("".join(map(str, bits)), 2), "bits": bits, "replica_index": replica_index,
+                                     "color": color, "x_shift": x, "y_shift": y,
+                                     **placement(scheme,x,y,columns)})
     field_x = scheme.tile_columns * span * EXTENSION_COLUMN_SPACING_NM
     field_y = scheme.tile_rows * 8 * EXTENSION_ROW_SPACING_NM
     centers_x, edges_x, weights_x = sampling_axis(scheme.x_counts,span,EXTENSION_COLUMN_SPACING_NM,
@@ -574,7 +585,7 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=
                                               if scheme.parity else "color_code * {} + x_shift * {} + y_shift".format(scheme.x_states*scheme.y_states,scheme.y_states))),
         "channel_indices": scheme.channels, "codebook": codebook,
         "image_mode": "grayscale" if scheme.monochrome else "rgb",
-        "channel_count": len(scheme.channels),
+        "channel_count": len(scheme.channels), "redundancy": scheme.redundancy,
         # Large capacities cannot be materialized; the codebook and count
         # describe the complement without allocating up to 2**48 integers.
         "reserved_codes": (sorted(set(range(1 << scheme.bit_count)) - {entry["code"] for entry in codebook})
@@ -637,8 +648,8 @@ def geometry(scheme_id=DEFAULT_SCHEME, rotation_degrees=0, active_image_columns=
         result.pop('y_shift_bits', None)
     if scheme.monochrome:
         result.update(encoding_mode="monochrome_tile_codebook",
-                      code_formula="y_shift * x_states + x_shift",
-                      bit_meaning="All barcode bits identify tile position; one grayscale channel uses R1 R.")
+                      code_formula="replica_index * x_states * y_states + y_shift * x_states + x_shift",
+                      bit_meaning="Barcode bits identify tile position and redundant copy; one grayscale channel uses R1 R.")
     return result
 
 
@@ -885,56 +896,58 @@ def compile_designs(pixels, base_volume, multipliers, scheme_id=DEFAULT_SCHEME, 
             plate_default_nm=target, desired_concentration_nm=target,
             base_desired_concentration_nm=reference_target, plate_relative_transfers=plate_relative_transfers,
             base_concentration_nm=base_concentration_nm, source_concentration_nm=stock)
-        for y_shift in range(scheme.y_states):
-            for x_shift in range(scheme.x_states):
-                bits = barcode_bits(color, x_shift, y_shift, scheme_id)
-                position = placement(scheme,x_shift,y_shift,columns)
-                fractions = {site_name(*site): 1.0 for site in permanent_sites}
-                for state, sites in zip(bits, bit_sites):
-                    for row, column in sites:
-                        fractions[site_name(row, column)] = float(state)
-                sites = []
-                for row_index, row in enumerate(ROWS):
-                    for column_index, column in enumerate(columns):
-                        x, y = column_index * scheme.x_states + x_shift, row_index * scheme.y_states + y_shift
-                        if scheme.tiled:
-                            x = len(columns)*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
-                            y = 8*sum(scheme.y_counts[:position["quadrant_y"]]) + row_index*position["local_y_states"] + position["local_y_shift"]
-                        value = pixels[y][x][channel]
-                        fraction = min(grid["allowed_fractions"], key=lambda f: (abs(f-float(intensity_lut[value])), -f))
-                        name = site_name(row, column)
-                        fractions[name] = fraction
-                        display_x, display_y = rotate_point(x, y, width - 1, height - 1, rotation_degrees)
-                        x_nm,y_nm = info["pixel_centers_x_nm"][x],info["pixel_centers_y_nm"][y]
-                        display_x_nm, display_y_nm = rotate_point(x_nm,y_nm,
-                            info["center_span_x_nm"],info["center_span_y_nm"],rotation_degrees)
-                        sites.append({
-                            "display_pixel_x": display_x, "display_pixel_y": display_y,
-                            "display_x_nm": display_x_nm, "display_y_nm": display_y_nm,
-                            "name": name, "row": row, "column": column,
-                            "pixel_x": x, "pixel_y": y, "rgb": pixels[y][x][:],
-                            "x_nm": x_nm, "y_nm": y_nm,
-                            "channel_value": value, "replacement_fraction": fraction,
-                            "replacement_nl": round(grid["full_replacement_nl"] * fraction / transfer_increment_nl) * transfer_increment_nl,
-                            "original_nl": round(grid["full_original_nl"] * (1 - fraction) / transfer_increment_nl) * transfer_increment_nl,
-                        })
-                suffix = "" if scheme_id == DEFAULT_SCHEME else "_{}x{}".format(scheme.x_states,scheme.y_states)
-                display_channel = "Grayscale" if scheme.monochrome else color.replace(" ", "_")
-                design_name = ("{}{}_Q{}_X{}_Y{}".format(display_channel,suffix,position["quadrant"],position["local_x_shift"],position["local_y_shift"])
-                               if scheme.tiled else "{}{}_X{}_Y{}".format(display_channel,suffix,x_shift,y_shift))
-                designs.append({
-                    "name": design_name,
-                    "origami_rotation_degrees_clockwise": rotation_degrees,
-                    "linear_light": linear_light, "encoding_scheme": scheme_id, "active_image_columns": columns[:],
-                    "image_mode": "grayscale" if scheme.monochrome else "rgb",
-                    "active_canvas_offset_nm": [(6-int(columns[0]))*EXTENSION_COLUMN_SPACING_NM, 0], "barcode_code": int("".join(map(str, bits)), 2),
-                    "color": color, "channel": channel, "x_shift": x_shift, "y_shift": y_shift,
-                    **position,
-                    "always_on_sites": [list(site) for site in permanent_sites],
-                    "bits": [int(bit) for bit in bits], "barcode_sites": [[list(site) for site in sites] for sites in bit_sites], "base_volume_nl": base_volume,
-                    **grid, **concentrations,
-                    "excess_multiplier": multiplier, "site_fractions": fractions, "image_sites": sites,
-                })
+        for replica_index in range(scheme.redundancy):
+            for y_shift in range(scheme.y_states):
+                for x_shift in range(scheme.x_states):
+                    bits = barcode_bits(color, x_shift, y_shift, scheme_id, replica_index)
+                    position = placement(scheme,x_shift,y_shift,columns)
+                    fractions = {site_name(*site): 1.0 for site in permanent_sites}
+                    for state, sites in zip(bits, bit_sites):
+                        for row, column in sites:
+                            fractions[site_name(row, column)] = float(state)
+                    sites = []
+                    for row_index, row in enumerate(ROWS):
+                        for column_index, column in enumerate(columns):
+                            x, y = column_index * scheme.x_states + x_shift, row_index * scheme.y_states + y_shift
+                            if scheme.tiled:
+                                x = len(columns)*sum(scheme.x_counts[:position["quadrant_x"]]) + column_index*position["local_x_states"] + position["local_x_shift"]
+                                y = 8*sum(scheme.y_counts[:position["quadrant_y"]]) + row_index*position["local_y_states"] + position["local_y_shift"]
+                            value = pixels[y][x][channel]
+                            fraction = min(grid["allowed_fractions"], key=lambda f: (abs(f-float(intensity_lut[value])), -f))
+                            name = site_name(row, column)
+                            fractions[name] = fraction
+                            display_x, display_y = rotate_point(x, y, width - 1, height - 1, rotation_degrees)
+                            x_nm,y_nm = info["pixel_centers_x_nm"][x],info["pixel_centers_y_nm"][y]
+                            display_x_nm, display_y_nm = rotate_point(x_nm,y_nm,
+                                info["center_span_x_nm"],info["center_span_y_nm"],rotation_degrees)
+                            sites.append({
+                                "display_pixel_x": display_x, "display_pixel_y": display_y,
+                                "display_x_nm": display_x_nm, "display_y_nm": display_y_nm,
+                                "name": name, "row": row, "column": column,
+                                "pixel_x": x, "pixel_y": y, "rgb": pixels[y][x][:],
+                                "x_nm": x_nm, "y_nm": y_nm,
+                                "channel_value": value, "replacement_fraction": fraction,
+                                "replacement_nl": round(grid["full_replacement_nl"] * fraction / transfer_increment_nl) * transfer_increment_nl,
+                                "original_nl": round(grid["full_original_nl"] * (1 - fraction) / transfer_increment_nl) * transfer_increment_nl,
+                            })
+                    suffix = "" if scheme_id == DEFAULT_SCHEME else "_{}x{}".format(scheme.x_states,scheme.y_states)
+                    display_channel = "Grayscale" if scheme.monochrome else color.replace(" ", "_")
+                    design_name = ("{}{}_Q{}_X{}_Y{}".format(display_channel,suffix,position["quadrant"],position["local_x_shift"],position["local_y_shift"])
+                                   if scheme.tiled else "{}{}_X{}_Y{}".format(display_channel,suffix,x_shift,y_shift))
+                    designs.append({
+                        "name": design_name + ("_Copy{}".format(replica_index + 1) if scheme.redundancy > 1 else ""),
+                        "redundancy": scheme.redundancy, "replica_index": replica_index,
+                        "origami_rotation_degrees_clockwise": rotation_degrees,
+                        "linear_light": linear_light, "encoding_scheme": scheme_id, "active_image_columns": columns[:],
+                        "image_mode": "grayscale" if scheme.monochrome else "rgb",
+                        "active_canvas_offset_nm": [(6-int(columns[0]))*EXTENSION_COLUMN_SPACING_NM, 0], "barcode_code": int("".join(map(str, bits)), 2),
+                        "color": color, "channel": channel, "x_shift": x_shift, "y_shift": y_shift,
+                        **position,
+                        "always_on_sites": [list(site) for site in permanent_sites],
+                        "bits": [int(bit) for bit in bits], "barcode_sites": [[list(site) for site in sites] for sites in bit_sites], "base_volume_nl": base_volume,
+                        **grid, **concentrations,
+                        "excess_multiplier": multiplier, "site_fractions": fractions, "image_sites": sites,
+                    })
     return designs
 
 
@@ -949,7 +962,8 @@ def reconstruct(designs):
     pixels = [[[0, 0, 0] for _ in range(len(columns) * scheme.x_states)] for _ in range(8 * scheme.y_states)]
     for design in designs:
         for site in design["image_sites"]:
-            pixels[site["pixel_y"]][site["pixel_x"]][design["channel"]] = round(site["replacement_fraction"] * 255)
+            pixels[site["pixel_y"]][site["pixel_x"]][design["channel"]] += site["replacement_fraction"] * 255 / scheme.redundancy
+    pixels = [[[round(value) for value in pixel] for pixel in row] for row in pixels]
     if scheme.monochrome:
         pixels = [[[pixel[0]] * 3 for pixel in row] for row in pixels]
     return pixels

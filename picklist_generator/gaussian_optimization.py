@@ -61,6 +61,9 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
         kx *= np.asarray(info['sampling_weights_x'])[None,:]
         ky *= np.asarray(info['sampling_weights_y'])[None,:]
     signal_gain = REFERENCE_AREA_NM2 * exposure * abundance_scale(designs[0]["encoding_scheme"], normalize_designs) * canvas_area_gain(designs[0]["encoding_scheme"], compensate_area)
+    # Solve one shared gray level per position, then apply it to every copy.
+    if normalize_designs:
+        signal_gain *= info.get("redundancy", 1)
     gain = signal_gain / (2*math.pi*sigma**2)
     gx, gy = kx.T @ kx, ky.T @ ky
     lipschitz = gain**2 * np.linalg.eigvalsh(gx)[-1] * np.linalg.eigvalsh(gy)[-1] + alpha
@@ -78,7 +81,11 @@ def optimize_designs(designs, target, fwhm_nm=7.5, exposure=1.0, linear_light=Fa
             for site in design['image_sites']:
                 y,x = site['pixel_y'],site['pixel_x']
                 if (y,x) in seen:
-                    raise ValueError('Optimization requires one design assignment per channel and pixel.')
+                    if (info.get('redundancy', 1) > 1
+                            and weights[y,x] == site['replacement_fraction']
+                            and steps[y,x] == transfer_fraction_steps(design, site)):
+                        continue
+                    raise ValueError('Optimization requires matching redundant copies per pixel.')
                 seen.add((y,x))
                 weights[y,x] = site['replacement_fraction']
                 steps[y,x] = transfer_fraction_steps(design, site)

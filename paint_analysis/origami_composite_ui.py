@@ -13,6 +13,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
+from binary_occupancy import (MODES, OccupancySettings, reconstruct_occupancy, export_occupancy,
+                              occupancy_figure, export_subsampling)
 from reconstruction_analysis import load_reconstruction_from_analysis
 from composite_session import REGION_KEYS, save_reconstruction_session, load_reconstruction_session
 from origami_composite import image_region_weights, image_region_preview_points, RegionPreviewCancelled, _progress_heartbeat, CompositeSettings, encoding_codebook, reconstruct_composite, export_composite, reconstruction_mapping_issues, reorient_composite, saved_rgb_batch_mapping, image_region_defaults
@@ -142,6 +144,53 @@ class CompositeWindow(tk.Toplevel):
         self.normalize_overlap.trace_add('write', self.invalidate)
         ttk.Checkbutton(geometry_box, text='Normalize overlapping sections (optional; off adds Gaussian-weighted signals)',
                         variable=self.normalize_overlap).grid(row=10, column=0, columnspan=4, sticky='w', pady=5)
+        occupancy_box = ttk.LabelFrame(self.page, text='Reconstruction method', padding=6)
+        occupancy_box.pack(fill='x', padx=10, pady=5)
+        self.reconstruction_mode = tk.StringVar(value=MODES[0])
+        ttk.Combobox(occupancy_box, textvariable=self.reconstruction_mode, values=MODES,
+                     state='readonly', width=32).grid(row=0, column=0, columnspan=2, sticky='w')
+        self.reconstruction_mode.trace_add('write', self.invalidate)
+        self.occupancy_variables = {}
+        self.occupancy_advanced = {}
+        for i, (key, label, default) in enumerate((('radius_nm', 'ROI radius (nm)', '2'),
+                ('min_localizations', 'ON count threshold', '3'),
+                ('uncertainty_margin', 'Uncertain count margin (0 = off)', '0'),
+                ('overlay_density_per_on', 'Calibrated overlay density per ON (optional)', ''))):
+            var = tk.StringVar(value=default)
+            self.occupancy_variables[key] = var
+            var.trace_add('write', self.invalidate)
+            ttk.Label(occupancy_box, text=label).grid(row=1, column=i, sticky='w', padx=4)
+            ttk.Entry(occupancy_box, textvariable=var, width=20).grid(row=2, column=i, sticky='w', padx=4)
+        self.occupancy_variables['gaussian_fwhm_nm'] = tk.StringVar(value='')
+        self.occupancy_variables['gaussian_fwhm_nm'].trace_add('write', self.invalidate)
+        ttk.Label(occupancy_box, text='Occupancy Gaussian FWHM (nm; blank = saved picklist)').grid(row=3, column=0, columnspan=2, sticky='w', padx=4)
+        ttk.Entry(occupancy_box, textvariable=self.occupancy_variables['gaussian_fwhm_nm'], width=20).grid(row=3, column=2, sticky='w', padx=4)
+        ttk.Button(occupancy_box, text='Load occupancy settings JSON…', command=self.load_occupancy_settings).grid(row=0, column=2)
+        ttk.Label(occupancy_box, text='Occupancy images use Gaussian spots and saved picklist display settings. Site occupancy retains the measured ON/valid fractions.').grid(row=4, column=0, columnspan=4, sticky='w')
+        diagnostics = ttk.Frame(self.page)
+        diagnostics.pack(fill='x', padx=10)
+        self.occupancy_barcode = tk.StringVar(value='')
+        self.occupancy_position = tk.StringVar(value='1')
+        ttk.Label(diagnostics, text='Diagnostic template:').pack(side='left')
+        self.occupancy_barcode_selector = ttk.Combobox(diagnostics, textvariable=self.occupancy_barcode, state='readonly', width=35)
+        self.occupancy_barcode_selector.pack(side='left', padx=4)
+        self.occupancy_barcode_selector.bind('<<ComboboxSelected>>', lambda e: self.plot_result())
+        ttk.Label(diagnostics, text='Site number (manifest order):').pack(side='left')
+        ttk.Spinbox(diagnostics, from_=1, to=96, textvariable=self.occupancy_position, width=5, command=self.plot_result).pack(side='left')
+        ttk.Button(diagnostics, text='Export sample-count study…', command=self.export_sample_study).pack(side='left', padx=5)
+        heatmap_controls = ttk.Frame(self.page)
+        heatmap_controls.pack(fill='x', padx=10, pady=3)
+        ttk.Button(heatmap_controls, text='Template heatmaps', command=self.show_template_heatmaps).pack(side='left', padx=3)
+        self.occupancy_show_grid = tk.BooleanVar(value=True)
+        self.occupancy_show_values = tk.BooleanVar(value=True)
+        self.occupancy_full_grid = tk.BooleanVar(value=False)
+        ttk.Checkbutton(heatmap_controls, text='Overlay origami grid', variable=self.occupancy_show_grid,
+                        command=self.plot_result).pack(side='left', padx=6)
+        ttk.Checkbutton(heatmap_controls, text='Show site occupancy values', variable=self.occupancy_show_values,
+                        command=self.plot_result).pack(side='left', padx=6)
+        ttk.Checkbutton(heatmap_controls, text='Full origami context', variable=self.occupancy_full_grid,
+                        command=self.plot_result).pack(side='left', padx=6)
+        ttk.Label(heatmap_controls, text='Uses the Diagnostic template selected above.').pack(side='left', padx=6)
         actions = ttk.Frame(self.page)
         actions.pack(fill='x', padx=10)
         ttk.Button(actions, text='Preview image region', command=self.preview_region).pack(side='left', padx=3)
@@ -149,7 +198,7 @@ class CompositeWindow(tk.Toplevel):
         ttk.Button(actions, text='Build composite', command=self.build).pack(side='left', padx=3)
         ttk.Button(actions, text='Export PNGs + densities + report…', command=self.export).pack(side='left', padx=3)
         self.view = tk.StringVar(value='Composite')
-        selector = ttk.Combobox(actions, textvariable=self.view, values=('Composite', 'Red', 'Green', 'Blue', 'Coverage'), state='readonly', width=14)
+        selector = ttk.Combobox(actions, textvariable=self.view, values=('Composite', 'Red', 'Green', 'Blue', 'Coverage', 'Comparison', 'Individual sites', 'Count distributions', 'Template heatmaps', 'Barcode maps', 'Target errors', 'Site occupancy'), state='readonly', width=14)
         selector.pack(side='left', padx=8)
         selector.bind('<<ComboboxSelected>>', lambda e: self.plot_result())
         orientation_bar = ttk.Frame(self.page)
@@ -370,7 +419,8 @@ class CompositeWindow(tk.Toplevel):
 
     def configuration(self):
         return dict(format='paint-composite-mappings-v1', mappings=self.mapping_values(),
-                    settings=asdict(self.settings()), geometry=self.geometry_settings,
+                    settings=asdict(self.settings()), reconstruction_mode=self.reconstruction_mode.get(),
+                    occupancy_settings=asdict(self.occupancy_settings()), geometry=self.geometry_settings,
                     codebook=self.codebook, rgb_batch_manifest=self.batch_manifest)
 
     def apply_configuration(self, document):
@@ -382,6 +432,11 @@ class CompositeWindow(tk.Toplevel):
             region = self.reconstruction_owner.reconstruction_region
             if any(getattr(settings, key) != region[key] for key in REGION_KEYS):
                 raise ValueError('These mappings use a different image region than the reconstruction session.')
+        mode = document.get('reconstruction_mode', MODES[0])
+        if mode not in MODES:
+            raise ValueError('Unknown reconstruction mode in mapping settings.')
+        self.reconstruction_mode.set(mode)
+        self.apply_occupancy_settings(document.get('occupancy_settings', {}))
         self.batch_manifest = document.get('rgb_batch_manifest')
         self.codebook = document.get('codebook', {})
         self.geometry_settings = document.get('geometry', {})
@@ -614,6 +669,50 @@ class CompositeWindow(tk.Toplevel):
             self.status.set(f"Preview ready: {preview['example']}; showing {len(preview['points']):,} "
                             f"of {preview['count']:,} nearby localizations. Display sampling does not affect reconstruction.")
 
+    def occupancy_settings(self):
+        values = dict(self.occupancy_advanced)
+        for key, var in self.occupancy_variables.items():
+            text = var.get().strip()
+            values[key] = None if key in ('overlay_density_per_on', 'gaussian_fwhm_nm') and not text else float(text)
+        settings = OccupancySettings(**values)
+        settings.validate()
+        return settings
+
+    def apply_occupancy_settings(self, values):
+        settings = OccupancySettings(**values)
+        settings.validate()
+        values = asdict(settings)
+        self.occupancy_advanced = {key: value for key, value in values.items() if key not in self.occupancy_variables}
+        for key, var in self.occupancy_variables.items():
+            var.set('' if values[key] is None else str(values[key]))
+
+    def load_occupancy_settings(self):
+        path = filedialog.askopenfilename(parent=self, title='Occupancy classification settings', filetypes=[('JSON', '*.json')])
+        if not path:
+            return
+        try:
+            self.apply_occupancy_settings(json.loads(Path(path).read_text()))
+            self.invalidate()
+        except Exception as exc:
+            messagebox.showerror('Cannot load occupancy settings', str(exc), parent=self)
+
+    def export_sample_study(self):
+        if self.busy or self.result is None or 'populations' not in self.result:
+            self.status.set('Build Binary Occupancy or Compare Both before exporting a sample-count study.')
+            return
+        path = filedialog.asksaveasfilename(parent=self, title='Sample-count study', defaultextension='.json', filetypes=[('JSON', '*.json')])
+        if not path:
+            return
+        result = self.result
+        self.busy = True
+        def work():
+            try:
+                export_subsampling(result, path, progress=lambda text: self.events.put(('progress', text)))
+                self.events.put(('sample_exported', path))
+            except Exception as exc:
+                self.events.put(('export_error', str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
     def build(self):
         record_diagnostic("composite_build_requested")
         if self.busy:
@@ -640,6 +739,10 @@ class CompositeWindow(tk.Toplevel):
                 return
             source = self.data_owner.origami_source_points_nm
             configuration = self.configuration()
+            reconstruction_mode = self.reconstruction_mode.get()
+            classifier = self.occupancy_settings() if reconstruction_mode != MODES[0] else None
+            manifest = self.batch_manifest
+            grids = {name: self.full_grid(payload['params']) for name, payload in results.items()} if classifier else None
             unclassified_count = int(self.data_owner.origami_multi_template_unclassified_count)
             source_path = str(self.data_owner.origami_loaded_source_path)
             self.data_owner.origami_composite_configuration = configuration
@@ -651,8 +754,11 @@ class CompositeWindow(tk.Toplevel):
                     progress = lambda text: self.events.put(('progress', text))
                     with _progress_heartbeat(progress) as report:
                         exclusions = self.exclusions(results, report)
-                    result = reconstruct_composite(source, results, mappings, settings, exclusions,
-                                                   progress)
+                    if reconstruction_mode == MODES[0]:
+                        result = reconstruct_composite(source, results, mappings, settings, exclusions, progress)
+                    else:
+                        result = reconstruct_occupancy(source, results, mappings, settings, manifest, grids,
+                            classifier, exclusions, compare=reconstruction_mode == MODES[2], progress=progress)
                     progress('Finalizing source and mapping metadata…')
                     result['report']['unclassified_origami'] = unclassified_count
                     result['report']['source'] = source_path
@@ -726,9 +832,12 @@ class CompositeWindow(tk.Toplevel):
                     self.busy = False
                     self.status.set('Reconstruction session failed: ' + payload)
                     messagebox.showerror('Cannot open/save reconstruction session', payload, parent=self)
+                elif kind == 'sample_exported':
+                    self.busy = False
+                    self.status.set('Saved reproducible sample-count reconstructions, metrics and plot: ' + payload)
                 elif kind == 'exported':
                     self.busy = False
-                    self.status.set('Saved PNG, image with axes, numerical densities and coverage (.npz), and reconstruction report (.json).')
+                    self.status.set('Saved PNG images, numerical arrays and report; occupancy exports also include individual, summary and error CSV tables.')
                 elif kind == 'export_error':
                     self.busy = False
                     self.status.set('Export failed: ' + payload)
@@ -762,12 +871,38 @@ class CompositeWindow(tk.Toplevel):
             pass
         self.poll_after_id = self.after(100, self.poll)
 
+    def show_template_heatmaps(self):
+        if self.result is None or 'populations' not in self.result:
+            self.status.set('Build Binary Occupancy or Compare Both, then select a Diagnostic template to inspect its heatmaps.')
+            return
+        self.view.set('Template heatmaps')
+        self.plot_result()
+        self.reveal_preview()
+
     def plot_result(self):
         if self.result is None:
+            return
+        if 'populations' in self.result:
+            keys = list(self.result['populations'])
+            self.occupancy_barcode_selector.configure(values=keys)
+            if self.occupancy_barcode.get() not in keys:
+                self.occupancy_barcode.set(keys[0])
+            try:
+                position = max(0, int(self.occupancy_position.get()) - 1)
+            except ValueError:
+                position = 0
+            occupancy_figure(self.result, self.view.get(), self.occupancy_barcode.get(), position, self.figure,
+                             show_grid=self.occupancy_show_grid.get(), show_values=self.occupancy_show_values.get(),
+                             full_grid=self.occupancy_full_grid.get())
+            self.canvas.draw_idle()
             return
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         mode = self.view.get()
+        if mode not in ('Composite', 'Red', 'Green', 'Blue', 'Coverage'):
+            ax.text(.1, .5, 'Select Binary Occupancy or Compare Both and rebuild for diagnostics.')
+            self.canvas.draw_idle()
+            return
         image = self.result['rgb']
         if mode == 'Coverage':
             image = self.result['coverage'].sum(axis=2)
@@ -985,7 +1120,7 @@ class CompositeWindow(tk.Toplevel):
                 self.status.set('Preparing composite export…')
                 def work():
                     try:
-                        export_composite(result, path, lambda text: self.events.put(('progress', text)))
+                        (export_occupancy if 'populations' in result else export_composite)(result, path, lambda text: self.events.put(('progress', text)))
                         if not self._closed:
                             self.events.put(('exported', None))
                     except Exception as exc:

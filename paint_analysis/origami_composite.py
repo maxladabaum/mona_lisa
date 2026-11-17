@@ -121,7 +121,12 @@ def reorient_composite(result, rotation_deg, mirror_x=False, mirror_y=False):
     previous = result['report']['settings']
     changes = dict(rotation_deg=int(rotation_deg), mirror_x=bool(mirror_x), mirror_y=bool(mirror_y))
     updated = dict(result)
-    for key in ('density', 'coverage', 'rgb'):
+    raster_keys = ('density', 'coverage', 'rgb', 'target', 'overlay_sampled', 'difference', 'site_rgb',
+                   'gaussian_density', 'gaussian_signal', 'gaussian_target_signal',
+                   'gaussian_overlay_sampled', 'gaussian_difference')
+    for key in raster_keys:
+        if key not in result:
+            continue
         array = result[key]
         # Undo the previous display operations in reverse order first.
         if previous.get('mirror_y', False):
@@ -135,6 +140,8 @@ def reorient_composite(result, rotation_deg, mirror_x=False, mirror_y=False):
         config = report['mapping_configuration']
         report['mapping_configuration'] = dict(config, settings={**config['settings'], **changes})
     updated['report'] = report
+    if 'overlay' in result:
+        updated['overlay'] = reorient_composite(result['overlay'], rotation_deg, mirror_x, mirror_y)
     return updated
 
 

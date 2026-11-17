@@ -6,3 +6,6 @@ numpy>=1.24
 
 # Ranked image-similarity graph exports.
 matplotlib>=3.7
+
+# Split–pool assignment and constrained incorporation optimization.
+scipy>=1.10

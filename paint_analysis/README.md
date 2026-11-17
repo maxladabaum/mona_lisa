@@ -1663,3 +1663,261 @@ session…** directly below the analysis save/load controls in the Origami tab.
 This entry opens the composite editor and loads the selected session in the
 background; no source data or full analysis needs to be loaded first. Then
 click **Build composite** to regenerate the image.
+
+## Binary occupancy reconstruction
+
+The composite editor now offers **Localization Overlay (Existing)** (the default),
+**Binary Occupancy (New)**, and **Compare Both**. Both paths use the same Step 4
+barcode assignments, accepted origami, source coordinates, and rigid alignment
+footprints. Detection, decoding, alignment, and classification are not rerun.
+
+The existing path in `origami_composite.py` extracts image-side localizations from
+`origami_source_points_nm` using `OrigamiPickResult.rectangle_corners_nm` and
+`accepted_mask`. This is necessary because saved `aligned_regions` can contain
+only the barcode crop. It accumulates weighted localizations, optionally averages
+per species, smooths, applies brightness multipliers and overlap settings, and
+scales RGB by one maximum across all channels. These operations remain unchanged.
+
+The new path in `binary_occupancy.py` branches after those assignments and poses.
+It uses the saved RGB manifest's `image_sites`, physical H-row/C-column labels,
+`bits`, `pixel_x`/`pixel_y`, pixel edges, and programmed `replacement_fraction`.
+It restores design coordinates from the same full physical grid, including the
+central 10 nm gap and alignment-template mirrors. Output cells use the existing
+section rotation/mirrors, barcode XY shifts, RGB selections, and final display
+orientation. The image is rendered by `occupancy_rendering.py` as a sum of circular
+Gaussian spots at the manifest's physical `x_nm`/`y_nm` coordinates. Each spot's
+integrated signal is proportional to its measured occupancy. Interleaved phases
+retain their programmed site positions. The separate **Site occupancy** view
+shows the unrendered fractions in their programmed cells.
+
+### Using the new mode
+
+1. Complete classification, open **6 · Reconstruct Composite Image…**, and load
+   **Load saved RGB picklist batch…** with its `image_manifest.json`.
+2. Check the barcode mappings and image region as usual. The manifest must include
+   physical analog site identifiers and pixel assignments. Encoding settings with
+   only a codebook cannot establish these assignments and are insufficient for
+   occupancy. The current full 12-column / 8-row design is supported; its manifest
+   determines the analog-site count (40 for the five-column canvas).
+3. Choose **Binary Occupancy (New)** or **Compare Both**. Set **ROI radius (nm)**,
+   **ON count threshold**, and optionally **Uncertain count margin**. Defaults are
+   2 nm, 3 localizations, and 0 (disabled). These are starting settings, not validated
+   experimental detection limits. Use controls to choose a reproducible rule and
+   keep it fixed across samples; do not tune it to match each sample's target.
+   Leave **Occupancy Gaussian FWHM (nm)** blank to use the saved picklist width
+   (7.5 nm if an older manifest has no width), or enter an explicit override.
+   This changes rendering only, not classification or occupancy.
+4. Click **Build composite**. Use the view selector for the composite, individual
+   Gaussian channels, site occupancy, coverage, comparison, individual sites,
+   count distributions, barcode maps, or target errors. Select a diagnostic template and a site number
+   in manifest order. Individual maps show up to six molecules, ROI circles,
+   counts, and blue ON / gray OFF / orange uncertain states. Count distributions
+   include available programmed ON/OFF endpoint controls. The toolbar can save
+   the displayed diagnostic figure.
+5. Export with **Export PNGs + densities + report…**. **Export sample-count
+   study…** separately runs seeded molecular subsampling and saves its results.
+
+### Inspect one template: overlay and occupancy heatmaps
+
+After building **Binary Occupancy (New)** or **Compare Both**, select a name in
+**Diagnostic template**, then click **Template heatmaps** below it. This view is
+also in the view dropdown next to Export. Changing the template updates the
+heatmaps immediately without repeating reconstruction.
+
+The two panels show only that barcode's accepted origami:
+
+- **Localization overlay**: aligned image-region localization density, with the
+  configured per-section smoothing and optional averaging per origami. Shared
+  source events are excluded, just as in reconstruction. The colorbar reports
+  localization density, not occupancy; RGB brightness and whole-image smoothing
+  are not applied to this molecular diagnostic.
+- **Gaussian occupancy**: measured fractions rendered at the physical analog-site
+  positions with the selected Gaussian FWHM. Its colorbar reports integrated-site
+  signal density. Numeric labels show the exact ON/valid fraction at each site;
+  `?` denotes no valid observations. The color scale uses a fully ON pattern at
+  this FWHM as its reference, rather than autoscaling each measured template.
+
+**Overlay origami grid** is enabled on both heatmaps. Both use the same aligned
+X/Y coordinates in nm, including the saved alignment-template mirrors. These are
+molecular views before decoded image placement and final image rotation. The
+orange outline marks the extraction region. Enable **Full origami context** to
+see the surrounding 12-column grid; areas outside the saved image region are gray
+and explicitly unmeasured, including barcode-side signal unavailable in compact
+reconstruction sessions. Uncertain Gaussian regions are also gray. You can hide
+site labels with **Show site occupancy values**, and zoom or save the figure with
+the plot toolbar. The existing **Barcode maps** view adds a third, programmed
+Gaussian target heatmap with the same grid.
+
+### Classification and denominators
+
+Each localization is assigned to its nearest analog site within the configured
+circular radius; an event contributes to at most one site even when circles
+overlap. Ties resolve to one site. No localization weighting, fluorescence fit,
+concentration inversion, or machine learning is used. A site with count `L >= T`
+is ON and otherwise OFF. Every accepted origami contributes at most one vote per
+site, regardless of how many binding events it generated.
+
+States are `1` (ON), `0` (OFF), or `-1` (uncertain). For each barcode/site:
+
+```text
+occupancy = number of ON observations / number of valid (ON or OFF) observations
+```
+
+Thus 140 ON observations among 200 valid origami give 0.70. In **Site occupancy**,
+that maps directly to 179 in an 8-bit channel. In the Gaussian image, 0.70 is the
+spot's integrated weight before the saved design weighting and display gain; its
+peak brightness depends on the Gaussian width and overlapping neighboring spots. Zero valid observations produce NaN, not zero. The
+summary also reports valid, excluded, and ON counts, plus the plug-in binomial
+standard error `sqrt(p * (1-p) / Nvalid)`; this is not a confidence interval and
+is zero at observed endpoints even with small sample sizes.
+
+An enabled uncertainty margin `m` marks counts in `[T-m, T+m)` uncertain. Sites
+are also uncertain if their ROI extends beyond the extraction region, source
+localizations within their ROI are shared by multiple accepted origami, or an
+available saved orientation flag reports ambiguity. The overlay's existing
+shared-source exclusion rule is reused, but lost signal is not interpreted as
+OFF. Explicit manual site exclusions are supported. Rejected and unclassified
+origami never enter any occupancy denominator. A per-template false acceptance
+mask may include candidates assigned to other barcodes; it is not a global QC
+failure list. Compact reconstruction sessions retain accepted candidates only,
+so they cannot recover earlier rejected candidate metadata.
+
+**Load occupancy settings JSON…** supports per-position thresholds and explicit
+uncertainty using exact manifest site names and saved candidate indices:
+
+```json
+{
+  "radius_nm": 2.0,
+  "min_localizations": 3,
+  "uncertainty_margin": 0,
+  "per_position_thresholds": {"U-Apt_H01-06_R1": 5},
+  "manual_uncertain": {
+    "design_0001_code_000": {"17": ["U-Apt_H01-06_R1"]}
+  },
+  "overlay_density_per_on": null,
+  "diagnostic_origami": 6,
+  "gaussian_fwhm_nm": null
+}
+```
+
+Replace the example identifiers with those in your dataset. Unknown identifiers
+raise errors. Settings are saved in mapping files and `.paintrecon` sessions and
+recorded in export reports. Older saved mappings open in overlay mode.
+
+### Quantitative output and comparison
+
+The measured occupancy fractions and **Site occupancy** retain a fixed linear
+0–1 scale. Their values do not depend on Gaussian rendering, gamma, brightness,
+or smoothing. Multiple barcode populations intentionally mapped to the same
+quantitative cell/channel pool ON and valid observation counts. Missing designs
+remain in the layout even if their classification template was not loaded.
+Excluded templates remain missing regardless of their overlay fill value.
+
+**Composite**, the RGB channel views, the comparison image, and exported PNGs use
+the picklist's forward rendering convention: sum unit-integral isotropic Gaussian
+spots with `sigma = FWHM / sqrt(8 ln 2)`. This renders the individual site weights
+directly; it does not blur the square-cell map. The manifest's `x_nm`/`y_nm` site
+coordinates (or legacy pixel-edge coordinates when absent), section transforms,
+and final display orientation determine the spot centers. Gaussian tails outside
+the image field are cropped without wrapping or renormalization.
+
+The saved manifest's `gaussian_reconstruction` metadata supplies FWHM,
+`linear_rgb_gain` (including exposure, design-abundance and canvas-area factors),
+normalization choices, and optional sRGB encoding. Saved per-design quadrant
+weights or redundancy factors are applied just as in the picklist renderer.
+There is no image-dependent autoscaling. Older manifests without those settings
+use 7.5 nm FWHM, exposure 1, reference area `(9.9/4)*(5.1/4)` nm², direct RGB,
+and no design-abundance or canvas-area compensation. Gaussian rendering uses
+measured fractions, not programmed brightness predictions, and does not add the
+picklist simulator's random alignment errors to already aligned measurements.
+The ordinary overlay smoothing/brightness controls continue to govern only the
+existing overlay. The output pixel size must resolve both the finest programmed
+pixel and FWHM/4. The Gaussian raster fits the field exactly; its actual X/Y
+sample pitches are recorded separately from the requested output pixel size.
+
+Numerical fractions preserve NaN for missing observations. Gaussian pixels within
+six sigma of an unmeasured site's center are missing in that channel, rather than
+assuming its amplitude is zero. More distant unknown tails are neglected for the
+mask only (relative kernel amplitude below exp(-18)); measured Gaussian kernels
+are evaluated without truncation. An entirely unmeasured channel stays missing.
+The RGB preview marks any missing channel magenta. Site-cell raster padding whose
+centers lie beyond the field also remains missing. Use arrays and masks for
+quantitative analysis, not the magenta preview.
+
+**Compare Both** displays the original overlay and Gaussian occupancy images.
+The R/G/B difference panels subtract the shared-maximum-normalized overlay,
+resampled at matching physical coordinates, from the Gaussian linear signal
+before gamma or clipping. This is a display-scale diagnostic, **not a calibrated
+occupancy accuracy comparison**. The original overlay image is unchanged.
+
+Per-site error tables remain separate: the overlay density is area-averaged in
+each programmed cell and divided by its shared display maximum. An optional
+independent density-per-ON calibration replaces that maximum for these per-site
+numerical comparisons only. It must use the same acquisition, averaging,
+brightness, smoothing, and extraction settings. It does not change the Gaussian
+renderer or image difference panels, and is never fitted to the programmed targets.
+
+Targets come from the programmed `replacement_fraction`, not the original RGB
+byte or a fitted incorporation model. Outputs include overall MAE/RMSE,
+per-position signed errors, per-barcode MAE/RMSE, and plots of measurement/error
+against programmed fraction and barcode sample count. Missing targets or
+observations are excluded and reported through the metric's valid count.
+Programmed 0 and 1 sites provide endpoint false-positive/false-negative summaries
+when available. Treat those as detection-error estimates only after independently
+validating that the controls realize fully OFF/ON occupancy. Synthetic tests do
+not validate experimental detection sensitivity or assembly yield.
+
+### Export files and reproducible sample-count studies
+
+For a chosen `measurement.png`, occupancy exports include:
+
+- `measurement.png` and `measurement_comparison.png`: Gaussian reconstruction
+  and comparison figure (occupancy alone when comparison was not requested).
+- `measurement_sites.png`: the separate fixed 0–1 site-occupancy grid.
+- `measurement.npz`: occupancy, valid-count coverage, missing masks, targets,
+  `gaussian_density`, `gaussian_signal`, `gaussian_target_signal`, `gaussian_missing`,
+  optional `gaussian_overlay_sampled`/`gaussian_difference` image rasters, the
+  original per-site overlay/difference rasters, and numbered population matrices of
+  counts, states, uncertainty reasons, candidate IDs, site IDs, physical sites,
+  pixel indices, output cells, Gaussian centers/weights, thresholds, targets, and
+  rejected candidate IDs. Gaussian raster coordinates and display gains are in
+  the JSON report's `gaussian_rendering` object; the per-site raster uses the
+  original `output_pixel_nm` and `pre_rotation_origin_nm` fields.
+  Population order matches `species` in the JSON report; each matrix has one row
+  per accepted origami and one column per manifest analog site.
+- `measurement_individual.csv`: origami ID, barcode, candidate index, site,
+  count, threshold, ON/OFF or blank uncertain state, status/reason, acceptance,
+  alignment footprint, and available alignment QC metadata.
+- `measurement_summary.csv`: per-barcode/site usable origami, ON, valid,
+  excluded, occupancy, standard error, and programmed fraction.
+- `measurement_qc_exclusions.csv`: candidates not accepted for each template.
+  These are not assigned that template's barcode; entries may repeat across
+  templates. Previously discarded candidates are unavailable in compact sessions.
+- `measurement_errors.csv`, `measurement_barcode_errors.csv`, and
+  `measurement.json`: position/barcode errors, aggregate metrics, settings,
+  normalization provenance, endpoint diagnostics, and missing-population counts.
+- `measurement_overlay.*`: original overlay exports when comparing both modes.
+
+The optional sample-count study uses N=10,20,50,100,200,300, 20 repeats, seed 0.
+It samples whole molecules without replacement independently within each barcode,
+retaining site-to-site correlations and uncertainty. Classes with fewer than N
+origami are missing for that N, not sampled with replacement or silently capped.
+The JSON stores every repeat's occupancy vector, valid counts, barcode metrics,
+and site-cell image metrics. A companion folder contains every Gaussian
+reconstructed PNG/NPZ, preserving both rendered signals and unrendered fractions
+with their separate missing masks. A plot summarizes mean error and repeat standard deviation; inspect
+measured-barcode coverage alongside error because different N may include
+different classes. Python callers can set sample sizes, repeats, and seed through
+`subsample_occupancy` / `export_subsampling`.
+
+The synthetic regression suite is `tests/test_binary_occupancy.py`. It covers
+140/200 counting, seeded Bernoulli sampling, unequal localization multiplicities,
+uncertainty denominators, overlapping ROIs/source events, missing classes,
+all 40 site identities, RGB and interleaved pixel assignments, rigid alignment,
+mirrors/rotations, exports, reproducible subsampling, and saved-session round trips.
+It also verifies that comparison calls the existing overlay renderer unchanged.
+`tests/test_occupancy_rendering.py` checks Gaussian FWHM, circular symmetry,
+integrated weights, overlap, missing-data masks, transforms, and direct numerical
+parity with the picklist's Gaussian renderer and display encoding.
+Experimental fully ON/OFF control validation remains necessary before interpreting
+intermediate fractions as accurately detected molecular occupancy.

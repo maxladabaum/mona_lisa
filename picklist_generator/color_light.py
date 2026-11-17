@@ -73,4 +73,4 @@ def canvas_area_gain(scheme_id, compensate_area):
 
 def quadrant_weight(design, normalize_designs):
     """Balance signal among equal-area quadrants with different sampling counts."""
-    return design.get("quadrant_normalization_weight", 1.0) if normalize_designs else 1.0
+    return design.get("quadrant_normalization_weight", 1.0) if normalize_designs else 1.0 / design.get("redundancy", 1)

@@ -1458,3 +1458,60 @@ replacement-site defaults as read-only summaries from Replacements. Use **Edit
 synthesis / replacement targets…** to return to their controls. Stock-solution
 concentrations and **Final buffer target [×TE, Mg mM, Na mM]** remain editable in
 Run & Mixing Settings; editing the buffer preserves the DNA targets and volume.
+
+### Split–pool encoding research
+
+The **RGB Image → Split–pool encoding analysis** subtab compares PCA,
+additive, irreversible ON-only, and ON/OFF models using current image targets,
+CSV/NumPy input, or synthetic datasets. Click **Visualize analysis** to explore
+model comparisons, reconstruction heatmaps, analog canvases, sampling errors,
+and learning curves directly in the window. Saving a plot is optional; full
+parameter, assignment, metric, and figure exports remain available through the CLI.
+See [split_pool_encoding/README.md](split_pool_encoding/README.md) for the CLI,
+configuration, validation, and scientific limits. These are simulation outputs,
+not calibrated liquid-handler instructions.
+
+The **Branch walkthrough** plot follows the selected design's assigned digital
+code through each split–pool round. Select a channel and X/Y location (or design
+index) to see all K-vector amounts combined in each branch, the accumulated ON
+signal, and target/final expected analog canvases. Physical fits show actual
+25 nL transfers and use their realized ON/OFF capture probabilities; earlier OFF
+occupancy blocks later ON capture. Synthetic matrices appear as analog-position
+strips because they have no spatial layout. Additive fits are labeled signed
+references; PCA has no branch history. Use Image Monte Carlo for finite-count
+sampling of the final signal.
+
+RGB split–pool analysis uses one digital barcode space across **all** designs,
+including every color: rounds = max(1, ceil(log2(total designs))). Colors cannot
+reuse addresses. Each color library is fitted from the remaining available
+addresses, reserving its chosen addresses before the next color is fitted;
+this also applies to 25 nL refinement and K sweeps. This sequential allocation
+is collision-free but is not a joint optimization of assignments across colors.
+Rerun analysis to replace cached fits made with the former per-color address space.
+
+**Well trajectory** follows the selected channel and X/Y design location through
+its assigned digital code. Stacked bars show K-vector transfers into each round's
+selected branch well, with an exact-volume heatmap below (hover for nL). Unused
+vectors are omitted. Gray shows final branch volume not contributed by K vectors;
+the model does not separately specify buffer versus incoming fluid. Branch wells
+are logical shared destinations, not physical plate coordinates or individual
+wells dedicated to each design. Volumes are per-round recipes, not cumulative
+retained liquid across pooling steps. This plot requires a fitted 25 nL recipe.
+
+**Full synthesis** shows one population containing all RGB designs and both branch wells in every round:
+ON/OFF stocks prepare a shared K-well library, the starting population splits,
+each branch lists its specific K stocks (K1, K2, …) and transfer volumes, both branches pool, and the population
+resplits for the next round. Hover over branch wells for exact K transfer
+amounts and over preparation for per-vector source totals. Use the toolbar zoom
+for long workflows. Split–pool fits all RGB targets together with one shared
+K library and one global address assignment; 40 designs per color means 120
+designs in a single population. Color selectors only choose detail views.
+Independent-well mode retains separate destinations. Arrows describe logical population routing, not a fully specified
+fluid-handling protocol: recovery, washing, carryover, and resplit volumes have
+not been modeled. Individual site preparation recipes remain in Transfer recipe.
+
+### Black-and-white redundancy
+
+In the RGB tab, select **Black & white**, enter **Redundancy (unique barcodes per location)**, and press Enter. The default is 1. Each copy carries the same grayscale image sites at the same position, with a distinct barcode and separately prepared synthesis run. For example, 16 tiles with redundancy 3 require 48 unique designs. The setting is saved with the encoding scheme and included in exported geometry and design metadata.
+
+The total must fit the selected barcode bit count and the 384-design limit. Reduce the tile count or increase Barcode bits if needed. Previews average redundant contributions to preserve brightness; Gaussian optimization applies the same optimized gray levels to each copy. Redundancy can average independent transfer errors, but does not remove systematic errors shared by all copies.
